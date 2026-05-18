@@ -1,213 +1,201 @@
-# 项目概述
+# PapersCrawler — 文献自动追踪与推送
 
-本项目希望实现抓取领域核心期刊文章，筛选出与组内工作相关的文章，并实现自动推送。
+自动抓取领域核心期刊文章，筛选与组内工作相关的论文，生成结构化报告并推送。
 
-一段时间后可以实现热点与技术进展追踪。
-
-# 项目结构
-
-项目分成 4 个部分，以数据库为中心进行构建。
+## 项目结构
 
 ```
-.
-├── configs                                           # 配置文件存放处
-│   ├── keywords.yaml                                # 本研究领域的关键词表
-│   ├── publishers.yaml                              # 需要抓取的 Journal 表
-│   └── prompts                                      # 存放 LLM Prompt 处
-├── data                                              # 数据目录
-│   ├── PaperCrawler.log                             # 运行 log
-│   ├── raw                                          # 存放运行过程中的 raw data
-│   │   ├── page                                    # 存放部分可能需要保存的 publisher 页面
-│   │   └── rss                                     # 存放 rss feed
-│   └── reports                                      # 存放生成的报告
-├── docs                                              # 存放本项目相关的文档
-│   ├── 数据源调研.md
-│   └── MinerUAPI文档PDF解析接口文档开发者文档.md
-├── README.md                                         # 本项目的说明文档
-└── src
-    ├── config.py                                     # 存放各种配置
-    ├── main.py                                       # 项目主入口
-    ├── sources                                       # 数据获取部分
-    │   ├── crossref.py                              # crossref metadata 获取
-    │   ├── publisher.py                             # publisher page scraper
-    │   └── rss.py                                   # rss feed fetch
-    ├── test_for_rss_parse.py                         # rss fetch 与解析测试
-    └── utils                                         # 各种工具
-        ├── db.py                                     # 数据库的创建与管理
-        ├── llm_summarize_deepseek.py                 # 用 DeepSeek API 进行 paper 总结
-        ├── paper_relevance.py                        # Paper 与本研究领域相关性判断
-        └── paper_report_generator.py                 # 报告生成
+PapersCrawler/
+├── configs/
+│   ├── publishers.yaml          # 需要追踪的期刊配置 (RSS Feed + 出版社)
+│   ├── keywords.yaml            # 研究领域关键词表 (自行填写)
+│   ├── email.yaml               # SMTP 邮件推送配置
+│   └── prompts/                 # LLM Prompt 模板目录 (预留)
+├── data/
+│   ├── papers.db                # SQLite 数据库 (自动生成)
+│   ├── PaperCrawler.log         # 运行日志
+│   ├── raw/
+│   │   ├── rss/                 # RSS Feed XML 缓存
+│   │   └── page/                # Publisher 页面 HTML 缓存 (调试用)
+│   ├── reports/                 # 生成的 Markdown + PDF 报告
+│   └── session_cached/          # Playwright 浏览器 Session 缓存
+├── docs/                        # 数据源调研与 API 文档
+├── tests/                       # 单元测试
+│   ├── conftest.py
+│   ├── test_db.py               # 数据库操作
+│   ├── test_rss.py              # RSS 解析
+│   ├── test_crossref.py         # CrossRef 元数据
+│   ├── test_publisher_parse.py  # Publisher 页面解析
+│   ├── test_relevance.py        # 相关性判断
+│   ├── test_report.py           # 报告生成
+│   ├── test_pdf.py              # PDF 转换
+│   └── test_email.py            # 邮件发送
+├── src/
+│   ├── config.py                # 全局配置 (路径、API Key、Prompt)
+│   ├── main.py                  # 主入口 — 8 阶段流水线
+│   ├── sources/
+│   │   ├── rss.py               # RSS Feed 抓取与解析
+│   │   ├── crossref.py          # CrossRef DOI 元数据查询
+│   │   └── publisher.py         # 7 个出版社的页面抓取器
+│   ├── utils/
+│   │   ├── db.py                # SQLite 数据库 CRUD
+│   │   ├── paper_relevance.py   # 关键词匹配 + LLM 相关性判断
+│   │   ├── llm_summarize_deepseek.py  # DeepSeek API 论文总结
+│   │   ├── paper_report_generator.py  # Markdown / HTML 报告生成
+│   │   ├── pdf_converter.py     # Markdown → PDF (pandoc + xelatex)
+│   │   └── email_sender.py      # SMTP 邮件发送
+│   └── test_for_rss_parse.py    # RSS 解析调试脚本
+└── README.md
 ```
 
-## Part.A 数据抓取
+## 流水线架构
 
-### 多数据源的配置与管理
+整个项目以 SQLite 数据库为中心，按 8 个阶段顺序执行。每个阶段读取上一阶段的输出，处理后写入数据库。
 
-配置文件 `cofigs/publishers.yaml` 负责配置需要期刊的：
+```
+Phase A: RSS Feed 抓取
+      │  发现论文 → 写入 DOI / 标题 / 链接
+      ▼
+Phase B: CrossRef 元数据
+      │  补充作者 / 出版日期 / 期刊名
+      ▼
+Phase C: Publisher 页面
+      │  爬取摘要 / PDF 链接 (Playwright 浏览器)
+      ▼
+Phase D: 关键词初筛
+      │  统计关键词命中数 → 0 命中则跳过 LLM 判断
+      ▼
+Phase E: LLM 相关性判断
+      │  DeepSeek API → 判定相关/不相关 + 置信度
+      ▼
+Phase E2: MinerU PDF 全文解析
+      │  下载 PDF → MinerU API → 提取 Markdown 全文
+      ▼
+Phase F: LLM 论文总结
+      │  生成结构化总结 (优先用全文, 回退到摘要)
+      ▼
+Phase G: 报告生成
+      │  Markdown + PDF 双格式输出
+      ▼
+Phase H: 邮件推送
+        SMTP 发送报告给团队成员
+```
 
-- id (用于方便命名文件)
-- 名称
-- publish (用于爬虫配置)
-- rss feed url
-- 其他配置选项
+## 快速开始
 
-当前配置文件采用列表形式：
+### 1. 安装依赖
+
+```bash
+pip install requests feedparser beautifulsoup4 parsel playwright pyyaml python-dateutil
+pip install pytest  # 测试
+playwright install chromium  # 安装 Chromium 浏览器
+```
+
+### 2. 配置
+
+**configs/keywords.yaml** — 填写你的研究领域关键词：
 
 ```yaml
-publishers:
-  # Nature Series
-  - id: nature
-    name: Nature
-    publisher: nature
-    rss: https://www.nature.com/nature.rss
-    enabled: true
-
-  - id: nphys
-    name: Nature Physics
-    publisher: nature
-    rss: https://www.nature.com/nphys.rss
-    enabled: true
+- laser plasma
+- wakefield acceleration
+- proton acceleration
+- inertial confinement fusion
+- ultrafast optics
 ```
 
-为了读取文件，需要：
+**configs/email.yaml** — 填写邮件发送信息（可选，不填则跳过推送）：
 
-```
-pip install pyyaml
-```
-
-### 数据源优先级与容错策略
-
-```
-RSS → DOI
-       ↓
-Crossref metadata
-       ↓
-Publisher scrape/API
+```yaml
+smtp_host: "smtp.qq.com"
+smtp_port: 587
+use_tls: true
+username: "your_email@qq.com"      # 邮箱账号
+password: "your_auth_code"         # 授权码（不是邮箱密码！）
+from_addr: "your_email@qq.com"
+to_addrs:
+  - "colleague1@example.com"
+  - "colleague2@example.com"
 ```
 
-- RSS 负责“发现”
-- Crossref 负责“补 metadata”
-- Publisher 页面负责“补 non-OA abstract”
+**src/config.py** — 填写 API Key：
 
-### Publisher crawler 策略
+```python
+CROSSREF_MAILTO = "your_email@example.com"  # CrossRef API 礼貌要求
+LLM_API_CONFIG_DICT = {
+    "api_key": "sk-your-deepseek-key",      # DeepSeek API Key
+    ...
+}
+```
 
-已知**直接** `requests` / `https` / `Playwrigt` 会被 cloudflare challenge 阻拦。
+### 3. 运行
 
-对于**校园网环境**，`playwright` + headful chromium + persistent session 可以直接过 CF Challenge 且避开重复 Challenge 。
+```bash
+# 桌面环境
+python src/main.py
 
-> **必须使用校园网**，非校园网 IP 质量不清楚，且拿不到全文。
-> 服务器可能需要 VPN 接入校园网环境然后 `xvfb + headful chromium` 。
+# 无图形界面服务器 (运行 Publisher 抓取阶段)
+xvfb-run -a python src/main.py
+```
 
-核心原则：伪装成一个真正的科研用户，而不是直接对抗/破解 cloudflare 。
+### 4. 运行测试
 
-1. 长期复用同一个 Browser
-   ```
-   启动一次 Chromium
-       ↓
-   抓几十篇 DOI
-       ↓
-   最后再关闭
-   ```
-2. Persistent Context
-   ```python
-   launch_persistent_context()
-   ```
-3. 按 publisher 分 session
-4. 固定浏览器指纹
-   - 不要随机：UA/viewport/locale/timezone
-   ```python
-   user_agent="固定 Chrome UA"
-   locale="zh-CN"
-   timezone_id="Asia/Shanghai"
-   viewport={"width": 1440, "height": 900}
-   ```
-5. 不要 headless
-6. 加入“真人节奏”
+```bash
+# 运行所有离线测试
+pytest tests/ -v
 
-   ```python
-   sleep(random.uniform(3, 10))
-   ```
+# 跳过 PDF 测试 (需要 pandoc)
+pytest tests/ -v -k "not pdf"
 
-   - 偶尔停 20~30 秒
-   - 页面间隔不固定
+# 仅运行数据库测试
+pytest tests/test_db.py -v
+```
 
-7. 不要每篇 `new_page()` ，复用同一个 page
-   ```python
-   page.goto(url1)
-   page.goto(url2)
-   page.goto(url3)
-   ```
-8. 从“正常入口”进入
-   ```python
-   page.goto("https://journals.aps.org/")
-   page.goto(article)
-   ```
-9. 降低并发：当前阶段不要多线程
-10. 服务器上 `xvfb-run -a python crawler.py`
-11. 最关键现实：IP Reputation
+## 支持的出版社/期刊
 
-| 网络            | 推荐度 |
-| --------------- | ------ |
-| 学校网络        | 极高   |
-| 家宽            | 高     |
-| 手机热点        | 中高   |
-| VPS             | 低     |
-| 香港/新加坡机房 | 更低   |
+| 出版社 | 期刊数 | 爬虫类 |
+|--------|--------|--------|
+| Nature | 4 (Nature, Nature Physics/Photonics/Communications) | `NatureScraper` |
+| Science | 2 (Science, Science Advances) | `ScienceScraper` |
+| APS | 7 (PRL ×2, PRAB ×2, PRE, PRApplied ×2) | `APSScraper` |
+| Cambridge | 1 (HPLSE) | `CambridgeScraper` |
+| AIP | 5 (PoP ×2, APL ×2, RSI) | `AIPScraper` |
+| IOP | 1 (PPCF) | `IOPScraper` |
+| Optica | 2 (Optica, Optics Express) | `OpticaScraper` |
 
-现阶段可能不需要增强技术：
+## Publisher 爬虫策略
 
-- playwright stealth plugin
-- undetected chromium
-- TLS spoof
-- JA3 patch
+参见 `src/sources/publisher.py` 中的详细注释。核心原则：
 
-CF 可能的关键检查因素：
+1. **Persistent Context** — 同一个 publisher 共用一个浏览器 session
+2. **Headful Chromium** — 不使无头模式（Cloudflare 检测 headless）
+3. **固定浏览器指纹** — UA / viewport / locale 固定不变
+4. **真人节奏** — 页面间隔 2~30 秒随机延迟
+5. **复用 Page** — 不频繁 new_page()
+6. **校园网** — IP Reputation 是 anti-bot 最关键的因素
 
-| 因素          | 权重 |
-| ------------- | ---- |
-| IP reputation | 极高 |
-| ASN           | 极高 |
-| 浏览器真实性  | 高   |
-| Headless      | 中   |
-| JS challenge  | 低   |
+## 数据源优先级
 
-> publisher scraper 应该将 session 数据存放在 `data/browser_cache` 下（不同 publisher 分开）
+```
+RSS → DOI (发现)
+   ↓
+CrossRef API → metadata (补充)
+   ↓
+Publisher Page → abstract (补充非 OA 论文摘要)
+```
 
-## Part.B 筛选与解析
-
-提供本研究领域的关键词表，两步筛选：
-
-1. 通过关键词表初筛，如果 match = 0 则直接判断不相关
-2. 通过 LLM 判断相关性
-
-## Part.C 报告生成
-
-生成 markdown 报告即可（`paper_report_generator.py` 中写了 html 模板但是其实没什么用），最好转成好看的 PDF （注意 LaTeX 公式转换）。
-
-## Part.D 消息推送
-
-通过 SMTP 发邮件给组里同学：需要邮箱支持 IMAP/SMTP 服务授权（获取授权码）。
-
-# TODOLIST
+## 待办事项
 
 - [x] RSS 抓取模块
 - [x] CrossRef 元数据抓取模块
-- [x] Publisher Scraper 模块抓 abstract
-
+- [x] Publisher Scraper 模块
 - [x] 关键词筛选相关文献
-- [x] 对关键词筛选命中的文献，利用 LLM 精细判断相关性。
-   - [ ] AI 提供的语义相似度方法判断相关性
-- [x] MinerU PDF 解析
-- [x] 对于确定相关的文献：生成一句总结、提取关键词和技术点等 LLM 分析。
-
-- [ ] 报告模板制作
-- [ ] SMTP 分发 / 下载页面
-- [ ] 日志模块
-- [ ] 热点/趋势分析（待调研）
-
-进一步优化：
-
-- [ ] RSS 抓取注意请求失败处理？以及 `requests` 基本伪装实现。
-- [ ] CrossRef 等多数据源聚合
-- [ ] 将4个模块彻底解耦，用数据库作为读写节点。
-- [ ] 并发升级（如进行此项需要对数据库进行同步升级！）
+- [x] LLM 精细判断相关性
+- [x] LLM 论文结构化总结
+- [x] 报告模板制作 (Markdown + PDF)
+- [x] SMTP 分发
+- [x] 日志模块
+- [x] 分模块测试
+- [x] MinerU PDF 解析整合到流水线
+- [ ] 语义相似度方法判断相关性 (sentence-transformers)
+- [ ] 热点/趋势分析
+- [ ] 并发升级 + 数据库同步升级
