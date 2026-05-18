@@ -1,0 +1,145 @@
+publishers:
+  # Nature Series
+  - id: nature
+    name: Nature
+    publisher: nature
+    rss: https://www.nature.com/nature.rss
+    enabled: true
+
+  - id: nphys
+    name: Nature Physics
+    publisher: nature
+    rss: https://www.nature.com/nphys.rss
+    enabled: true
+
+  - id: nphoton
+    name: Nature Photonics
+    publisher: nature
+    rss: https://www.nature.com/nphoton.rss
+    enabled: true
+
+  - id: ncomms
+    name: Nature Communications
+    publisher: nature
+    rss: https://www.nature.com/ncomms.rss
+    enabled: true
+
+  # Science Series
+  - id: science
+    name: Science
+    publisher: science
+    rss: https://www.science.org/action/showFeed?type=axatoc&feed=rss&jc=science
+    enabled: true
+
+  - id: sciadv
+    name: Science Advances
+    publisher: science
+    rss: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv
+    enabled: true
+
+  # APS Series
+  - id: prlsugg
+    name: Physical Review Letters
+    publisher: aps
+    rss: https://feeds.aps.org/rss/recent/prlsuggestions.xml
+    enabled: true
+
+  - id: prlpbp
+    name: Physical Review Letters
+    publisher: aps
+    rss: https://feeds.aps.org/rss/tocsec/PRL-PlasmaandBeamPhysics.xml
+    enabled: true
+
+  - id: prabsugg
+    name: Physical Review Accelerators and Beams
+    publisher: aps
+    rss: https://feeds.aps.org/rss/prstabsuggestions.xml
+    enabled: true
+
+  - id: prab
+    name: Physical Review Accelerators and Beams
+    publisher: aps
+    rss: https://feeds.aps.org/rss/recent/prstab.xml
+    enabled: true
+
+  - id: prepp
+    name: Physical Review E
+    publisher: aps
+    rss: https://feeds.aps.org/rss/tocsec/PRE-Plasmaphysics.xml
+    enabled: true
+
+  - id: prasugg
+    name: Physical Review Applied
+    publisher: aps
+    rss: https://feeds.aps.org/rss/prappliedsuggestions.xml
+    enabled: true
+
+  - id: pra
+    name: Physical Review Applied
+    publisher: aps
+    rss: https://feeds.aps.org/rss/recent/prapplied.xml
+    enabled: true
+
+  # HPLSE
+  - id: hplse
+    name: High Power Laser Science and Engineering
+    publisher: cambridge
+    rss: https://www.cambridge.org/core/rss/product/id/D30FF81AE5FAEE26735889C8553C99DD
+    enabled: true
+
+  # AIP Series
+  - id: popci
+    name: Physics of Plasmas
+    publisher: aip
+    rss: https://pubs.aip.org/rss/site_1000039/1000022.xml
+    enabled: true
+
+  - id: popoi
+    name: Physics of Plasmas
+    publisher: aip
+    rss: https://pubs.aip.org/rss/site_1000039/LatestOpenIssueArticles_1000022.xml
+    enabled: true
+
+  - id: aplci
+    name: Applied Physics Letters
+    publisher: aip
+    rss: https://pubs.aip.org/rss/site_1000017/1000011.xml
+    enabled: true
+
+  - id: aploi
+    name: Applied Physics Letters
+    publisher: aip
+    rss: https://pubs.aip.org/rss/site_1000017/LatestOpenIssueArticles_1000011.xml
+    enabled: true
+
+  - id: rsici
+    name: Review of Scientific Instruments
+    publisher: aip
+    rss: https://pubs.aip.org/rss/site_1000041/1000023.xml
+    enabled: true
+
+  - id: rsioi
+    name: Review of Scientific Instruments
+    publisher: aip
+    rss: https://pubs.aip.org/rss/site_1000041/LatestOpenIssueArticles_1000023.xml
+    enabled: true
+
+  # IOP Series
+  - id: ppcf
+    name: Plasma Physics and Controlled Fusion
+    publisher: iop
+    rss: https://iopscience.iop.org/journal/rss/0741-3335
+    enabled: true
+
+  # Optica Series
+  - id: optica
+    name: Optica
+    publisher: optica
+    rss: https://opg.optica.org/rss/optica_feed.xml
+    enabled: true
+
+  - id: opex
+    name: Optics Express
+    publisher: optica
+    rss: https://opg.optica.org/rss/opex_feed.xml
+    enabled: true
