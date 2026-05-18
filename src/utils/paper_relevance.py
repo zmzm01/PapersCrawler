@@ -7,6 +7,13 @@ paper_relevance.py
 1. 关键词匹配统计：统计标题和摘要中命中的关键词数量。
 2. LLM 判断：调用大语言模型 API，让模型结合关键词表判断论文是否相关。
 3. 语义相似度：使用句子嵌入模型计算论文与领域描述的相似度，可作为补充或替代方案，尤其适合同义词、上下位词等非精确匹配场景。
+
+三种策略的设计考量：
+- 策略1（关键词匹配）是最轻量、最快的方法，不依赖外部API或模型，适合初筛。但无法识别同义词/近义词（例如 "GNN" vs "graph neural network"），
+  也无法理解上下文（例如论文批评了某种方法，不应视为相关）。
+- 策略2（LLM判断）利用大语言模型的理解能力，能够综合关键词表与论文语义做出相关性判断，但依赖API调用，存在网络延迟和成本。
+- 策略3（语义相似度）通过句子嵌入（Sentence Embedding）计算论文文本与研究领域描述的向量余弦相似度，无需API key，在本地即可运行，
+  能较好地捕获同义词、上下位词等语义关系，适合大批量筛选场景。
 """
 
 import re
@@ -18,20 +25,25 @@ import requests  # 用于 LLM API 调用；也可改用 openai 库
 
 
 class LLMConfigurationError(Exception):
-    """LLM 配置错误"""
+    """LLM 配置错误——当 API 配置信息（如 api_key、api_url）缺失或无效时抛出"""
 
 
 class LLMAPICallError(Exception):
-    """LLM API 调用失败"""
+    """LLM API 调用失败——网络请求层面的错误（超时、连接失败、HTTP 4xx/5xx 等）"""
 
 
 class LLMResponseParseError(Exception):
-    """LLM 响应解析失败"""
+    """LLM 响应解析失败——API 返回了数据但结构不符合预期（缺少字段、类型错误等）"""
 
 
 class PaperRelevanceChecker:
     """
     论文相关性检测器
+
+    核心设计：
+    - 初始化时传入研究领域关键词表，所有关键词会被统一转为小写并去首尾空格。
+    - 关键词正则模式会被预编译（每个关键词加上 \b 单词边界），在后续调用中直接复用，避免重复编译开销。
+    - 三种检测策略可按需组合使用：初筛用关键词匹配，精细判断用 LLM，批量筛选用语义相似度。
 
     Parameters
     ----------
@@ -41,9 +53,16 @@ class PaperRelevanceChecker:
     """
 
     def __init__(self, keywords: List[str]) -> None:
+        # 关键词预处理：统一转小写，去除空字符串
         self.keywords = [k.strip().lower() for k in keywords if k.strip()]
 
         # 预编译关键词正则（忽略大小写，匹配单词边界避免部分命中）
+        #
+        # 正则构造说明：
+        # - \b 表示单词边界，确保 "graph" 不会错误匹配 "paragraph" 或 "graphics" 中的子串。
+        # - re.escape(kw) 对关键词中的特殊正则字符（如括号、加号）进行转义，防止注入攻击或意外匹配。
+        # - re.IGNORECASE 开启大小写不敏感匹配，例如 "Graph Neural Network" 也能匹配关键词 "graph neural network"。
+        # - 预编译为 re.Pattern 对象，后续调用 pattern.search() 时直接使用，避免每次匹配都重新编译。
         self.keyword_patterns = [
             re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE)
             for kw in self.keywords
@@ -54,16 +73,24 @@ class PaperRelevanceChecker:
     # ------------------------------------------------------------------
     def keyword_match_count(self, title: str, abstract: str) -> int:
         """
-        统计标题和摘要中命中的不同关键词数量
-        
+        统计标题和摘要中命中的不同关键词数量。
+
+        统计逻辑：
+        - 将标题和摘要拼接为一个整体文本（用空格连接）。
+        - 遍历所有预编译的关键词正则模式，逐一检查是否在文本中出现。
+        - 使用 set 去重，保证每个关键词最多被计数一次（即使多次出现也只算 1 次）。
+        - 返回去重后的命中数量。通常命中数 ≥ 1 即视为相关，命中数为 0 表示不相关。
+
         Parameters
         ----------
-        title
-        abstract
+        title : str
+            论文标题
+        abstract : str
+            论文摘要
 
         Returns
         -------
-        matched_count: int
+        matched_count : int
             完全不含任何关键词返回 0，通常表示不相关。
         ---
         """
@@ -72,21 +99,46 @@ class PaperRelevanceChecker:
         for pattern in self.keyword_patterns:
             if pattern.search(text):
                 # 为了返回匹配到的原始关键词，可从 pattern.pattern 恢复
+                # 注：pattern.pattern 返回的是正则字符串（含 \b 和转义），非原始关键词。
+                # 此处仅用于集合去重计数，不关心原始关键词的具体内容。
                 matched.add(pattern.pattern)
         return len(matched)
 
     # ------------------------------------------------------------------
     # 方法2：通过 LLM API 判断相关性
     # ------------------------------------------------------------------
-    # 提示词构造
     def build_default_prompt(self, title: str, abstract: str) -> str:
+        """
+        构造发给 LLM 的默认提示词。
+
+        提示词设计原则：
+        - 明确角色定位：LLM 扮演"研究领域文献筛选助手"，限定其任务范围。
+        - 输入结构化：先给出关键词列表，再给出论文信息（标题 + 摘要），让 LLM 有充分的判断依据。
+        - 输出格式约束：要求输出合法 JSON，并给出示例（json_example），引导 LLM 输出符合预期格式。
+        - 字段语义说明：对 relevant、confidence、reason 三个字段逐一解释含义，避免 LLM 自行发挥。
+        - 强调"只输出 JSON"：防止 LLM 在 JSON 前后添加解释性文字，确保下游解析顺利。
+
+        Parameters
+        ----------
+        title : str
+            论文标题
+        abstract : str
+            论文摘要
+
+        Returns
+        -------
+        prompt : str
+            可直接发送给 LLM API 的完整提示词字符串。
+        ---
+        """
         keywords_str = ", ".join(self.keywords)
+        # 构造 JSON 示例，ensure_ascii=False 保证中文正常显示
         json_example = json.dumps({
             "relevant": False,
             "confidence": "low",
             "reason": "摘要未明确提及核心关键词"
         }, ensure_ascii=False)
-        
+
         return (
             f"你是一个研究领域文献筛选助手。给定关键词列表：\n"
             f"{keywords_str}\n\n"
@@ -107,37 +159,66 @@ class PaperRelevanceChecker:
     # ------------------------------------------------------------------
     def call_deepseek_api(self, prompt: str, llm_api_config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        调用 DeepSeek API
-        Note the thinking mode does not support temperature、top_p、presence_penalty、frequency_penalty parameters (https://api-docs.deepseek.com/zh-cn/guides/thinking_mode)
-        And we use JSON Output function (https://api-docs.deepseek.com/zh-cn/guides/json_mode)
-        
+        调用 DeepSeek API 进行相关性判断。
+
+        DeepSeek API 关键特性说明：
+        1. Thinking Mode（思考模式）：
+           - 开启后模型会在输出最终答案前进行内部推理（chain-of-thought），提高复杂判断的准确性。
+           - 但开启 thinking mode 后不支持 temperature、top_p、presence_penalty、frequency_penalty 参数，
+             因为这些参数会引入随机性，与思考模式的确定性推理目标冲突。
+           - 通过 payload 中的 "thinking": {"type": "enabled"} 字段控制。
+
+        2. JSON Output（JSON 模式）：
+           - DeepSeek 原生支持结构化 JSON 输出，不再需要在 prompt 中反复强调"只输出 JSON"。
+           - 通过 payload 中的 "response_format": {"type": "json_object"} 字段开启。
+           - 开启后模型会确保输出是合法的 JSON 对象，极大降低解析失败的概率。
+
+        API 请求流程：
+        1. 构造 HTTP 请求头（Authorization Bearer Token + Content-Type）。
+        2. 构造请求 payload：model、messages（system + user）、thinking、response_format。
+        3. 发送 POST 请求到 config["api_url"]，默认超时 300 秒。
+        4. 解析响应：从 resp.json()["choices"][0]["message"]["content"] 中提取 LLM 输出。
+        5. 返回 content 字符串（该字符串应为合法 JSON，由调用方进一步 json.loads 解析）。
+
+        异常处理：
+        - requests.exceptions.RequestException：网络问题，抛出 LLMAPICallError。
+        - KeyError/IndexError/TypeError：响应结构异常，抛出 LLMResponseParseError。
+
         Parameters
         ----------
         prompt : str
-            提示词
+            提示词（由 build_default_prompt 构造）
         llm_api_config : Dict[str, Any]
             LLM API 配置字典，需包含：
-            - "api_url": API 端点
-            - "api_key": 认证密钥
-            - "model": 模型名称 (默认 "gpt-3.5-turbo")
-            - 其他可选参数如 "temperature", "max_tokens", "timeout" 等。
+            - "api_url": API 端点（如 https://api.deepseek.com/chat/completions）
+            - "api_key": 认证密钥（DeepSeek API Key）
+            - "model": 模型名称（默认 "deepseek-v4-flash"，也可用 "deepseek-v4-pro" 获得更强推理能力）
+            - "thinking": thinking 模式，可选 "enabled" 或 "disabled"（默认 "enabled"）
+            - "timeout": 请求超时秒数（默认 300）
 
         Returns
         -------
-        Dict[str, Any]
+        content : str
+            LLM 返回的 JSON 字符串，需由调用方 json.loads 解析为：
             {
-                "relevant": bool,
-                "confidence": "high"/"medium"/"low",
-                "reason": str
+                "relevant": bool,       # true=相关, false=不相关
+                "confidence": str,      # "high" / "medium" / "low"
+                "reason": str           # 一句话判断依据
             }
         ---
         """
         config = llm_api_config
 
+        # 构造 HTTP 请求头
         headers = {
             "Authorization": f"Bearer {config['api_key']}",
             "Content-Type": "application/json",
         }
+        # 构造 API 请求 payload
+        # - model: 模型名称，默认 "deepseek-v4-flash"（快速版），可改为 "deepseek-v4-pro"（更强推理）
+        # - messages: 包含 system 角色设定和 user 实际提示词
+        # - thinking: 启用思考模式（chain-of-thought），提升判断质量
+        # - response_format: 指定为 json_object，强制模型输出合法 JSON
         payload = {
             "model": config.get("model", "deepseek-v4-flash"),
             "messages": [
@@ -155,7 +236,9 @@ class PaperRelevanceChecker:
                 json=payload,
                 timeout=config.get("timeout", 300),
             )
-            resp.raise_for_status()
+            resp.raise_for_status()  # 非 2xx 状态码触发 HTTPError
+            # 从 DeepSeek 响应中提取模型输出内容
+            # 响应结构: {"choices": [{"message": {"content": "..."}}]}
             content = resp.json()["choices"][0]["message"]["content"]
             return content
         except requests.exceptions.RequestException as e:
@@ -166,6 +249,16 @@ class PaperRelevanceChecker:
     # ------------------------------------------------------------------
     # 更好的方法（推荐作为补充）：
     # 基于语义相似度（sentence embeddings）
+    #
+    # 相比关键词匹配的优势：
+    # - 能捕获同义词（如 "GNN" ↔ "graph neural network" ↔ "graph attention network"）
+    # - 能处理上下位词关系（如 "node classification" 与 "graph learning" 有一定相关性）
+    # - 不依赖外部 API，可在离线环境运行
+    #
+    # 局限性：
+    # - 需要下载预训练模型（首次运行时会自动下载，约 80MB）
+    # - 计算速度受限于模型大小和硬件
+    # - 阈值需要根据具体领域标定（建议在标注数据上测试后设定）
     # 可安装 sentence-transformers 库后使用
     # ------------------------------------------------------------------
     def semantic_similarity(
@@ -177,21 +270,39 @@ class PaperRelevanceChecker:
     ) -> float:
         """
         使用句子嵌入模型计算论文与领域的语义相似度。
+
+        工作流程：
+        1. 构造两个文本：
+           - domain_description：研究领域描述（默认由关键词拼接而成，也可手动传入更详细的描述）。
+           - paper_text：论文的标题 + 摘要（用句号连接）。
+        2. 使用 SentenceTransformer 将两个文本编码为固定长度的向量。
+        3. 计算两个向量的余弦相似度（cosine similarity），值域为 [0, 1]。
+        4. 分数越接近 1 表示论文与研究领域越相关。
+
+        模型选择建议：
+        - "all-MiniLM-L6-v2"（默认）：轻量、快速，适合大规模批量筛选。
+        - "all-mpnet-base-v2"：精度更高但速度较慢。
+        - "paraphrase-multilingual-MiniLM-L12-v2"：多语言支持（含中文），适合中文论文。
+
         需要安装 sentence-transformers: pip install sentence-transformers
 
         Parameters
         ----------
-        title, abstract : str
-            论文标题和摘要。
+        title : str
+            论文标题。
+        abstract : str
+            论文摘要。
         model_name : str
-            HuggingFace 上的句子嵌入模型名称。
+            HuggingFace 上的句子嵌入模型名称，默认为 "all-MiniLM-L6-v2"。
         domain_description : Optional[str]
-            对研究领域的自然语言描述，若为空则用关键词拼接。
+            对研究领域的自然语言描述，若为空则用关键词拼接（"研究领域涵盖：kw1, kw2, ..."）。
+            建议传入更详细的领域描述以获得更准确的相似度分数。
 
         Returns
         -------
         float
             余弦相似度得分（0~1），越高越相关。
+        ---
         """
         try:
             from sentence_transformers import SentenceTransformer, util
@@ -207,10 +318,12 @@ class PaperRelevanceChecker:
 
         model = SentenceTransformer(model_name)
         paper_text = f"{title}. {abstract}"
+        # encode 返回 PyTorch tensor，convert_to_tensor=True 避免转 numpy 开销
         embeddings = model.encode(
             [domain_description, paper_text],
             convert_to_tensor=True,
         )
+        # util.cos_sim 计算两个张量间的余弦相似度
         cosine_score = util.cos_sim(embeddings[0], embeddings[1]).item()
         return cosine_score
 
@@ -219,7 +332,7 @@ class PaperRelevanceChecker:
 # 使用示例
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    # 关键词表
+    # 关键词表——定义你关心的研究领域术语
     keywords = [
         "graph neural network",
         "node classification",
@@ -229,6 +342,7 @@ if __name__ == "__main__":
     ]
 
     # 如果使用 LLM，请配置真实 API（示例使用 OpenAI）
+    # 注意：实际使用时请将 api_key 替换为有效的 DeepSeek API Key
     LLM_API_CONFIG_DICT = {
         "api_url": "https://api.deepseek.com/chat/completions",
         "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",

@@ -1,35 +1,93 @@
-# config.py
+"""
+config.py
+=========
+全局配置文件。
+
+职责:
+  1. 定义所有文件路径常量（数据库、日志、缓存目录等）
+  2. 定义运行参数（超时时间、API 密钥等）
+  3. 提供配置文件加载函数（publishers.yaml / keywords.yaml / email.yaml）
+  4. 存放 LLM 系统提示词
+
+注意事项:
+  - 此文件包含敏感的 API 密钥和 Token，请勿提交到公开仓库
+  - 路径均相对于项目根目录自动计算（无需手动修改 BASE_DIR）
+"""
 
 from pathlib import Path
 import yaml
 
-# ==============================
+
+# ==================================================================
 # 路径配置
-# ==============================
+# 所有路径基于 BASE_DIR（项目根目录）自动计算
+# ==================================================================
+
+# BASE_DIR = PapersCrawler/ （项目根目录，config.py 的父目录的父目录）
 BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
-CONFIG_DIR = BASE_DIR / "configs"
+
+# 各级目录
+DATA_DIR = BASE_DIR / "data"                   # 数据根目录
+CONFIG_DIR = BASE_DIR / "configs"              # 配置文件目录
+
+# 数据库文件路径 (SQLite)
 DB_PATH = DATA_DIR / "papers.db"
+
+# 运行日志文件路径
 LOG_FILE_PATH = DATA_DIR / "PaperCrawler.log"
+
+# 浏览器 Session 缓存目录（Playwright 持久化 Session 存放处）
+# 按 publisher 分子目录，如 data/session_cached/nature/
 BROWSER_SESSION_DIR = DATA_DIR / "session_cached"
+
+# RSS XML 原始文件缓存目录
 RAW_RSS_DIR = DATA_DIR / "raw" / "rss"
+
+# 抓取的网页 HTML 保存目录（调试用）
 RAW_PAGE_DIR = DATA_DIR / "raw" / "page"
 
-# ==============================
-# 参数配置
-# ==============================
+# 生成的报告输出目录
+REPORT_DIR = DATA_DIR / "reports"
+MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
+
+
+# ==================================================================
+# 运行参数配置
+# ==================================================================
+
+# HTTP 请求默认超时 (秒)
 REQUEST_TIMEOUT = 30
-CROSSREF_MAILTO = "czmczm01@qq.com" # my test mail
-MINERU_TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4ODYwMDQwMiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3OTA3ODA1MSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiOGNjZGFhZDUtODZiNy00MTViLTgxOWQtMDQ1NThkMTIzN2ZlIiwiZW1haWwiOiJjem1jem0wMUBxcS5jb20iLCJleHAiOjE3ODY4NTQwNTF9.Or7R0nyxGtxTlLspbrfIYxrTBWPTIwbF4Yo8YEbhIMYwmu9er48ajVqne4kzbV77VfNFJUE0K6iwc-QXalRB_A" # Note: 90 days efficient
+
+# CrossRef API 要求的联系邮箱（礼貌标识，CrossRef 强烈建议提供）
+CROSSREF_MAILTO = "czmczm01@qq.com"
+
+# MinerU PDF 解析 API Token（有效期 90 天，过期后需重新获取）
+MINERU_TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4ODYwMDQwMiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3OTA3ODA1MSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiOGNjZGFhZDUtODZiNy00MTViLTgxOWQtMDQ1NThkMTIzN2ZlIiwiZW1haWwiOiJjem1jem0wMUBxcS5jb20iLCJleHAiOjE3ODY4NTQwNTF9.Or7R0nyxGtxTlLspbrfIYxrTBWPTIwbF4Yo8YEbhIMYwmu9er48ajVqne4kzbV77VfNFJUE0K6iwc-QXalRB_A"
+
+
+# ==================================================================
+# DeepSeek LLM API 配置
+# 用于论文相关性判断和内容总结
+# ==================================================================
 LLM_API_CONFIG_DICT = {
-    "base_url": "https://api.deepseek.com",
+    # API 端点: DeepSeek Chat Completions 接口
+    "api_url": "https://api.deepseek.com/chat/completions",
+    # API 密钥: 从 https://platform.deepseek.com 获取
     "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
-    "model_name": "deepseek-v4-flash", # or deepseek-v4-pro stronger
-    "temparatures": 0.0,
-    "max_tokens": 128000,
+    # 模型选择: deepseek-v4-flash (快速) 或 deepseek-v4-pro (更强)
+    "model": "deepseek-v4-flash",
+    # 思考模式: "enabled" 表示开启深度思考, "disabled" 表示关闭
+    # 注意: 思考模式下不支持 temperature/top_p 等参数
     "thinking": "enabled",
+    # API 调用超时 (秒)
+    "timeout": 300,
 }
 
+
+# ==================================================================
+# LLM 论文总结提示词 (System Prompt)
+# 指示 DeepSeek 如何从论文文本中提取结构化总结
+# ==================================================================
 SUMMARIES_PROMPT = """
 你是一位专业的理论/实验物理学家，尤其擅长激光等离子体物理。请根据提供的论文全文，生成一个 JSON 格式的结构化总结。
 
@@ -48,27 +106,80 @@ SUMMARIES_PROMPT = """
 1. 所有字段必须用中文学术语言，信息密度高，不遗漏关键物理内涵。
 2. 如果某项信息在论文中未提及，对应字段的值必须设为 "未提供"。绝不编造内容。
 3. 所有 LaTeX 命令在 JSON 字符串内必须用双反斜杠（如 \\(\\omega\\)，\\(\\frac{}{}\\)）。行内公式用 \\(...\\) 或 $...$，独立公式用 $$...$$。
-4. 字符串内的换行必须用转义符 \n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
+4. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
 
 【main_results_and_physics 字段的 Markdown 要求】
 - 使用标准 Markdown 语法：二级标题 ##，粗体 **，斜体 *，行内代码 `，列表 -，引用 >。
 - 每个结果建议自成一段，用标题或列表区分。
-- 转义规则同上：反斜杠写双反斜杠，换行写 \n。
+- 转义规则同上：反斜杠写双反斜杠，换行写 \\n。
 """
 
-# ==============================
-# 数据源配置
-# ==============================
+
+# ==================================================================
+# 配置文件加载函数
+# ==================================================================
+
 def load_publishers():
+    """
+    加载期刊数据源配置。
+
+    从 configs/publishers.yaml 读取需要追踪的期刊列表。
+    每个期刊包含: id, name, publisher, rss (RSS 地址), enabled 等字段。
+
+    Returns:
+        list[dict]: 期刊配置字典列表
+    """
     path = CONFIG_DIR / "publishers.yaml"
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)["publishers"]
 
 
+def load_keywords():
+    """
+    加载研究领域关键词表。
+
+    从 configs/keywords.yaml 读取关键词列表。
+    支持两种格式:
+      1. 纯列表: ["keyword1", "keyword2", ...]
+      2. 字典: {"keywords": ["keyword1", "keyword2", ...]}
+
+    Returns:
+        list[str]: 关键词列表。文件不存在或为空时返回空列表 []。
+    """
+    path = CONFIG_DIR / "keywords.yaml"
+    if not path.exists():
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    # YAML 空文件解析为 None
+    if data is None:
+        return []
+    # 兼容两种格式
+    return data if isinstance(data, list) else data.get("keywords", [])
+
+
+def load_email_config():
+    """
+    加载邮件发送配置。
+
+    从 configs/email.yaml 读取 SMTP 服务器信息和收件人列表。
+    字段: smtp_host, smtp_port, use_tls, username, password, from_addr, to_addrs
+
+    Returns:
+        dict: 邮件配置字典。文件不存在时返回空字典 {}。
+    """
+    path = CONFIG_DIR / "email.yaml"
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+# ==================================================================
+# 模块自测 (直接运行 python config.py 时触发)
+# ==================================================================
 if __name__ == "__main__":
-    # 数据源读取测试
     publishers = load_publishers()
-    print("期刊配置如下:")
-    print(publishers)
+    print("加载的期刊配置:")
     for p in publishers:
-        print(p["name"], p["rss"])
+        print(f"  {p['name']} — {p['rss']}")
