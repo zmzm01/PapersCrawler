@@ -62,8 +62,8 @@ Phase B: CrossRef 元数据
 Phase C: Publisher 页面
       │  爬取摘要 / PDF 链接 (Playwright 浏览器)
       ▼
-Phase D: 关键词初筛
-      │  统计关键词命中数 → 0 命中则跳过 LLM 判断
+Phase D: 语义相似度初筛
+      │  sentence-transformers → 余弦相似度 → <0.3 则跳过 LLM
       ▼
 Phase E: LLM 相关性判断
       │  DeepSeek API → 判定相关/不相关 + 置信度
@@ -87,6 +87,7 @@ Phase H: 邮件推送
 
 ```bash
 pip install requests feedparser beautifulsoup4 parsel playwright pyyaml python-dateutil
+pip install sentence-transformers  # 语义相似度初筛
 pip install pytest  # 测试
 playwright install chromium  # 安装 Chromium 浏览器
 ```
@@ -109,8 +110,8 @@ playwright install chromium  # 安装 Chromium 浏览器
 smtp_host: "smtp.qq.com"
 smtp_port: 587
 use_tls: true
-username: "your_email@qq.com"      # 邮箱账号
-password: "your_auth_code"         # 授权码（不是邮箱密码！）
+username: "your_email@qq.com" # 邮箱账号
+password: "your_auth_code" # 授权码（不是邮箱密码！）
 from_addr: "your_email@qq.com"
 to_addrs:
   - "colleague1@example.com"
@@ -152,15 +153,15 @@ pytest tests/test_db.py -v
 
 ## 支持的出版社/期刊
 
-| 出版社 | 期刊数 | 爬虫类 |
-|--------|--------|--------|
-| Nature | 4 (Nature, Nature Physics/Photonics/Communications) | `NatureScraper` |
-| Science | 2 (Science, Science Advances) | `ScienceScraper` |
-| APS | 7 (PRL ×2, PRAB ×2, PRE, PRApplied ×2) | `APSScraper` |
-| Cambridge | 1 (HPLSE) | `CambridgeScraper` |
-| AIP | 5 (PoP ×2, APL ×2, RSI) | `AIPScraper` |
-| IOP | 1 (PPCF) | `IOPScraper` |
-| Optica | 2 (Optica, Optics Express) | `OpticaScraper` |
+| 出版社    | 期刊数                                              | 爬虫类             |
+| --------- | --------------------------------------------------- | ------------------ |
+| Nature    | 4 (Nature, Nature Physics/Photonics/Communications) | `NatureScraper`    |
+| Science   | 2 (Science, Science Advances)                       | `ScienceScraper`   |
+| APS       | 7 (PRL ×2, PRAB ×2, PRE, PRApplied ×2)              | `APSScraper`       |
+| Cambridge | 1 (HPLSE)                                           | `CambridgeScraper` |
+| AIP       | 5 (PoP ×2, APL ×2, RSI)                             | `AIPScraper`       |
+| IOP       | 1 (PPCF)                                            | `IOPScraper`       |
+| Optica    | 2 (Optica, Optics Express)                          | `OpticaScraper`    |
 
 ## Publisher 爬虫策略
 
@@ -196,6 +197,6 @@ Publisher Page → abstract (补充非 OA 论文摘要)
 - [x] 日志模块
 - [x] 分模块测试
 - [x] MinerU PDF 解析整合到流水线
-- [ ] 语义相似度方法判断相关性 (sentence-transformers)
+- [x] 语义相似度方法判断相关性 (sentence-transformers)
 - [ ] 热点/趋势分析
 - [ ] 并发升级 + 数据库同步升级

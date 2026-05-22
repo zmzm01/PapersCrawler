@@ -362,7 +362,7 @@ class NatureScraper(BasePublisherScraper):
         """解析 Nature 论文页面。
 
         元数据提取来源：
-            - doi:       <meta name="dc.Identifier" scheme="doi"> 的 content 属性
+            - doi:       <meta name="dc.Identifier"> 的 content 属性
             - title:     JSON-LD (application/ld+json) 中 mainEntity.headline
             - date:      JSON-LD 中 mainEntity.datePublished
             - journal:   优先 <meta name="citation_journal_title">，
@@ -419,8 +419,9 @@ class NatureScraper(BasePublisherScraper):
         authors = []
 
         # ─── 从 <meta> 标签提取 DOI 和 URL ───
-        # dc.Identifier 带有 scheme="doi" 属性，精确匹配 DOI
-        doi = sel.css('meta[name="dc.Identifier"][scheme="doi"]::attr(content)').get() or ""
+        # dc.Identifier 带有 scheme="doi" 属性，精确匹配 DOI (注意 nature page 拿到的是 doi: 开头的 DOI)
+        doi_raw = sel.css('meta[name="dc.Identifier"]::attr(content)').get() or ""
+        doi = doi_raw.removeprefix("doi:") if doi_raw else ""
         # 从 canonical link 获取标准 URL
         url = sel.css('link[rel="canonical"]::attr(href)').get() or ""
 
@@ -667,7 +668,7 @@ class AIPScraper(BasePublisherScraper):
         技术细节：
             - XPath string() 函数会递归获取所有后代文本节点，适合提取
               包含嵌套格式标签（如 <sup>, <sub>, <i>）的摘要文本。
-            - 提取后使用正则 re.sub(r"\s+", " ", ...) 清理多余的空白字符。
+             - 提取后使用正则 re.sub(r"\\s+", " ", ...) 清理多余的空白字符。
 
         Returns:
             Paper: 包含提取元数据的 Paper 实例。
@@ -744,7 +745,7 @@ class IOPScraper(BasePublisherScraper):
         技术细节：
             - 摘要区域 class 名可能包含多个值（如 "article-text clearfix"），
               因此使用 contains(@class, "article-text") 进行模糊匹配。
-            - 提取后使用正则 re.sub(r"\s+", " ", ...) 清理多余的空白字符。
+             - 提取后使用正则 re.sub(r"\\s+", " ", ...) 清理多余的空白字符。
 
         Returns:
             Paper: 包含提取元数据的 Paper 实例。
@@ -824,7 +825,7 @@ class OpticaScraper(BasePublisherScraper):
         技术细节：
             - 使用 following-sibling::div[1] 精确定位 Abstract 标题之后
               的第一个 div 兄弟元素，这是 Optica 页面中摘要的固定位置。
-            - 提取后使用正则 re.sub(r"\s+", " ", ...) 清理多余的空白字符。
+             - 提取后使用正则 re.sub(r"\\s+", " ", ...) 清理多余的空白字符。
 
         Returns:
             Paper: 包含提取元数据的 Paper 实例。
