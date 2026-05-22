@@ -1,6 +1,6 @@
 """
 pytest 配置文件。
-定义共享 fixtures 和全局跳过标记。
+定义共享 fixtures 和全局配置。
 """
 import os
 import sys

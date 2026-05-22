@@ -329,6 +329,98 @@ class PaperRelevanceChecker:
 
 
 # ------------------------------------------------------------------
+# 语义相似度初筛器
+# 模型加载一次，复用给多篇论文批量计算相似度
+# ------------------------------------------------------------------
+
+class SemanticFilter:
+    """
+    语义相似度初筛器。
+
+    使用 sentence-transformers 将论文标题+摘要与研究领域描述分别编码为向量，
+    计算余弦相似度作为相关性得分。相比关键词匹配的优势：
+
+    1. 能捕获同义词（如 "GNN" ↔ "graph neural network" ↔ "graph attention network"）
+    2. 能处理上下位词关系（如 "node classification" 与 "graph learning" 仍有一定相关性）
+    3. 模型加载一次后复用，适合大批量论文的初筛场景
+    4. 纯本地运行，不依赖外部 API
+
+    使用示例:
+        sf = SemanticFilter(
+            model_name="all-MiniLM-L6-v2",
+            domain_description="研究领域涵盖：laser plasma, wakefield acceleration"
+        )
+        score = sf.compute_similarity(
+            title="Laser wakefield acceleration of electrons",
+            abstract="We demonstrate electron acceleration..."
+        )
+        # score ≈ 0.65 — 标题和摘要与领域描述高度语义相关
+
+    需要安装: pip install sentence-transformers
+    """
+
+    def __init__(self, model_name: str, domain_description: str):
+        """
+        初始化语义过滤器，加载模型并预编码领域描述。
+
+        模型加载和领域描述的编码是初始化中最耗时的操作（数秒），
+        完成后后续的 compute_similarity 调用只需编码论文文本，
+        再计算一次余弦相似度，速度很快。
+
+        Args:
+            model_name:         HuggingFace 模型名。
+                                推荐: "all-MiniLM-L6-v2" (轻量快速, 英文)
+                                      "paraphrase-multilingual-MiniLM-L12-v2" (多语言)
+            domain_description: 用自然语言描述的研究领域。
+                                例如 "激光等离子体物理，包括尾场加速、质子加速、超快光学"
+
+        Raises:
+            ImportError: sentence-transformers 未安装
+        """
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "请安装 sentence-transformers 库: pip install sentence-transformers"
+            )
+
+        self.model = SentenceTransformer(model_name, local_files_only=True)
+        # 预编码领域描述为向量（初始化时只做一次）
+        self.domain_embedding = self.model.encode(
+            domain_description, convert_to_tensor=True
+        )
+
+    def compute_similarity(self, title: str, abstract: str) -> float:
+        """
+        计算论文文本与领域描述的语义相似度。
+
+        流程:
+        1. 拼接 title + abstract 为 paper_text
+        2. 用 SentenceTransformer 将 paper_text 编码为向量
+        3. 计算 paper_embedding 与 domain_embedding 的余弦相似度
+
+        Args:
+            title:    论文标题
+            abstract: 论文摘要
+
+        Returns:
+            float: 余弦相似度，范围 [0, 1]，越高越相关。
+                   0.3 以下 → 基本不相关
+                   0.3~0.5 → 轻微相关
+                   0.5~0.7 → 相关
+                   0.7+    → 高度相关
+        """
+        from sentence_transformers import util
+
+        paper_text = f"{title}. {abstract}"
+        paper_embedding = self.model.encode(
+            paper_text, convert_to_tensor=True
+        )
+        score = util.cos_sim(self.domain_embedding, paper_embedding).item()
+        return score
+
+
+# ------------------------------------------------------------------
 # 使用示例
 # ------------------------------------------------------------------
 if __name__ == "__main__":
@@ -371,5 +463,5 @@ if __name__ == "__main__":
     # print(llm_result)
 
     # 3. (更好) 语义相似度
-    # sim = checker.semantic_similarity(title, abstract)
-    # print(f"语义相似度: {sim:.3f}")
+    sim = checker.semantic_similarity(title, abstract)
+    print(f"语义相似度: {sim:.3f}")

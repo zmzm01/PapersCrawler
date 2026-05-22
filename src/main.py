@@ -7,7 +7,7 @@ PapersCrawler 主入口 —— 8 阶段文献追踪流水线。
   Phase A — RSS 抓取      : 从配置的期刊 RSS Feed 发现新论文，记录到数据库
   Phase B — CrossRef 补充 : 通过 DOI 从 CrossRef API 获取完整元数据
   Phase C — Publisher 抓取: 使用 Playwright 浏览器爬取期刊页面摘要
-  Phase D — 关键词筛选    : 基于领域关键词表做初筛，无命中则跳过
+  Phase D — 语义相似度初筛: 基于 sentence-transformers 计算论文与领域的语义相似度
   Phase E — LLM 相关性    : 调用 DeepSeek API 对初筛通过的论文做相关性判断
   Phase E2 — MinerU 全文  : 对相关论文下载 PDF 并用 MinerU 解析全文
   Phase F — LLM 总结      : 对判定相关的论文（优先用 MinerU 全文）生成结构化总结
@@ -45,8 +45,12 @@ from config import (
     REQUEST_TIMEOUT, CROSSREF_MAILTO,
     LOG_FILE_PATH, DB_PATH, BROWSER_SESSION_DIR,
     RAW_RSS_DIR, RAW_PAGE_DIR, REPORT_DIR, CONFIG_DIR,
-    LLM_API_CONFIG_DICT, SUMMARIES_PROMPT,
+    LLM_API_CONFIG_DICT_RELE, LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT,
     MINERU_TOKEN,
+    SEMANTIC_MODEL_PATH, SEMANTIC_SIMILARITY_THRESHOLD,
+                MAX_PAPERS_PER_PHASE,
+    SKIP_PHASE_C, SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_H,
+    SKIP_NATURE_NEWS,
 )
 
 from utils.db import DatabaseClient, FetchStatus
@@ -59,6 +63,7 @@ from sources.publisher import (
 )
 from utils.paper_relevance import (
     PaperRelevanceChecker,
+    SemanticFilter,
     LLMAPICallError,
     LLMResponseParseError,
 )
@@ -169,7 +174,7 @@ def main():
     phase_a_rss(db, publishers)
     phase_b_crossref(db)
     phase_c_publisher(db)
-    phase_d_keyword_filter(db, keywords)
+    phase_d_semantic_filter(db, keywords)
     phase_e_llm_relevance(db)
     phase_e2_mineru(db)
     phase_f_llm_summary(db)
@@ -250,6 +255,11 @@ def phase_a_rss(db, publishers):
                     logger.debug(f"DOI 已存在，跳过: {paperDOI}")
                     continue
 
+                # 过滤 Nature 新闻 (d41586 DOI 前缀，非研究文章)
+                if SKIP_NATURE_NEWS and "/d41586-" in paperDOI:
+                    logger.debug(f"跳过 Nature 新闻: {paperDOI}")
+                    continue
+
                 logger.debug(f"写入新论文: {paperDOI}")
                 # 写入 RSS 阶段的基本信息（DOI, 标题, 链接, 期刊名, 出版商, 日期）
                 db.insert_rss_basicinfo(
@@ -295,6 +305,8 @@ def phase_b_crossref(db):
 
     # 获取所有待补充 CrossRef 元数据的论文
     paper_tasks = db.get_pendings("cr_metadata_fetched_status")
+    if MAX_PAPERS_PER_PHASE:
+        paper_tasks = paper_tasks[:MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
         logger.info("Phase B: 无待处理论文")
         return
@@ -373,8 +385,13 @@ def phase_c_publisher(db):
         db: DatabaseClient 实例
     """
     logger.info("--- Phase C: Publisher 页面抓取 ---")
+    if SKIP_PHASE_C:
+        logger.info("Phase C: SKIP_PHASE_C=True, skipping")
+        return
 
     paper_tasks = db.get_pendings("publisher_page_fetched_status")
+    if MAX_PAPERS_PER_PHASE:
+        paper_tasks = paper_tasks[:MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
         logger.info("Phase C: 无待处理论文")
         return
@@ -414,7 +431,7 @@ def phase_c_publisher(db):
         try:
             for paper in papers:
                 paperDOI = paper["doi"]
-                page_url = paper.get("page_url", "")
+                page_url = paper["page_url"]
                 timestamp = str(datetime.now())
 
                 if not page_url:
@@ -486,83 +503,106 @@ def phase_c_publisher(db):
 
 
 # ==================================================================
-# Phase D: 关键词初筛
+# Phase D: 语义相似度初筛
 #
-# 职责: 用领域关键词表对每篇论文的标题+摘要做匹配计数
-# 策略: 命中的论文标记 status=success，继续进入 Phase E；
-#       零命中则标记 keywords_filtered_status=success 且
-#       llm_relevance_status=skipped（直接认定为不相关，省去 LLM 调用）
+# 职责: 使用 sentence-transformers 计算论文标题+摘要与研究领域的语义相似度
+# 策略: score >= SEMANTIC_SIMILARITY_THRESHOLD → 进入 Phase E (LLM 精细判断)
+#       score <  threshold → 直接标记为不相关，跳过 LLM (省 API 费用)
+# 依赖: pip install sentence-transformers
 # ==================================================================
 
-def phase_d_keyword_filter(db, keywords):
+def phase_d_semantic_filter(db, keywords):
     """
-    基于关键词表对论文进行初筛。
+    基于语义相似度对论文进行初筛。
 
     工作流程：
-    1. 加载关键词列表（空则跳过整个阶段）
-    2. 查询 keywords_filtered_status = 'pending' 的论文
-    3. 用 PaperRelevanceChecker 统计标题+摘要中命中的关键词数量
-    4. matched_num > 0 → 进入 Phase E (LLM 相关性判断)
-    5. matched_num == 0 → 直接标记 llm_relevance_status = 'skipped'（省去 API 调用）
+    1. 加载关键词列表（空则跳过整个阶段，所有论文进 Phase E）
+    2. 构造领域描述文本（由关键词拼接）
+    3. 初始化 SemanticFilter（加载 sentence-transformers 模型，仅一次）
+    4. 对每篇 pending 论文计算 title+abstract 与领域描述的余弦相似度
+    5. score >= 阈值 → 保留 llm_relevance 为 pending，等待 Phase E
+    6. score <  阈值 → 标记 llm_relevance 为 skipped（省去 LLM 调用）
+
+    相比原关键词匹配的优势：
+    - 不依赖精确字符匹配，同义词/近义词也能获得合理分数
+    - 不需要维护完备的关键词变体列表
+    - cosine 分数可以精细排序，阈值可调
 
     Args:
         db:       DatabaseClient 实例
-        keywords: 关键词列表
+        keywords: 关键词列表 (用于构建领域描述)
     """
-    logger.info("--- Phase D: 关键词初筛 ---")
+    logger.info("--- Phase D: 语义相似度初筛 ---")
 
     if not keywords:
         logger.info("Phase D: 无关键词配置，跳过（所有论文将进入 Phase E）")
         return
 
-    checker = PaperRelevanceChecker(keywords)
+    # 构建研究领域描述
+    domain_description = "研究领域涵盖：" + ", ".join(keywords)
+    logger.info(f"领域描述: {domain_description}")
 
-    paper_tasks = db.get_pendings("keywords_filtered_status")
-    if not paper_tasks:
+    # 初始化语义过滤器 (模型加载一次，复用给所有论文)
+    try:
+        sf = SemanticFilter(SEMANTIC_MODEL_PATH, domain_description)
+    except ImportError as e:
+        logger.error(f"Phase D: {e}")
+        logger.error("请安装 sentence-transformers: pip install sentence-transformers")
+        return
+    except Exception as e:
+        logger.error(f"Phase D: 语义过滤器初始化失败: {e}")
+        return
+
+    papers = db.get_pendings("semantic_filter_status")
+    if MAX_PAPERS_PER_PHASE:
+        papers = papers[:MAX_PAPERS_PER_PHASE]
+    if not papers:
         logger.info("Phase D: 无待处理论文")
         return
 
-    logger.info(f"Phase D: {len(paper_tasks)} 篇论文待筛选")
+    logger.info(f"Phase D: {len(papers)} 篇论文待初筛")
 
-    for paper in paper_tasks:
+    threshold = SEMANTIC_SIMILARITY_THRESHOLD
+    passed = 0
+    skipped = 0
+
+    for paper in papers:
         doi = paper["doi"]
         title = paper["title"] or ""
         abstract = paper["abstract"] or ""
         timestamp = str(datetime.now())
 
         try:
-            # ---- 统计关键词命中数量 ----
-            match_count = checker.keyword_match_count(title, abstract)
-            logger.debug(f"{doi}: 命中 {match_count} 个关键词")
+            # ---- 计算语义相似度 ----
+            score = sf.compute_similarity(title, abstract)
 
-            # ---- 更新关键词筛选结果 ----
-            if match_count > 0:
-                db.update_keyword_filter(
-                    doi, match_count, FetchStatus.SUCCESS.value, timestamp
-                )
-                # 有命中 → 保留 llm_relevance_status = 'pending' 等待 Phase E
+            # ---- 存储得分 ----
+            db.update_semantic_filter(doi, score, FetchStatus.SUCCESS.value, timestamp)
+
+            if score >= threshold:
+                # 相似度达标 → 保留 llm_relevance 为 pending，等待 Phase E 细筛
+                passed += 1
+                logger.debug(f"{doi}: score={score:.3f} → 通过初筛")
             else:
-                db.update_keyword_filter(
-                    doi, 0, FetchStatus.SUCCESS.value, timestamp
-                )
-                # 零命中 → 跳过 LLM 相关性判断，直接认定为不相关
+                # 相似度不足 → 直接标记不相关，省去 LLM 调用
                 db.update_process_status(
                     doi, "llm_relevance_status",
                     FetchStatus.SKIPPED.value,
                     "llm_relevance_date", timestamp
                 )
-                logger.debug(f"{doi}: 无关键词命中，跳过 LLM 相关性判断")
+                skipped += 1
+                logger.debug(f"{doi}: score={score:.3f} → 跳过 (阈值={threshold})")
 
         except Exception as e:
-            logger.error(f"关键词筛选失败 [{doi}]: {e}")
+            logger.error(f"Phase D: 语义相似度计算失败 [{doi}]: {e}")
             db.update_error_message(
-                doi, "keywords_filtered_status",
+                doi, "semantic_filter_status",
                 FetchStatus.FAILED.value,
-                "keywords_filtered_error", str(e),
-                "keywords_filtered_date", timestamp
+                "semantic_filter_error", str(e),
+                "semantic_filter_date", timestamp
             )
 
-    logger.info("Phase D 完成")
+    logger.info(f"Phase D 完成: {passed} 篇通过, {skipped} 篇跳过")
 
 
 # ==================================================================
@@ -593,6 +633,9 @@ def phase_e_llm_relevance(db):
         db: DatabaseClient 实例
     """
     logger.info("--- Phase E: LLM 相关性判断 ---")
+    if SKIP_PHASE_E:
+        logger.info("Phase E: SKIP_PHASE_E=True, skipping")
+        return
 
     keywords = load_keywords()
     if not keywords:
@@ -600,6 +643,8 @@ def phase_e_llm_relevance(db):
         return
 
     paper_tasks = db.get_pendings("llm_relevance_status")
+    if MAX_PAPERS_PER_PHASE:
+        paper_tasks = paper_tasks[:MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
         logger.info("Phase E: 无待判断论文")
         return
@@ -618,7 +663,7 @@ def phase_e_llm_relevance(db):
         try:
             # ---- 构造提示词并调用 API ----
             prompt = checker.build_default_prompt(title, abstract)
-            result_str = checker.call_deepseek_api(prompt, LLM_API_CONFIG_DICT)
+            result_str = checker.call_deepseek_api(prompt, LLM_API_CONFIG_DICT_RELE)
 
             # ---- 解析 JSON 响应 ----
             result = json.loads(result_str)
@@ -690,6 +735,9 @@ def phase_e2_mineru(db):
         db: DatabaseClient 实例
     """
     logger.info("--- Phase E2: MinerU PDF 全文解析 ---")
+    if SKIP_PHASE_E2:
+        logger.info("Phase E2: SKIP_PHASE_E2=True, skipping")
+        return
 
     # ---- Token 检查：未配置则静默跳过 ----
     if not MINERU_TOKEN:
@@ -822,7 +870,12 @@ def phase_f_llm_summary(db):
         db: DatabaseClient 实例
     """
     logger.info("--- Phase F: LLM 总结 ---")
+    if SKIP_PHASE_F:
+        logger.info("Phase F: SKIP_PHASE_F=True, skipping")
+        return
     papers = db.get_pendings("llm_summary_status")
+    if MAX_PAPERS_PER_PHASE:
+        papers = papers[:MAX_PAPERS_PER_PHASE]
     if not papers:
         logger.info("Phase F: 无待总结论文")
         return
@@ -830,7 +883,7 @@ def phase_f_llm_summary(db):
     # ---- 仅总结 LLM 判定为相关的论文 ----
     relevant_papers = [
         p for p in papers
-        if int(p.get("llm_relevance_result", 0)) == 1
+        if p["llm_relevance_result"]
     ]
 
     # 如果关键词未配置（跳过了 Phase D & E），则所有论文都尝试总结
@@ -844,7 +897,7 @@ def phase_f_llm_summary(db):
 
     logger.info(f"Phase F: {len(relevant_papers)} 篇相关论文待总结")
 
-    summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT)
+    summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
     success_count = 0
 
     for paper in relevant_papers:
@@ -1021,6 +1074,9 @@ def phase_h_email(report_dir):
         report_dir: 报告输出目录路径
     """
     logger.info("--- Phase H: 邮件推送 ---")
+    if SKIP_PHASE_H:
+        logger.info("Phase H: SKIP_PHASE_H=True, skipping")
+        return
     email_cfg = load_email_config()
     if not email_cfg:
         logger.info("Phase H: 无邮件配置，跳过")

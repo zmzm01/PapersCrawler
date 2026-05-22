@@ -1,0 +1,55 @@
+keywords:
+  # General & Core Concepts
+  - Laser-plasma acceleration
+  - High-gradient particle acceleration
+  - Compact plasma-based accelerators
+  - Table-top accelerators
+  - Advanced accelerator concepts
+
+  # Laser-Driven Electron Acceleration
+  - Laser wakefield acceleration (LWFA)
+  - Capillary discharge plasma waveguide
+  - High-brightness electron sources
+
+  # Laser-Driven Ion & Proton Acceleration
+  - Laser-driven ion acceleration
+  - Laser-driven proton acceleration
+  - Petawatt (PW) laser interaction
+  - Target normal sheath acceleration (TNSA)
+  - Radiation pressure acceleration (RPA)
+  - Monoenergetic proton beams
+  - Stable and tunable laser-driven proton accelerator
+  - Point-to-point magnetic beamline transport
+  - Energy-selective proton transport
+
+  # Plasma-Based Beam Optics & Transport
+  - Plasma lens
+  - Critical-density plasma lens
+  - High-gradient active plasma lens
+  - Plasma-based beam transport
+  - Compact ion beamline
+
+  # Radiation Sources
+  - Laser-driven radiation sources
+  - High-brightness X-ray / gamma-ray sources
+  - Betatron radiation
+  - Inverse Compton scattering
+
+  # Applications & Novel Diagnostics
+  - Ultrafast ion bunch
+  - Laser-driven ion beam applications
+  - Irradiation effects of laser-accelerated ions
+  - Biomedical applications (tumor radiotherapy)
+  - Materials science with ion beams
+  - High energy density physics (HEDP)
+  - Laser-driven Ion Beam Trajectory Probe (LITP)
+  - Magnetic confinement fusion plasma diagnostics
+
+  # Intelligent Accelerator Control
+  - Accelerator control system
+  - Intelligent automated accelerator operation
+  - Modular hardware/software architecture
+  - Machine learning for accelerator optimization
+  - Real-time data acquisition and control
+  - Physics-based control models
+  - Treatment control system for radiotherapy

@@ -208,6 +208,11 @@ class DatabaseClient:
             mineru_parse_date TEXT,
             mineru_fulltext TEXT,
 
+            -- 语义相似度初筛
+            semantic_similarity_score REAL,
+            semantic_filter_status TEXT DEFAULT 'pending',
+            semantic_filter_date TEXT,
+
             -- 时间戳
             created_date TEXT,
             updated_date TEXT
@@ -226,6 +231,19 @@ class DatabaseClient:
             "mineru_fulltext TEXT",
         ]
         for col_def in mineru_columns:
+            col_name = col_def.split()[0]
+            try:
+                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass  # 列已存在则跳过
+
+        # ---- 迁移: 为旧数据库添加语义过滤列 ----
+        semantic_columns = [
+            "semantic_similarity_score REAL",
+            "semantic_filter_status TEXT DEFAULT 'pending'",
+            "semantic_filter_date TEXT",
+        ]
+        for col_def in semantic_columns:
             col_name = col_def.split()[0]
             try:
                 self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
@@ -629,6 +647,39 @@ class DatabaseClient:
             WHERE doi = ?
             """,
             (error, status, status_date, doi),
+        )
+        self.conn.commit()
+
+    # ==================================================================
+    # Phase D: 语义相似度初筛
+    # ==================================================================
+
+    def update_semantic_filter(self, doi, score, status, status_date):
+        """
+        Phase D 专用: 存储语义相似度初筛结果。
+
+        使用 sentence-transformers 计算论文标题+摘要与研究领域描述
+        的余弦相似度，作为论文相关性的初筛得分。
+
+        Args:
+            doi:        论文 DOI
+            score:      余弦相似度得分 (0~1)
+            status:     FetchStatus 状态值
+            status_date: 处理日期时间字符串
+        """
+        if not self.paper_doi_exists(doi):
+            raise DataBaseDOINotExists(
+                f"DOI {doi} not found in DB, cannot update semantic filter."
+            )
+        self.conn.execute(
+            """
+            UPDATE papers
+            SET semantic_similarity_score = ?,
+                semantic_filter_status = ?,
+                semantic_filter_date = ?
+            WHERE doi = ?
+            """,
+            (score, status, status_date, doi),
         )
         self.conn.commit()
 

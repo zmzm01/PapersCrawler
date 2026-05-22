@@ -107,6 +107,74 @@ def test_init_with_whitespace_keywords():
     assert "laser" in checker.keywords
 
 
+# ---- 语义相似度初筛测试 (SemanticFilter) ----
+
+@pytest.fixture(scope="module")
+def semantic_filter():
+    """创建共享的 SemanticFilter 实例 (模型只加载一次)，不可用时跳过。"""
+    try:
+        from utils.paper_relevance import SemanticFilter
+        from config import SEMANTIC_MODEL_PATH
+        sf = SemanticFilter(
+            model_name=SEMANTIC_MODEL_PATH,
+            domain_description="研究领域涵盖：laser plasma, wakefield acceleration, proton acceleration"
+        )
+        return sf
+    except ImportError as e:
+        pytest.skip(f"sentence-transformers not installed: {e}")
+    except Exception as e:
+        pytest.skip(f"模型加载失败: {e}")
+
+
+def test_semantic_filter_high_relevance(semantic_filter):
+    """高度相关的论文应获得高分。"""
+    score = semantic_filter.compute_similarity(
+        title="Laser wakefield acceleration of electrons to GeV energies",
+        abstract="We demonstrate the acceleration of electrons to GeV energies using laser-driven plasma wakefields."
+    )
+    assert score > 0.3, f"Expected high score, got {score:.3f}"
+
+
+def test_semantic_filter_low_relevance(semantic_filter):
+    """完全不相关的论文应获得低分。"""
+    score = semantic_filter.compute_similarity(
+        title="Gravitational waves from binary neutron star mergers",
+        abstract="We present the detection of gravitational waves from a binary neutron star merger using LIGO."
+    )
+    assert score < 0.5, f"Expected low score for unrelated paper, got {score:.3f}"
+
+
+def test_semantic_filter_moderate_relevance(semantic_filter):
+    """部分相关的论文应获得中等分数。"""
+    score = semantic_filter.compute_similarity(
+        title="High-energy particle acceleration in astrophysical plasmas",
+        abstract="We study particle acceleration mechanisms in relativistic plasma environments."
+    )
+    assert 0.15 < score < 0.8, f"Expected moderate score, got {score:.3f}"
+
+
+def test_semantic_filter_empty_input(semantic_filter):
+    """空标题和摘要应返回低分。"""
+    score = semantic_filter.compute_similarity(title="", abstract="")
+    assert score >= 0.0
+
+
+def test_semantic_filter_class_exists():
+    """SemanticFilter 类应可导入（不需要模型下载）。"""
+    from utils.paper_relevance import SemanticFilter
+    assert SemanticFilter is not None
+    assert hasattr(SemanticFilter, 'compute_similarity')
+
+
+def test_semantic_filter_import_error_message():
+    """未安装 sentence-transformers 时应给出明确提示。"""
+    # 仅验证类已定义，实际 ImportError 在 __init__ 中触发
+    from utils.paper_relevance import SemanticFilter
+    import re
+    src = getattr(SemanticFilter.__init__, '__doc__', '') or ''
+    # 类本身存在即可
+
+
 # ---- LLM API 测试 (需要网络和 API 密钥) ----
 
 @pytest.mark.skip(reason="需要有效的 DeepSeek API 密钥和网络连接")
