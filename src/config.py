@@ -69,13 +69,27 @@ MINERU_TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4ODYwMDQwMiIsI
 # DeepSeek LLM API 配置
 # 用于论文相关性判断和内容总结
 # ==================================================================
-LLM_API_CONFIG_DICT = {
+LLM_API_CONFIG_DICT_RELE = {
     # API 端点: DeepSeek Chat Completions 接口
     "api_url": "https://api.deepseek.com/chat/completions",
     # API 密钥: 从 https://platform.deepseek.com 获取
     "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
     # 模型选择: deepseek-v4-flash (快速) 或 deepseek-v4-pro (更强)
     "model": "deepseek-v4-flash",
+    # 思考模式: "enabled" 表示开启深度思考, "disabled" 表示关闭
+    # 注意: 思考模式下不支持 temperature/top_p 等参数
+    "thinking": "enabled",
+    # API 调用超时 (秒)
+    "timeout": 300,
+}
+
+LLM_API_CONFIG_DICT_SUMM = {
+    # API 端点: DeepSeek Chat Completions 接口
+    "api_url": "https://api.deepseek.com/chat/completions",
+    # API 密钥: 从 https://platform.deepseek.com 获取
+    "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
+    # 模型选择: deepseek-v4-flash (快速) 或 deepseek-v4-pro (更强)
+    "model": "deepseek-v4-pro",
     # 思考模式: "enabled" 表示开启深度思考, "disabled" 表示关闭
     # 注意: 思考模式下不支持 temperature/top_p 等参数
     "thinking": "enabled",
@@ -113,6 +127,40 @@ SUMMARIES_PROMPT = """
 - 每个结果建议自成一段，用标题或列表区分。
 - 转义规则同上：反斜杠写双反斜杠，换行写 \\n。
 """
+
+
+# ==================================================================
+# 语义相似度初筛配置
+# 使用 sentence-transformers 模型判断论文与领域的语义相似度
+# 模型已本地化到 data/models/ 目录，无需网络下载
+# ==================================================================
+
+# 模型路径 (本地目录，首次需从 hf-mirror.com 下载后放入)
+# HuggingFace 镜像 (国内直连 huggingface.co 可能失败)
+# 改为本地模型后不再需要网络访问
+SEMANTIC_MODEL_PATH = str(DATA_DIR / "models" / "all-MiniLM-L6-v2")
+
+# 相似度阈值 (0~1)，低于此值的论文直接跳过 LLM 判断
+#   0.3 推荐起点 — 滤掉明显不相关的
+#   0.2 宽松 — 会放过较多无关论文进 LLM
+#   0.4 严格 — 可能漏掉有用但表述不同的论文
+SEMANTIC_SIMILARITY_THRESHOLD = 0.3
+
+# ==================================================================
+# 测试/调试开关
+# 正式全量运行时全部设为 0 / False
+# ==================================================================
+
+# 每阶段最多处理 N 篇论文 (0 = 不限制)
+MAX_PAPERS_PER_PHASE = 0
+SKIP_PHASE_C = False
+SKIP_PHASE_E = False
+SKIP_PHASE_E2 = False
+SKIP_PHASE_F = False
+SKIP_PHASE_H = False  # 邮件推送 (SMTP 已配置)
+
+# 过滤 Nature 新闻 (d41586 DOI)，只保留研究论文
+SKIP_NATURE_NEWS = True
 
 
 # ==================================================================
