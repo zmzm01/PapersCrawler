@@ -37,6 +37,7 @@ def _sample_paper():
         "doi": "10.1234/example.2025.001",
         "page_url": "https://journal.example.com/article/001",
         "pdf_url": "https://journal.example.com/article/001/pdf",
+        "abstract": "本文利用时间分辨角分辨光电子能谱研究了单层WSe₂中的激子凝聚现象。",
         "one_sentence": "本文采用 trARPES 研究了单层 WSe₂ 中激子凝聚的动力学过程。",
         "motivation_and_goal": "激子凝聚是否在室温下存在仍存争议。",
         "key_setup_and_method": "使用 800nm 泵浦、极紫外探测的 trARPES 系统。",

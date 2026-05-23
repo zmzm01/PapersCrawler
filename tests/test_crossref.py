@@ -107,6 +107,20 @@ def test_parse_work_date_only_year():
     assert meta.published == "2025-00-00"
 
 
+def test_parse_work_no_authors():
+    """CrossRef 响应无 author 字段时 authors 应为 None。"""
+    work = {"DOI": "10.0000/test", "title": ["No Author Paper"]}
+    meta = CrossrefClient.parse_work(work)
+    assert meta.authors is None
+
+
+def test_parse_work_empty_authors():
+    """CrossRef 响应 author 为空数组时 authors 应为 None。"""
+    work = {"DOI": "10.0000/test", "author": []}
+    meta = CrossrefClient.parse_work(work)
+    assert meta.authors is None
+
+
 def test_parse_work_no_date():
     """无日期字段时不应崩溃。"""
     work = {"DOI": "10.0000/test"}

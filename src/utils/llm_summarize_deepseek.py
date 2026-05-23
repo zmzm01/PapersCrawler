@@ -12,7 +12,7 @@ llm_summarize_deepseek.py
 - LLMConfigurationError：配置错误（缺少 api_key 等），在请求发出前即可检测。
 - LLMAPICallError：网络请求失败（DNS 解析失败、连接超时、HTTP 非 2xx 状态码等）。
 - LLMResponseParseError：API 返回了响应但无法按预期格式解析（缺少字段、类型不匹配）。
-- LLMContextLenghExceed：输入文本的估算 token 数超过设定的最大 chunk token 数，或超过模型上下文限制。
+- LLMContextLengthExceed：输入文本的估算 token 数超过设定的最大 chunk token 数，或超过模型上下文限制。
 
 这四类异常按层级递进：配置 → 网络 → 解析 → 容量，每层对应不同的问题排查方向。
 """
@@ -24,20 +24,14 @@ import json
 import requests
 from typing import Optional, Dict, Any
 
+from utils.paper_relevance import LLMAPICallError, LLMResponseParseError
+
 
 class LLMConfigurationError(Exception):
     """LLM 配置错误——API URL、API Key 等必要参数缺失或值无效"""
 
 
-class LLMAPICallError(Exception):
-    """LLM API 调用失败——网络层面的错误（连接失败、超时、服务端返回非 200 状态码）"""
-
-
-class LLMResponseParseError(Exception):
-    """LLM 响应解析失败——API 返回成功但内容结构不符合预期（缺少 choices、message、content 等字段）"""
-
-
-class LLMContextLenghExceed(Exception):
+class LLMContextLengthExceed(Exception):
     """发送文本可能过长了——输入文本的估算 token 数超过模型上下文窗口或预设的 chunk 限制"""
 
 
@@ -58,7 +52,7 @@ class DeepSeekPaperSummarizer:
     2. 分块总结后需要"摘要聚合"——将多个块的局部总结合并为全局总结，这本身也需要一次额外的 API 调用。
     3. 分块策略（按段落、按固定 token 数、按语义边界）需要根据论文结构特点调整，难以通用化。
     4. 大多数论文全文（尤其是经过文本提取后的纯文本）不超过 100K tokens，在 DeepSeek-V4 上下文范围内。
-    因此，当前版本仅在全文超过 max_chunk_tokens 时抛出 LLMContextLenghExceed，提醒用户处理。
+    因此，当前版本仅在全文超过 max_chunk_tokens 时抛出 LLMContextLengthExceed，提醒用户处理。
     """
 
     def __init__(self,
@@ -106,7 +100,7 @@ class DeepSeekPaperSummarizer:
 
         调用流程：
         1. 估算输入文本的 token 数（_estimate_tokens）。
-        2. 如果 force_chunk=True → 抛错（未实现），如果超限 → 抛 LLMContextLenghExceed。
+        2. 如果 force_chunk=True → 抛错（未实现），如果超限 → 抛 LLMContextLengthExceed。
         3. 构造请求头（Bearer Token 认证）和 payload，发送 POST 请求。
         4. 检查 HTTP 状态码，解析响应 JSON，提取 content 字段返回。
 
@@ -146,7 +140,7 @@ class DeepSeekPaperSummarizer:
             raise ValueError("此方法未实现.")
         if total_tokens > self.max_chunk_tokens:
             # 文本超出单块容量，提醒用户文本可能超过模型上下文窗口
-            raise LLMContextLenghExceed(f"估计文本长度达到 {total_tokens} tokens 可能超过 DeepSeek-V4 上下文长度限制.")
+            raise LLMContextLengthExceed(f"估计文本长度达到 {total_tokens} tokens 可能超过 DeepSeek-V4 上下文长度限制.")
 
         # 构造 HTTP 请求头
         # 使用 Bearer Token 认证——这是 DeepSeek API 的标准认证方式

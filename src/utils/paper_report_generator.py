@@ -263,6 +263,7 @@ def _make_markdown_section(paper: Dict, heading_base: int = 4) -> str:
     doi = paper.get('doi', '')
     page_url = paper.get('page_url', '')
     pdf_url = paper.get('pdf_url', '')
+    abstract = _process_text_for_markdown(paper.get('abstract', ''))
     # 各字段分别处理：普通字段用 _process_text_for_markdown，结果字段用 _process_results_markdown
     one_sentence = _process_text_for_markdown(paper.get('one_sentence', ''))
     motivation = _process_text_for_markdown(paper.get('motivation_and_goal', ''))
@@ -280,6 +281,8 @@ def _make_markdown_section(paper: Dict, heading_base: int = 4) -> str:
     if pdf_url:
         md += f"**PDF**: [下载]({pdf_url})  \n"
     md += "\n"
+    if abstract:
+        md += f"**原文摘要**: {abstract}\n\n"
     md += f"**一句话**: {one_sentence}\n\n"
     md += f"### 研究动机与目标\n\n{motivation}\n\n"
     md += f"### 关键方法与设置\n\n{method}\n\n"
@@ -365,6 +368,7 @@ def _make_html_section(paper: Dict) -> str:
     doi = paper.get('doi', '')
     page_url = paper.get('page_url', '')
     pdf_url = paper.get('pdf_url', '')
+    abstract = _process_text_for_html(paper.get('abstract', ''))
     one_sentence = _process_text_for_html(paper.get('one_sentence', ''))
     motivation = _process_text_for_html(paper.get('motivation_and_goal', ''))
     method = _process_text_for_html(paper.get('key_setup_and_method', ''))
@@ -380,6 +384,8 @@ def _make_html_section(paper: Dict) -> str:
         html += f"  <strong>页面:</strong> <a href=\"{page_url}\">{page_url}</a><br>\n"
     if pdf_url:
         html += f"  <strong>PDF:</strong> <a href=\"{pdf_url}\">{pdf_url}</a></p>\n"
+    if abstract:
+        html += f"  <p><strong>原文摘要:</strong> {abstract}</p>\n"
     html += f"  <p><strong>一句话:</strong> {one_sentence}</p>\n"
     html += f"  <h3>研究动机与目标</h3>\n  <p>{motivation}</p>\n"
     html += f"  <h3>关键方法与设置</h3>\n  <p>{method}</p>\n"

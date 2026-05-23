@@ -159,6 +159,15 @@ SKIP_PHASE_E2 = False
 SKIP_PHASE_F = False
 SKIP_PHASE_H = False  # 邮件推送 (SMTP 已配置)
 
+# Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
+# 避免连续请求触发 Cloudflare 速率限制，降低 IP 信誉受损风险
+PUBLISHER_PAGE_DELAY_MIN = 5
+PUBLISHER_PAGE_DELAY_MAX = 20
+
+# Phase C Publisher 爬虫: 同 publisher 内连续抓取失败 N 篇后中止该 publisher
+# 避免在被 Cloudflare 拦截时持续请求，进一步损害 IP 信誉
+PUBLISHER_MAX_CONSECUTIVE_FAILURES = 5
+
 # 过滤 Nature 新闻 (d41586 DOI)，只保留研究论文
 SKIP_NATURE_NEWS = True
 
@@ -184,26 +193,42 @@ def load_publishers():
 
 def load_keywords():
     """
-    加载研究领域关键词表。
+    加载研究领域配置。
 
-    从 configs/keywords.yaml 读取关键词列表。
-    支持两种格式:
+    从 configs/keywords.yaml 读取关键词和领域描述。
+    支持三种格式:
       1. 纯列表: ["keyword1", "keyword2", ...]
-      2. 字典: {"keywords": ["keyword1", "keyword2", ...]}
+         → domain_description 回退为关键词拼接
+      2. 字典 {"keywords": [...], "domain_description": "..."}
+         → 有 domain_description 则使用，无则回退
+      3. 字典 {"keywords": [...]}
+         → domain_description 回退为关键词拼接
 
     Returns:
-        list[str]: 关键词列表。文件不存在或为空时返回空列表 []。
+        dict: {"keywords": list[str], "domain_description": str}
+              文件不存在或为空时返回 {"keywords": [], "domain_description": ""}
     """
     path = CONFIG_DIR / "keywords.yaml"
     if not path.exists():
-        return []
+        return {"keywords": [], "domain_description": ""}
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    # YAML 空文件解析为 None
     if data is None:
-        return []
-    # 兼容两种格式
-    return data if isinstance(data, list) else data.get("keywords", [])
+        return {"keywords": [], "domain_description": ""}
+
+    # 纯列表格式 → 包装为 dict
+    if isinstance(data, list):
+        keywords = data
+        domain_description = ""
+    else:
+        keywords = data.get("keywords", [])
+        domain_description = data.get("domain_description", "")
+
+    # 未提供 domain_description 时回退到关键词拼接
+    if not domain_description and keywords:
+        domain_description = "研究领域涵盖：" + ", ".join(keywords)
+
+    return {"keywords": keywords, "domain_description": domain_description}
 
 
 def load_email_config():
