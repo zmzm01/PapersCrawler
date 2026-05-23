@@ -288,6 +288,8 @@ class CrossrefClient:
             # 拼接为全名，如 "John Smith"
             full_name = (f"{given} {family}").strip()
             authors.append({"name": full_name, "orcid": author.get("ORCID")})
+        if not authors:
+            authors = None
 
         # ---- 摘要 ----
         # 摘要常包含大量 JATS XML 标记，必须清洗

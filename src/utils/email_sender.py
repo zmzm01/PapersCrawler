@@ -129,8 +129,10 @@ class EmailSender:
         else:
             server = smtplib.SMTP_SSL(self.host, self.port, timeout=30)
 
-        # ---- 4. 登录并发送 ----
-        server.login(self.username, self.password)
-        server.send_message(msg)
-        server.quit()
+        try:
+            # ---- 4. 登录并发送 ----
+            server.login(self.username, self.password)
+            server.send_message(msg)
+        finally:
+            server.quit()
         return True

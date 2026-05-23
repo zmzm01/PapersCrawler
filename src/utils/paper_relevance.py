@@ -52,9 +52,10 @@ class PaperRelevanceChecker:
     ---
     """
 
-    def __init__(self, keywords: List[str]) -> None:
+    def __init__(self, keywords: List[str], domain_description: str = "") -> None:
         # 关键词预处理：统一转小写，去除空字符串
         self.keywords = [k.strip().lower() for k in keywords if k.strip()]
+        self.domain_description = domain_description or ""
 
         # 预编译关键词正则（忽略大小写，匹配单词边界避免部分命中）
         #
@@ -132,27 +133,44 @@ class PaperRelevanceChecker:
         ---
         """
         keywords_str = ", ".join(self.keywords)
-        # 构造 JSON 示例，ensure_ascii=False 保证中文正常显示
+        domain_text = self.domain_description
         json_example = json.dumps({
             "relevant": False,
             "confidence": "low",
             "reason": "摘要未明确提及核心关键词"
         }, ensure_ascii=False)
 
-        return (
-            f"你是一个研究领域文献筛选助手。给定关键词列表：\n"
-            f"{keywords_str}\n\n"
-            f"请根据以下论文信息判断其与关键词的相关性。\n\n"
-            f"标题：{title}\n"
-            f"摘要：{abstract}\n\n"
-            f"直接输出一个 JSON 对象，格式如下：\n"
-            f"{json_example}\n\n"
-            f"要求：\n"
-            f"- relevant: true 表示相关，false 表示不相关\n"
-            f"- confidence: high / medium / low，表示你对判断的把握程度\n"
-            f"- reason: 一句话说明判断依据\n"
-            f"只输出 JSON，不要包含任何其他内容。"
-        )
+        if domain_text:
+            return (
+                f"你是一个研究领域文献筛选助手。研究方向描述如下：\n"
+                f"{domain_text}\n\n"
+                f"该领域主要涉及以下关键词：{keywords_str}\n\n"
+                f"请根据以下论文信息判断其是否属于上述研究方向。\n\n"
+                f"标题：{title}\n"
+                f"摘要：{abstract}\n\n"
+                f"直接输出一个 JSON 对象，格式如下：\n"
+                f"{json_example}\n\n"
+                f"要求：\n"
+                f"- relevant: true 表示相关，false 表示不相关\n"
+                f"- confidence: high / medium / low，表示你对判断的把握程度\n"
+                f"- reason: 一句话说明判断依据\n"
+                f"只输出 JSON，不要包含任何其他内容。"
+            )
+        else:
+            return (
+                f"你是一个研究领域文献筛选助手。给定关键词列表：\n"
+                f"{keywords_str}\n\n"
+                f"请根据以下论文信息判断其与关键词的相关性。\n\n"
+                f"标题：{title}\n"
+                f"摘要：{abstract}\n\n"
+                f"直接输出一个 JSON 对象，格式如下：\n"
+                f"{json_example}\n\n"
+                f"要求：\n"
+                f"- relevant: true 表示相关，false 表示不相关\n"
+                f"- confidence: high / medium / low，表示你对判断的把握程度\n"
+                f"- reason: 一句话说明判断依据\n"
+                f"只输出 JSON，不要包含任何其他内容。"
+            )
 
     # ------------------------------------------------------------------
     # API 调用

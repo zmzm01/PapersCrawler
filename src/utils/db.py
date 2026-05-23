@@ -16,7 +16,7 @@ db.py
   │    Phase A: rss_fetched_*          → RSS 发现                 │
   │    Phase B: cr_metadata_fetched_*  → CrossRef 元数据补充      │
   │    Phase C: publisher_page_fetched_* → 期刊页面抓取           │
-  │    Phase D: keywords_filtered_*     → 关键词初筛              │
+  │    Phase D: semantic_filter_*         → 语义相似度初筛              │
   │    Phase E: llm_relevance_*         → LLM 相关性判断          │
   │    Phase F: llm_summary_*           → LLM 论文总结            │
   │                                                                │
@@ -32,13 +32,12 @@ db.py
 
 流水线流转:
   新 DOI 入库
-    → Phase A: rss_fetched = pending
     → Phase B: cr_metadata = pending (waiting)
     → Phase C: publisher_page = pending (waiting)
     → Phase D: keywords = pending (waiting)
     → Phase E: llm_relevance = pending (waiting, 关键词命中时)
     → Phase F: llm_summary = pending (waiting, 判定相关时)
-    → Phase G: 报告生成 (使用 get_papers_with_summary())
+    → Phase G: 报告生成 (使用 get_papers_for_report())
 """
 
 import sqlite3
@@ -139,12 +138,13 @@ class DatabaseClient:
           xxx_error:  错误信息
           xxx_date:   处理时间
 
-        Phase A — RSS 抓取:       rss_fetched_*
-        Phase B — CrossRef 元数据: cr_metadata_fetched_*
-        Phase C — 出版商页面:      publisher_page_fetched_*
-        Phase D — 关键词筛选:      keywords_filtered_*
-        Phase E — LLM 相关性:      llm_relevance_*
-        Phase F — LLM 总结:        llm_summary_*
+    Phase A — RSS 抓取: 无单独状态列（DOI 入库即完成）
+    Phase B — CrossRef 元数据: cr_metadata_fetched_*
+    Phase C — 出版商页面:      publisher_page_fetched_*
+    Phase D — 语义相似度初筛:   semantic_filter_*
+    Phase E — LLM 相关性:      llm_relevance_*
+    Phase F — LLM 总结:        llm_summary_*
+    Phase G — 报告生成:        report_*
 
         ---- 时间戳 ----
         created_date:  记录创建时间
@@ -169,10 +169,6 @@ class DatabaseClient:
             page_url TEXT,
             pdf_url TEXT,
 
-            -- RSS 抓取状态
-            rss_fetched_status TEXT DEFAULT 'pending',
-            rss_fetched_date TEXT,
-
             -- CrossRef 元数据状态
             cr_metadata_fetched_status TEXT DEFAULT 'pending',
             cr_metadata_fetched_error TEXT,
@@ -182,11 +178,6 @@ class DatabaseClient:
             publisher_page_fetched_status TEXT DEFAULT 'pending',
             publisher_page_fetched_error TEXT,
             publisher_page_fetched_date TEXT,
-
-            -- 关键词筛选
-            keywords_filtered_status TEXT DEFAULT 'pending',
-            keywords_filtered_matched_num INTEGER DEFAULT 0,
-            keywords_filtered_date TEXT,
 
             -- LLM 相关性判断
             llm_relevance_status TEXT DEFAULT 'pending',
@@ -211,7 +202,12 @@ class DatabaseClient:
             -- 语义相似度初筛
             semantic_similarity_score REAL,
             semantic_filter_status TEXT DEFAULT 'pending',
+            semantic_filter_error TEXT,
             semantic_filter_date TEXT,
+
+            -- 报告生成状态
+            report_status TEXT DEFAULT 'pending',
+            report_date TEXT,
 
             -- 时间戳
             created_date TEXT,
@@ -241,9 +237,22 @@ class DatabaseClient:
         semantic_columns = [
             "semantic_similarity_score REAL",
             "semantic_filter_status TEXT DEFAULT 'pending'",
+            "semantic_filter_error TEXT",
             "semantic_filter_date TEXT",
         ]
         for col_def in semantic_columns:
+            col_name = col_def.split()[0]
+            try:
+                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass  # 列已存在则跳过
+
+        # ---- 迁移: 为旧数据库添加报告状态列 ----
+        report_columns = [
+            "report_status TEXT DEFAULT 'pending'",
+            "report_date TEXT",
+        ]
+        for col_def in report_columns:
             col_name = col_def.split()[0]
             try:
                 self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
@@ -352,7 +361,7 @@ class DatabaseClient:
     # Phase B: CrossRef 元数据更新
     # ==================================================================
 
-    def update_crossref_metadata(self, doi, title, authors_json, published):
+    def update_crossref_metadata(self, doi, title, authors_json, published, abstract=""):
         """
         Phase B 专用: 用 CrossRef 返回的元数据更新数据库记录。
 
@@ -360,6 +369,7 @@ class DatabaseClient:
           - title:               可能比 RSS 标题更完整/准确
           - authors_json:        作者列表 (JSON 格式)
           - paperdate_crossref:  CrossRef 返回的出版日期
+          - abstract:            CrossRef 返回的摘要（空字符串不覆盖已有值）
 
         Raises:
             DataBaseDOINotExists: DOI 在数据库中不存在
@@ -369,6 +379,7 @@ class DatabaseClient:
             title:        来自 CrossRef 的标题
             authors_json: 作者列表的 JSON 字符串 (json.dumps(meta.authors))
             published:    CrossRef 返回的出版日期
+            abstract:     CrossRef 返回的摘要（可能为空）
         """
         if not self.paper_doi_exists(doi):
             raise DataBaseDOINotExists(
@@ -377,10 +388,11 @@ class DatabaseClient:
         self.conn.execute(
             """
             UPDATE papers
-            SET title = ?, authors_json = ?, paperdate_crossref = ?
+            SET title = ?, authors_json = ?, paperdate_crossref = ?,
+                abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
             WHERE doi = ?
             """,
-            (title, authors_json, published, doi),
+            (title, authors_json, published, abstract, abstract, doi),
         )
         self.conn.commit()
 
@@ -425,42 +437,6 @@ class DatabaseClient:
             """,
             (abstract, authors_json, pdf_url, paperdate_page,
              status, status_date, doi),
-        )
-        self.conn.commit()
-
-    # ==================================================================
-    # Phase D: 关键词筛选结果
-    # ==================================================================
-
-    def update_keyword_filter(self, doi, matched_num, status, status_date):
-        """
-        Phase D 专用: 记录关键词匹配结果。
-
-        如果 matched_num == 0，调用方应将 llm_relevance 设为 skipped
-        （无需调用 LLM 判断相关性，直接认定为不相关）。
-
-        Raises:
-            DataBaseDOINotExists: DOI 在数据库中不存在
-
-        Args:
-            doi:         论文 DOI
-            matched_num: 命中的关键词数量
-            status:      FetchStatus 状态值
-            status_date: 处理日期时间字符串
-        """
-        if not self.paper_doi_exists(doi):
-            raise DataBaseDOINotExists(
-                f"DOI {doi} not found in DB, cannot update keyword filter."
-            )
-        self.conn.execute(
-            """
-            UPDATE papers
-            SET keywords_filtered_matched_num = ?,
-                keywords_filtered_status = ?,
-                keywords_filtered_date = ?
-            WHERE doi = ?
-            """,
-            (matched_num, status, status_date, doi),
         )
         self.conn.commit()
 
@@ -704,11 +680,11 @@ class DatabaseClient:
         """)
         return cur.fetchall()
 
-    def get_papers_with_summary(self):
+    def get_papers_for_report(self):
         """
-        获取已生成 LLM 总结的论文。
+        获取待汇入报告的新论文：LLM 总结成功且尚未被报告过。
 
-        查询条件: llm_summary_status = 'success'
+        查询条件: llm_summary_status = 'success' AND report_status = 'pending'
         排序: 按 RSS 日期倒序
 
         Returns:
@@ -717,9 +693,32 @@ class DatabaseClient:
         cur = self.conn.execute("""
         SELECT * FROM papers
         WHERE llm_summary_status = 'success'
+          AND report_status = 'pending'
         ORDER BY paperdate_rss DESC
         """)
         return cur.fetchall()
+
+    def mark_papers_reported(self, dois, timestamp):
+        """
+        批量标记论文为已报告。
+
+        将指定 DOI 列表的论文 report_status 设为 'reported'，
+        并记录首次报告时间。
+
+        Args:
+            dois:      论文 DOI 列表
+            timestamp: 报告生成时间戳字符串
+        """
+        for doi in dois:
+            self.conn.execute(
+                """
+                UPDATE papers
+                SET report_status = 'reported', report_date = ?
+                WHERE doi = ?
+                """,
+                (timestamp, doi),
+            )
+        self.conn.commit()
 
     def get_all_papers(self):
         """
