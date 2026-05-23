@@ -200,3 +200,66 @@ Publisher Page → abstract (补充非 OA 论文摘要)
 - [x] 语义相似度方法判断相关性 (sentence-transformers)
 - [ ] 热点/趋势分析
 - [ ] 并发升级 + 数据库同步升级
+
+## Changelog
+
+### 2026-05 — Pipeline 全面修复与增强
+
+**Phase A — RSS Fetch**
+- 删除无用的 `rss_fetched_status` / `rss_fetched_date` DB 列（写入后从未被任何查询读取）
+
+**Phase B — CrossRef**
+- `parse_work()` 作者为空时返回 `None` 而非 `[]`，避免空列表被误判为成功
+- `phase_b_crossref()` 检测作者缺失时标记 `failed` 而非 `success`
+- 新增 CrossRef abstract 存储：`update_crossref_metadata()` 增加 `abstract` 参数，空值不覆盖 Phase C 已写入的摘要（`CASE WHEN`）
+
+**Phase C — Publisher Scraper**
+- Nature `datePublished` 标准化：ISO 8601 (`2026-05-19T00:00:00Z`) → `YYYY-MM-DD`
+- CF 拦截检测：从 `abstract+pdf_url` 双空改为 `title+doi+abstract` 三空检测；增加 CF 指纹关键词 (`challenge-platform`, `_cf_chl_opt`, `cf-browser-verification`)
+- 页面间随机延迟 `5~20s` + publisher 间冷却 `15s`，避免 IP 信誉受损
+- 同 publisher 连续失败 `PUBLISHER_MAX_CONSECUTIVE_FAILURES` 篇后自动中止
+- Nature/Science scraper `dc.type` 逻辑修复：空值时正确抛 `PageParseError` 而非静默跳过
+- NatureScraper JSON-LD 解析包裹 `try/except` 保护
+- OpticaScraper 双赋值清理
+- 浏览器指纹增强：`hardwareConcurrency`=8, `deviceMemory`=8, `maxTouchPoints`=0, viewport=1920x1080
+
+**Phase D — Semantic Filter**
+- 新增 `semantic_filter_error` DB 列（修复崩溃级 bug）
+- 关键词列表 → 段落级 `domain_description` 自然语言描述，sentence-transformers 语义信息更丰富
+- 删除废弃的 `keywords_filtered_*` DB 列和 `update_keyword_filter()` 方法
+
+**Phase E — LLM Relevance**
+- `PaperRelevanceChecker` 支持 `domain_description` 参数，LLM prompt 同时包含段落描述和关键词列表
+- `load_keywords()` 返回 `{"keywords": [...], "domain_description": "..."}` dict
+
+**Phase E2 — MinerU PDF**
+- PDF 下载：`requests.get()` → Playwright 浏览器（复用反检测策略和 session cookie）
+- MinerU 输出持久化到 `data/mineru_output/`，不再删除
+- Playwright 初始化移入 `try` 块，`finally` 增加 None 检查
+
+**Phase F — LLM Summary**
+- 无 MinerU 全文的论文直接跳过，不回退到标题+摘要
+- 新增 `json.JSONDecodeError` 专用异常处理
+- `LLMContextLenghExceed` → `LLMContextLengthExceed`（拼写修正）
+- `LLMAPICallError` / `LLMResponseParseError` 统一从 `paper_relevance` 导入
+
+**Phase G — Report**
+- 新增 `report_status` / `report_date` DB 列，报告过的论文不再重复出现
+- `get_papers_with_summary()` → `get_papers_for_report()` （仅拉取未报告的新论文）
+- 报告中新增原文摘要展示
+- 删除 PDF 生成（pandoc/xelatex 依赖过重），仅保留 Markdown
+
+**Phase H — Email**
+- 仅附加 `.md` 文件，正文保持纯文本
+- `load_email_config()` 包裹 `try/except` 保护
+- SMTP 连接 `try/finally` 保证 `quit()` 执行
+
+**Config**
+- `keywords.yaml` 支持 `domain_description` 段落和 `keywords` 双字段
+- 新增 `PUBLISHER_PAGE_DELAY_MIN/MAX`, `PUBLISHER_MAX_CONSECUTIVE_FAILURES` 配置
+
+**DB Schema**
+- 删除：`rss_fetched_status`, `rss_fetched_date`, `keywords_filtered_status`, `keywords_filtered_matched_num`, `keywords_filtered_date`
+- 新增：`semantic_filter_error`, `report_status`, `report_date`
+- 新增方法：`get_papers_for_report()`, `mark_papers_reported()`
+- 删除方法：`update_keyword_filter()`

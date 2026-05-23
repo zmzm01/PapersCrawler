@@ -75,16 +75,18 @@ def test_update_crossref_metadata(db):
     """验证 CrossRef 元数据更新正常。"""
     db.insert_rss_basicinfo("10.0000/b", "Old", "http://b", "J.B", "pubB", "2025")
     authors_json = json.dumps([{"name": "Alice"}, {"name": "Bob"}])
-    db.update_crossref_metadata("10.0000/b", "New Title", authors_json, "2025-06-15")
+    db.update_crossref_metadata("10.0000/b", "New Title", authors_json, "2025-06-15",
+                                "This is the abstract.")
     papers = db.get_all_papers()
     assert papers[0]["title"] == "New Title"
     assert papers[0]["paperdate_crossref"] == "2025-06-15"
+    assert papers[0]["abstract"] == "This is the abstract."
 
 
 def test_update_crossref_nonexistent_doi_raises(db):
     """更新不存在的 DOI 应抛出 DataBaseDOINotExists。"""
     with pytest.raises(DataBaseDOINotExists):
-        db.update_crossref_metadata("10.0000/ghost", "T", "[]", "2025")
+        db.update_crossref_metadata("10.0000/ghost", "T", "[]", "2025", "")
 
 
 # ---- Phase C: Publisher page ----
@@ -101,17 +103,6 @@ def test_update_publisher_page(db):
     papers = db.get_all_papers()
     assert papers[0]["abstract"] == "This is abstract"
     assert papers[0]["publisher_page_fetched_status"] == "success"
-
-
-# ---- Phase D: 关键词筛选 ----
-
-def test_update_keyword_filter(db):
-    """验证关键词匹配数更新。"""
-    db.insert_rss_basicinfo("10.0000/d", "T", "http://d", "J", "pub", "2025")
-    db.update_keyword_filter("10.0000/d", 5, FetchStatus.SUCCESS.value, "2025")
-    papers = db.get_all_papers()
-    assert papers[0]["keywords_filtered_matched_num"] == 5
-    assert papers[0]["keywords_filtered_status"] == "success"
 
 
 # ---- Phase E: LLM 相关性 ----
@@ -177,14 +168,30 @@ def test_get_relevant_papers(db):
     assert relevant[0]["doi"] == "10.0000/r1"
 
 
-def test_get_papers_with_summary(db):
-    """验证 get_papers_with_summary 只返回已总结的论文。"""
+def test_get_papers_for_report(db):
+    """验证 get_papers_for_report 只返回已总结且未报告的论文。"""
     db.insert_rss_basicinfo("10.0000/s1", "S1", "http://s1", "J", "pub", "2025")
     db.insert_rss_basicinfo("10.0000/s2", "S2", "http://s2", "J", "pub", "2025")
     db.update_llm_summary("10.0000/s1", '{"x":"y"}',
                           FetchStatus.SUCCESS.value, "2025")
-    summarized = db.get_papers_with_summary()
-    assert len(summarized) == 1
+    db.update_llm_summary("10.0000/s2", '{"x":"z"}',
+                          FetchStatus.SUCCESS.value, "2025")
+    # s2 已报告，s1 未报告
+    db.mark_papers_reported(["10.0000/s2"], "2025")
+    papers = db.get_papers_for_report()
+    assert len(papers) == 1
+    assert papers[0]["doi"] == "10.0000/s1"
+
+
+def test_mark_papers_reported(db):
+    """验证 mark_papers_reported 批量标记论文。"""
+    db.insert_rss_basicinfo("10.0000/r1", "R1", "http://r1", "J", "pub", "2025")
+    db.insert_rss_basicinfo("10.0000/r2", "R2", "http://r2", "J", "pub", "2025")
+    db.mark_papers_reported(["10.0000/r1", "10.0000/r2"], "2025-06-01")
+    all_papers = db.get_all_papers()
+    for p in all_papers:
+        assert p["report_status"] == "reported"
+        assert p["report_date"] == "2025-06-01"
 
 
 # ---- 通用状态更新 ----

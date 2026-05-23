@@ -30,7 +30,7 @@ PapersCrawler 主入口 —— 8 阶段文献追踪流水线。
 import json
 import logging
 import os
-import shutil
+import random
 import sys
 import time
 import tempfile
@@ -38,19 +38,19 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-import requests
-
 from config import (
     load_publishers, load_keywords, load_email_config,
     REQUEST_TIMEOUT, CROSSREF_MAILTO,
     LOG_FILE_PATH, DB_PATH, BROWSER_SESSION_DIR,
     RAW_RSS_DIR, RAW_PAGE_DIR, REPORT_DIR, CONFIG_DIR,
     LLM_API_CONFIG_DICT_RELE, LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT,
-    MINERU_TOKEN,
+    MINERU_TOKEN, MINERU_OUTPUT_DIR,
     SEMANTIC_MODEL_PATH, SEMANTIC_SIMILARITY_THRESHOLD,
                 MAX_PAPERS_PER_PHASE,
     SKIP_PHASE_C, SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_H,
     SKIP_NATURE_NEWS,
+    PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX,
+    PUBLISHER_MAX_CONSECUTIVE_FAILURES,
 )
 
 from utils.db import DatabaseClient, FetchStatus
@@ -69,12 +69,12 @@ from utils.paper_relevance import (
 )
 from utils.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer,
-    LLMContextLenghExceed,
+    LLMContextLengthExceed,
 )
 from utils.paper_report_generator import generate_report
-from utils.pdf_converter import markdown_to_pdf
 from utils.email_sender import EmailSender
 from utils.mineru_paper_parser import MinerUParser
+from playwright.sync_api import sync_playwright
 
 
 # ==================================================================
@@ -160,7 +160,8 @@ def main():
     # ---- 加载配置 ----
     publishers = load_publishers()
     keywords = load_keywords()
-    logger.info(f"加载 {len(publishers)} 个期刊数据源，{len(keywords)} 个关键词")
+    logger.info(f"加载 {len(publishers)} 个期刊数据源")
+    logger.info(f"关键词 {len(keywords['keywords'])} 个, 领域描述 {len(keywords['domain_description'])} 字符")
 
     # ---- 创建报告输出目录 ----
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -201,7 +202,7 @@ def phase_a_rss(db, publishers):
     2. 检查本地是否有当天缓存的 RSS XML 文件，有则直接读取，无则 HTTP 请求
     3. 使用 RSSProcessor 解析 XML，提取 DOI、标题、链接、日期
     4. 对每篇论文检查 DOI 是否已存在（去重），不存在则插入数据库
-    5. 记录创建日期，标记 rss_fetched_status 为 pending（等待下游处理）
+    5. 记录创建日期
 
     Args:
         db:         DatabaseClient 实例
@@ -288,7 +289,7 @@ def phase_b_crossref(db):
     对 RSS 阶段发现的新论文，通过 CrossRef API 补全元数据。
 
     工作流程：
-    1. 查询 rss_fetched 已完成的论文（cr_metadata_fetched_status = 'pending'）
+    1. 查询 cr_metadata_fetched_status = 'pending' 的论文
     2. 对每篇论文用 DOI 调用 CrossRef API
     3. 将返回的元数据（标题、作者 JSON、出版日期）写入数据库
     4. 标记处理状态（success / failed）
@@ -323,18 +324,34 @@ def phase_b_crossref(db):
             logger.debug(f"CrossRef 命中: {crossrefPaper.title} | {paperDOI}")
 
             # ---- 更新元数据 ----
-            # 将作者列表序列化为 JSON 字符串存入数据库
-            authors_json = json.dumps(crossrefPaper.authors, ensure_ascii=False)
-            db.update_crossref_metadata(
-                paperDOI, crossrefPaper.title,
-                authors_json, crossrefPaper.published
-            )
-            # 标记为成功
-            db.update_process_status(
-                paperDOI, "cr_metadata_fetched_status",
-                FetchStatus.SUCCESS.value,
-                "cr_metadata_fetched_date", timestamp
-            )
+            authors_json = json.dumps(crossrefPaper.authors, ensure_ascii=False) if crossrefPaper.authors else "[]"
+
+            if not crossrefPaper.authors:
+                # CrossRef 返回了数据但缺少作者信息
+                logger.warning(f"CrossRef 作者数据缺失: {paperDOI}")
+                db.update_crossref_metadata(
+                    paperDOI, crossrefPaper.title,
+                    authors_json, crossrefPaper.published,
+                    crossrefPaper.abstract or ""
+                )
+                db.update_error_message(
+                    paperDOI, "cr_metadata_fetched_status",
+                    FetchStatus.FAILED.value,
+                    "cr_metadata_fetched_error", "CrossRef author data missing",
+                    "cr_metadata_fetched_date", timestamp
+                )
+            else:
+                db.update_crossref_metadata(
+                    paperDOI, crossrefPaper.title,
+                    authors_json, crossrefPaper.published,
+                    crossrefPaper.abstract or ""
+                )
+                # 标记为成功
+                db.update_process_status(
+                    paperDOI, "cr_metadata_fetched_status",
+                    FetchStatus.SUCCESS.value,
+                    "cr_metadata_fetched_date", timestamp
+                )
 
         except NotFoundError as e:
             # DOI 不存在于 CrossRef，可能是新论文尚未注册
@@ -429,6 +446,7 @@ def phase_c_publisher(db):
             continue
 
         try:
+            consecutive_failures = 0
             for paper in papers:
                 paperDOI = paper["doi"]
                 page_url = paper["page_url"]
@@ -450,22 +468,48 @@ def phase_c_publisher(db):
                     # ---- 步骤 2: 解析页面提取元数据 ----
                     paperPage = scraper.parse_page()
 
-                    # ---- 步骤 3: 写入数据库 ----
-                    authors_json = json.dumps(
-                        paperPage.authors, ensure_ascii=False
-                    ) if paperPage.authors else "[]"
-                    pdf_url = paperPage.pdf_url or ""
-                    abstract = paperPage.abstract or ""
-                    paperdate_page = paperPage.date or ""
-
-                    db.update_publisher_page(
-                        paperDOI, abstract, authors_json, pdf_url,
-                        paperdate_page, FetchStatus.SUCCESS.value, timestamp
+                    # ---- Cloudflare 拦截检测 ----
+                    _cf_blocked = (
+                        "challenge-platform" in scraper.html
+                        or "_cf_chl_opt" in scraper.html
+                        or "cf-browser-verification" in scraper.html
                     )
-                    logger.debug(f"Publisher 页面抓取成功: {paperDOI}")
+                    if _cf_blocked or (not paperPage.title and not paperPage.doi and not paperPage.abstract):
+                        logger.warning(
+                            f"Publisher 页面数据不完整（可能被 Cloudflare 拦截）: {paperDOI}"
+                        )
+                        db.update_error_message(
+                            paperDOI, "publisher_page_fetched_status",
+                            FetchStatus.FAILED.value,
+                            "publisher_page_fetched_error",
+                            "Title, DOI and Abstract all empty (possible Cloudflare block)",
+                            "publisher_page_fetched_date", timestamp
+                        )
+                        consecutive_failures += 1
+                        if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
+                            logger.warning(
+                                f"Publisher {publisher} 连续 {consecutive_failures} 篇抓取失败，中止该 publisher，剩余论文保留待处理状态"
+                            )
+                            break
+                    else:
+                        # ---- 步骤 3: 写入数据库 ----
+                        consecutive_failures = 0
+                        authors_json = json.dumps(
+                            paperPage.authors, ensure_ascii=False
+                        ) if paperPage.authors else "[]"
+                        pdf_url = paperPage.pdf_url or ""
+                        abstract = paperPage.abstract or ""
+                        paperdate_page = paperPage.date or ""
+
+                        db.update_publisher_page(
+                            paperDOI, abstract, authors_json, pdf_url,
+                            paperdate_page, FetchStatus.SUCCESS.value, timestamp
+                        )
+                        logger.debug(f"Publisher 页面抓取成功: {paperDOI}")
 
                 except NaturePageNotPaper:
                     # Nature/Science 中非论文页面（如 News），静默跳过
+                    consecutive_failures = 0
                     logger.info(f"非论文页面，跳过: {paperDOI}")
                     db.update_process_status(
                         paperDOI, "publisher_page_fetched_status",
@@ -481,6 +525,12 @@ def phase_c_publisher(db):
                         "publisher_page_fetched_error", str(e),
                         "publisher_page_fetched_date", timestamp
                     )
+                    consecutive_failures += 1
+                    if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
+                        logger.warning(
+                            f"Publisher {publisher} 连续 {consecutive_failures} 篇抓取失败，中止该 publisher，剩余论文保留待处理状态"
+                        )
+                        break
 
                 except Exception as e:
                     logger.error(f"Publisher 抓取异常 [{paperDOI}]: {e}")
@@ -490,6 +540,17 @@ def phase_c_publisher(db):
                         "publisher_page_fetched_error", str(e),
                         "publisher_page_fetched_date", timestamp
                     )
+                    consecutive_failures += 1
+                    if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
+                        logger.warning(
+                            f"Publisher {publisher} 连续 {consecutive_failures} 篇抓取失败，中止该 publisher，剩余论文保留待处理状态"
+                        )
+                        break
+
+                # 页面间随机延迟，避免连续请求触发速率限制
+                delay = random.uniform(PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX)
+                logger.debug(f"随机延迟 {delay:.1f}s 后处理下一篇...")
+                time.sleep(delay)
 
         finally:
             # 确保浏览器资源被释放
@@ -498,6 +559,10 @@ def phase_c_publisher(db):
                     scraper.close()
                 except Exception:
                     pass
+
+        # 出版社间冷却，避免快速切换触发检测
+        logger.info(f"出版社 {publisher} 处理完毕，冷却 15s...")
+        time.sleep(15)
 
     logger.info("Phase C 完成")
 
@@ -511,36 +576,37 @@ def phase_c_publisher(db):
 # 依赖: pip install sentence-transformers
 # ==================================================================
 
-def phase_d_semantic_filter(db, keywords):
+def phase_d_semantic_filter(db, domain_config):
     """
     基于语义相似度对论文进行初筛。
 
     工作流程：
-    1. 加载关键词列表（空则跳过整个阶段，所有论文进 Phase E）
-    2. 构造领域描述文本（由关键词拼接）
-    3. 初始化 SemanticFilter（加载 sentence-transformers 模型，仅一次）
-    4. 对每篇 pending 论文计算 title+abstract 与领域描述的余弦相似度
-    5. score >= 阈值 → 保留 llm_relevance 为 pending，等待 Phase E
-    6. score <  阈值 → 标记 llm_relevance 为 skipped（省去 LLM 调用）
+    1. 加载领域描述文本（空则跳过整个阶段，所有论文进 Phase E）
+    2. 初始化 SemanticFilter（加载 sentence-transformers 模型，仅一次）
+    3. 对每篇 pending 论文计算 title+abstract 与领域描述的余弦相似度
+    4. score >= 阈值 → 保留 llm_relevance 为 pending，等待 Phase E
+    5. score <  阈值 → 标记 llm_relevance 为 skipped（省去 LLM 调用）
 
-    相比原关键词匹配的优势：
+    语义相似度优势：
     - 不依赖精确字符匹配，同义词/近义词也能获得合理分数
-    - 不需要维护完备的关键词变体列表
+    - 段落级别的领域描述比关键词列表语义信息更丰富
     - cosine 分数可以精细排序，阈值可调
 
     Args:
-        db:       DatabaseClient 实例
-        keywords: 关键词列表 (用于构建领域描述)
+        db:            DatabaseClient 实例
+        domain_config: {"keywords": list[str], "domain_description": str}
     """
     logger.info("--- Phase D: 语义相似度初筛 ---")
 
-    if not keywords:
-        logger.info("Phase D: 无关键词配置，跳过（所有论文将进入 Phase E）")
+    keywords = domain_config.get("keywords", [])
+    domain_description = domain_config.get("domain_description", "")
+
+    if not domain_description:
+        logger.info("Phase D: 无领域描述，跳过（所有论文将进入 Phase E）")
         return
 
-    # 构建研究领域描述
-    domain_description = "研究领域涵盖：" + ", ".join(keywords)
-    logger.info(f"领域描述: {domain_description}")
+    logger.info(f"领域描述: {domain_description[:100]}...")
+    logger.info(f"关键词数量: {len(keywords)}")
 
     # 初始化语义过滤器 (模型加载一次，复用给所有论文)
     try:
@@ -637,9 +703,11 @@ def phase_e_llm_relevance(db):
         logger.info("Phase E: SKIP_PHASE_E=True, skipping")
         return
 
-    keywords = load_keywords()
-    if not keywords:
-        logger.info("Phase E: 无关键词配置，跳过 LLM 相关性判断")
+    domain_config = load_keywords()
+    keywords = domain_config.get("keywords", [])
+    domain_description = domain_config.get("domain_description", "")
+    if not keywords and not domain_description:
+        logger.info("Phase E: 无关键词与领域描述配置，跳过 LLM 相关性判断")
         return
 
     paper_tasks = db.get_pendings("llm_relevance_status")
@@ -651,7 +719,7 @@ def phase_e_llm_relevance(db):
 
     logger.info(f"Phase E: {len(paper_tasks)} 篇论文待判断相关性")
 
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(keywords, domain_description)
     success_count = 0
 
     for paper in paper_tasks:
@@ -760,81 +828,113 @@ def phase_e2_mineru(db):
     # ---- 初始化 MinerU 解析器 ----
     parser = MinerUParser(MINERU_TOKEN)
 
-    # ---- PDF 下载请求头：模拟浏览器避免被拒 ----
-    pdf_headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/136.0 Safari/537.36"
-        ),
-        "Accept": "application/pdf,*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
     success_count = 0
     failed_count = 0
+    pw = None
+    pdf_context = None
 
-    for paper in papers_with_pdf:
-        doi = paper["doi"]
-        pdf_url = paper["pdf_url"]
-        timestamp = str(datetime.now())
-        pdf_path = None  # 临时 PDF 路径，用于 finally 清理
+    try:
+        # ---- 初始化 Playwright 浏览器用于 PDF 下载 ----
+        # 复用 Phase C 的反检测策略，出版商 PDF 链接通常需要 session cookie / Cloudflare 认证
+        pw = sync_playwright().start()
+        pdf_context = pw.chromium.launch_persistent_context(
+            user_data_dir=str(BROWSER_SESSION_DIR / "mineru_download"),
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+            viewport={"width": 1920, "height": 1080},
+        )
+        pdf_page = pdf_context.new_page()
+        # 注入反检测 JS（与 Phase C Publisher Scraper 一致）
+        pdf_page.evaluate("""
+        () => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+        }
+        """)
 
-        try:
-            # ---- 步骤 1: 下载 PDF 到临时文件 ----
-            logger.info(f"下载 PDF: {doi} ← {pdf_url}")
-            resp = requests.get(
-                pdf_url, headers=pdf_headers, timeout=60, stream=True
-            )
-            resp.raise_for_status()
+        for paper in papers_with_pdf:
+            doi = paper["doi"]
+            pdf_url = paper["pdf_url"]
+            timestamp = str(datetime.now())
+            pdf_path = None
 
-            # 检查响应是否为有效的 PDF
-            content_type = resp.headers.get("Content-Type", "")
-            if "pdf" not in content_type.lower() and len(resp.content) < 1024:
-                raise RuntimeError(
-                    f"响应不是 PDF (Content-Type: {content_type})"
-                )
-
-            # 写入临时文件
-            with tempfile.NamedTemporaryFile(
-                suffix=".pdf", delete=False
-            ) as tmp:
-                tmp.write(resp.content)
-                pdf_path = tmp.name
-
-            # ---- 步骤 2: MinerU 解析 PDF ----
-            logger.debug(f"MinerU 解析中: {doi}")
-            mineru_output_dir = parser.parse_pdf(pdf_path)
-            full_md_path = mineru_output_dir / "full.md"
-
-            # ---- 步骤 3: 读取全文 Markdown 并写入数据库 ----
-            if full_md_path.exists():
-                fulltext = full_md_path.read_text(encoding="utf-8")
-                db.update_mineru_result(
-                    doi, fulltext, FetchStatus.SUCCESS.value, timestamp
-                )
-                success_count += 1
-                logger.info(f"MinerU 成功: {doi} ({len(fulltext)} 字符)")
-            else:
-                raise RuntimeError("MinerU 输出缺少 full.md")
-
-            # ---- 步骤 4: 清理临时文件 ----
-            Path(pdf_path).unlink(missing_ok=True)
-            pdf_path = None  # 已清理，标记为 None
-            shutil.rmtree(mineru_output_dir, ignore_errors=True)
-
-        except Exception as e:
-            logger.warning(f"MinerU 失败 [{doi}]: {e}")
-            db.update_mineru_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
-            failed_count += 1
-            # ---- 清理残留的临时文件 ----
             try:
-                if pdf_path:
-                    Path(pdf_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+                # ---- 步骤 1: 通过 Playwright 下载 PDF 到临时文件 ----
+                logger.info(f"下载 PDF: {doi} ← {pdf_url}")
+                response = pdf_page.goto(pdf_url, wait_until="commit", timeout=60000)
+                pdf_content = response.body()
+
+                # 检查响应是否为有效 PDF
+                content_type = response.headers.get("content-type", "")
+                if "pdf" not in content_type.lower() and len(pdf_content) < 1024:
+                    raise RuntimeError(
+                        f"响应不是 PDF (Content-Type: {content_type})"
+                    )
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pdf", delete=False
+                ) as tmp:
+                    tmp.write(pdf_content)
+                    pdf_path = tmp.name
+
+                # ---- 步骤 2: MinerU 解析 PDF，结果持久化到 data/mineru_output/ ----
+                logger.debug(f"MinerU 解析中: {doi}")
+                safe_doi = doi.replace("/", "_").replace("\\", "_")
+                mineru_output_dir = parser.parse_pdf(
+                    pdf_path, output_dir=MINERU_OUTPUT_DIR / safe_doi
+                )
+                full_md_path = mineru_output_dir / "full.md"
+
+                # ---- 步骤 3: 读取全文 Markdown 并写入数据库 ----
+                if full_md_path.exists():
+                    fulltext = full_md_path.read_text(encoding="utf-8")
+                    db.update_mineru_result(
+                        doi, fulltext, FetchStatus.SUCCESS.value, timestamp
+                    )
+                    success_count += 1
+                    logger.info(f"MinerU 成功: {doi} ({len(fulltext)} 字符)")
+                else:
+                    raise RuntimeError("MinerU 输出缺少 full.md")
+
+                # ---- 步骤 4: 清理临时 PDF 文件 ----
+                Path(pdf_path).unlink(missing_ok=True)
+                pdf_path = None
+
+            except Exception as e:
+                logger.warning(f"MinerU 失败 [{doi}]: {e}")
+                db.update_mineru_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
+                failed_count += 1
+                # 清理残留的临时 PDF
+                try:
+                    if pdf_path:
+                        Path(pdf_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            # PDF 下载间随机延迟，避免触发速率限制
+            delay = random.uniform(3, 8)
+            logger.debug(f"PDF 下载延迟 {delay:.1f}s...")
+            time.sleep(delay)
+
+    finally:
+        # 释放 Playwright 资源
+        try:
+            if pdf_context:
+                pdf_context.close()
+        except Exception:
+            pass
+        try:
+            if pw:
+                pw.stop()
+        except Exception:
+            pass
 
     logger.info(
         f"Phase E2 完成: {success_count} 成功, {failed_count} 失败"
@@ -845,7 +945,7 @@ def phase_e2_mineru(db):
 # Phase F: LLM 论文内容总结
 #
 # 职责: 对判定为相关的论文，调用 DeepSeek API 生成结构化总结
-# 输入: MinerU 全文 (优先) → 标题 + 摘要 (回退)
+# 输入: MinerU 全文（无全文则跳过）
 # 输出: JSON (含 一句话/动机/方法/结果/要点 五个维度)
 # ==================================================================
 
@@ -860,9 +960,8 @@ def phase_f_llm_summary(db):
       - main_results_and_physics: 主要结果与物理解释 (Markdown)
       - take_home_message:        要点与局限
 
-    输入优先级:
-      1. MinerU 解析的全文 (mineru_fulltext) — 更丰富，总结质量更高
-      2. 标题 + 摘要 — 回退方案
+     输入优先级:
+       1. MinerU 解析的全文 (mineru_fulltext) — 无全文则跳过，不回退到标题+摘要
 
     费用估算: 每篇论文约消耗 2K~8K tokens (输入+输出总和)
 
@@ -886,9 +985,9 @@ def phase_f_llm_summary(db):
         if p["llm_relevance_result"]
     ]
 
-    # 如果关键词未配置（跳过了 Phase D & E），则所有论文都尝试总结
-    keywords = load_keywords()
-    if not keywords:
+    # 如果关键词与领域描述均未配置（跳过了 Phase D & E），则所有论文都尝试总结
+    domain_config = load_keywords()
+    if not domain_config.get("keywords") and not domain_config.get("domain_description"):
         relevant_papers = papers
 
     if not relevant_papers:
@@ -903,19 +1002,18 @@ def phase_f_llm_summary(db):
     for paper in relevant_papers:
         doi = paper["doi"]
         title = paper["title"] or ""
-        abstract = paper["abstract"] or ""
         timestamp = str(datetime.now())
 
-        # ---- 构造输入: MinerU 全文 → 标题 + 摘要 (回退) ----
+        # ---- 构造输入: MinerU 全文（无全文则跳过） ----
         mineru_text = paper["mineru_fulltext"] or ""
-        if mineru_text.strip():
-            # 使用 MinerU 解析的全文 (更丰富的输入，总结质量更高)
-            article_text = f"标题: {title}\n\n全文:\n{mineru_text}"
-            logger.debug(f"使用 MinerU 全文 for {doi}: {len(mineru_text)} 字符")
-        else:
-            # 回退: 仅用标题 + 摘要
-            article_text = f"标题: {title}\n\n摘要: {abstract}"
-            logger.debug(f"使用标题+摘要 for {doi} (无 MinerU 全文)")
+        if not mineru_text.strip():
+            logger.info(f"无 MinerU 全文，跳过总结: {doi}")
+            db.update_llm_summary_error(
+                doi, "No MinerU fulltext available", FetchStatus.SKIPPED.value, timestamp
+            )
+            continue
+        article_text = f"标题: {title}\n\n全文:\n{mineru_text}"
+        logger.debug(f"使用 MinerU 全文 for {doi}: {len(mineru_text)} 字符")
 
         try:
             result_str = summarizer.call_deepseek_api(
@@ -937,8 +1035,14 @@ def phase_f_llm_summary(db):
                 doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
             )
 
-        except LLMContextLenghExceed as e:
+        except LLMContextLengthExceed as e:
             logger.warning(f"LLM 总结上下文过长 [{doi}]: {e}")
+            db.update_llm_summary_error(
+                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+            )
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"LLM 返回非 JSON [{doi}]: {e}")
             db.update_llm_summary_error(
                 doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
             )
@@ -961,28 +1065,29 @@ def phase_f_llm_summary(db):
 
 def phase_g_report(db, report_dir):
     """
-    生成 Markdown 和 PDF 双格式文献报告。
+    生成 Markdown 文献报告，仅包含尚未报告过的新论文。
 
     工作流程：
-    1. 从数据库获取所有 llm_summary_status = 'success' 的论文
-    2. 解析 JSON 格式的总结数据
+    1. 从数据库获取 llm_summary_status = 'success' 且 report_status = 'pending' 的论文
+    2. 解析 JSON 格式的总结数据和作者列表
     3. 调用 paper_report_generator 生成 Markdown 报告
-    4. 调用 pdf_converter 将 Markdown 转为 PDF
+    4. 保存报告后标记论文 report_status = 'reported'
 
     Args:
         db:         DatabaseClient 实例
         report_dir: 报告输出目录路径
     """
     logger.info("--- Phase G: 报告生成 ---")
-    papers = db.get_papers_with_summary()
+    papers = db.get_papers_for_report()
     if not papers:
-        logger.info("Phase G: 无已总结论文，跳过报告生成")
+        logger.info("Phase G: 无新增已总结论文，跳过报告生成")
         return
 
-    logger.info(f"Phase G: {len(papers)} 篇论文将生成报告")
+    logger.info(f"Phase G: {len(papers)} 篇新论文将生成报告")
 
     # ---- 构建报告数据列表 ----
     paper_list = []
+    reported_dois = []
     for p in papers:
         # 解析 LLM 总结 JSON
         summary = {}
@@ -1015,6 +1120,7 @@ def phase_g_report(db, report_dir):
             "doi": p["doi"] or "",
             "page_url": p["page_url"] or "",
             "pdf_url": p["pdf_url"] or "",
+            "abstract": p["abstract"] or "",
             "one_sentence": summary.get("one_sentence", ""),
             "motivation_and_goal": summary.get("motivation_and_goal", ""),
             "key_setup_and_method": summary.get("key_setup_and_method", ""),
@@ -1024,25 +1130,22 @@ def phase_g_report(db, report_dir):
             "take_home_message": summary.get("take_home_message", ""),
         }
         paper_list.append(paper_dict)
+        reported_dois.append(p["doi"])
 
     # ---- 生成 Markdown 报告 ----
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    # generate_report 会自动处理 LaTeX 反斜杠、内部标题层级、换行等
     md_report = generate_report(paper_list, format="markdown", toc=True)
-    md_path = report_dir / f"report_{timestamp}.md"
+    md_path = report_dir / f"report_{timestamp_str}.md"
     md_path.write_text(md_report, encoding="utf-8")
     logger.info(f"Markdown 报告已保存: {md_path}")
 
-    # ---- 生成 PDF 报告 (可选，依赖 pandoc + xelatex) ----
-    pdf_path = report_dir / f"report_{timestamp}.pdf"
-    result = markdown_to_pdf(md_report, str(pdf_path))
-    if result:
-        logger.info(f"PDF 报告已保存: {pdf_path}")
-    else:
-        logger.warning("PDF 生成失败 (pandoc/xelatex 可能未安装)")
+    # ---- 标记论文为已报告 ----
+    report_timestamp = str(datetime.now())
+    db.mark_papers_reported(reported_dois, report_timestamp)
+    logger.info(f"已标记 {len(reported_dois)} 篇论文为 reported")
 
     logger.info(f"Phase G 完成: {len(paper_list)} 篇论文汇入报告")
 
@@ -1056,12 +1159,12 @@ def phase_g_report(db, report_dir):
 
 def phase_h_email(report_dir):
     """
-    收集最新报告文件并通过 SMTP 发送给团队成员。
+    收集最新生成的 Markdown 报告并通过 SMTP 发送给团队成员。
 
     工作流程：
     1. 读取 configs/email.yaml 获取 SMTP 配置和收件人列表
-    2. 找到最新生成的 .md 和 .pdf 报告文件
-    3. 构建邮件 (主题 + 正文 + 附件)
+    2. 找到最新生成的 .md 报告文件作为附件
+    3. 构建邮件 (主题 + 正文 + .md 附件)
     4. 发送邮件
 
     跳过条件:
@@ -1077,7 +1180,11 @@ def phase_h_email(report_dir):
     if SKIP_PHASE_H:
         logger.info("Phase H: SKIP_PHASE_H=True, skipping")
         return
-    email_cfg = load_email_config()
+    try:
+        email_cfg = load_email_config()
+    except Exception as e:
+        logger.warning(f"邮件配置文件解析失败: {e}")
+        return
     if not email_cfg:
         logger.info("Phase H: 无邮件配置，跳过")
         return
@@ -1094,16 +1201,13 @@ def phase_h_email(report_dir):
         logger.info("Phase H: 无收件人，跳过")
         return
 
-    # ---- 收集附件：最新报告文件 ----
+    # ---- 收集附件：最新 Markdown 报告 ----
     report_dir = Path(report_dir)
     md_files = sorted(report_dir.glob("report_*.md"), reverse=True)
-    pdf_files = sorted(report_dir.glob("report_*.pdf"), reverse=True)
 
     attachments = []
     if md_files:
         attachments.append(str(md_files[0]))
-    if pdf_files:
-        attachments.append(str(pdf_files[0]))
 
     if not attachments:
         logger.info("Phase H: 未找到报告文件，跳过")

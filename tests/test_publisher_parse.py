@@ -130,8 +130,7 @@ def test_nature_scraper_no_dc_type_raises():
 
         scraper = NatureScraper(tmpdir)
         scraper.fetch_page(html_path=html_path)
-        # 空 dc.type 也会触发 NaturePageNotPaper（因为逻辑为 if dc.type != "OriginalPaper"）
-        with pytest.raises(NaturePageNotPaper):
+        with pytest.raises(PageParseError):
             scraper.parse_page()
 
 

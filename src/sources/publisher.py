@@ -147,6 +147,8 @@ class BasePublisherScraper:
             # 禁用自动化特征标志，对抗 Cloudflare 检测
             args=["--disable-blink-features=AutomationControlled"],
             proxy=proxy,
+            # 设置明确的 viewport，避免 xvfb 默认分辨率异常触发指纹检测
+            viewport={"width": 1920, "height": 1080},
         )
         self.page = self.context.new_page()
 
@@ -169,6 +171,12 @@ class BasePublisherScraper:
             Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
             // 伪造插件数组长度，使其不为空（真实浏览器通常有插件）
             Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            // 伪造硬件并发数（CPU 核心数），headless 默认为 1，真实桌面通常 >= 4
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            // 伪造设备内存（GB），headless 可能未设置
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            // 伪造最大触摸点数，桌面设备应为 0
+            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
         }
         """)
 
@@ -394,12 +402,12 @@ class NatureScraper(BasePublisherScraper):
         #   "OriginalPaper" → 正常研究论文，需要解析
         #   "News" / "Podcast" / "Highlight" / ... → 非论文，抛异常跳过
         dctype = sel.css('meta[name="dc.type"]::attr(content)').get() or ""
-        if not dctype == "OriginalPaper":
-            raise NaturePageNotPaper("This Nature page is not OriginalPaper.")
-        elif dctype == "":
+        if dctype == "":
             raise PageParseError(
-                "Get no dc.type in Nature page, maybe the page structure has been modified."
+                "No dc.type in Nature page, maybe the page structure has changed."
             )
+        if dctype != "OriginalPaper":
+            raise NaturePageNotPaper("This Nature page is not OriginalPaper.")
 
         # ─── 获取 PDF 下载链接 ───
         # Nature 的 PDF 链接格式为相对路径：/articles/s41567-026-03184-9.pdf
@@ -433,13 +441,19 @@ class NatureScraper(BasePublisherScraper):
         #       因此优先使用正文区域的摘要文本，JSON-LD 数据作为备用。
         json_ld_text = sel.css('script[type="application/ld+json"]::text').get()
         if json_ld_text:
-            data = json.loads(json_ld_text).get("mainEntity")
+            try:
+                data = json.loads(json_ld_text).get("mainEntity")
+            except (json.JSONDecodeError, KeyError):
+                data = None
             if data:
                 title = data.get("headline", "")
                 abstract_jsonld = data.get("description", "")  # 备用摘要
                 keywords = data.get("keywords", [])
                 authors = [a["name"] for a in data.get("author", [])]
                 date = data.get("datePublished", "")
+                # 标准化日期格式: "2026-05-19T00:00:00Z" → "2026-05-19"
+                if "T" in date:
+                    date = date.split("T")[0]
 
         # ─── 从 <meta> 标签提取期刊名称 ───
         # 优先使用 citation_journal_title（标准引用格式）
@@ -514,12 +528,12 @@ class ScienceScraper(BasePublisherScraper):
         # ─── 页面类型过滤：通过 dc.Type 排除非论文页面 ───
         # Science 的 dc.Type 值为 "research-article" 时才是正规论文
         dctype = sel.css('meta[name="dc.Type"]::attr(content)').get() or ""
-        if not dctype == "research-article":
-            raise NaturePageNotPaper("This Science page is not research-article.")
-        elif dctype == "":
+        if dctype == "":
             raise PageParseError(
-                "Get no dc.type in Nature page, maybe the page structure has been modified."
+                "No dc.Type in Science page, maybe the page structure has changed."
             )
+        if dctype != "research-article":
+            raise NaturePageNotPaper("This Science page is not research-article.")
 
         # ─── 从 <meta> 标签提取元数据 ───
         title = sel.css('meta[name="dc.Title"]::attr(content)').get() or ""
@@ -847,7 +861,7 @@ class OpticaScraper(BasePublisherScraper):
         # ─── 从正文区域提取摘要 ───
         # 通过 XPath 定位：#articleBody 容器内，id="Abstract" 的 h2 标题后的
         # 第一个 div 兄弟元素（following-sibling::div[1]），即摘要内容区域。
-        abstract = abstract = (
+        abstract = (
             sel.xpath(
                 'string(//div[@id="articleBody"]/h2[@id="Abstract"]/following-sibling::div[1])'
             ).get()
