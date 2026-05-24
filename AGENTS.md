@@ -25,6 +25,32 @@ pytest tests/test_db.py -v          # single module
 
 No lint, formatter, or typechecker is configured.
 
+## Reset Pipeline
+
+```bash
+# Reset semantic judgments + downstream (after updating domain_description/keywords)
+python tools/reset_pipeline.py reset-semantic
+python tools/reset_pipeline.py reset-semantic --publisher aps
+
+# Retry failed publisher scrapes (Phase C)
+python tools/reset_pipeline.py reset-publisher
+python tools/reset_pipeline.py reset-publisher --publisher aps
+
+# Retry failed MinerU PDF parsing (Phase E2)
+python tools/reset_pipeline.py reset-mineru
+python tools/reset_pipeline.py reset-mineru --publisher aps
+
+# Retry failed LLM summaries (Phase F)
+python tools/reset_pipeline.py reset-summary
+python tools/reset_pipeline.py reset-summary --publisher aps
+
+# Reset report status (Phase G) — re-include papers in next report
+python tools/reset_pipeline.py reset-report
+python tools/reset_pipeline.py reset-report --publisher aps
+```
+
+Scripts prompt for confirmation before executing; prints affected row count.
+
 ## Architecture
 
 - **Not a package** — `src/` has no `__init__.py`. All imports resolve relative to project root at runtime. Run scripts from repo root.
@@ -45,7 +71,7 @@ No lint, formatter, or typechecker is configured.
 
 - `sentence-transformers` model (`all-MiniLM-L6-v2`) must be in `data/models/all-MiniLM-L6-v2/`. Loaded with `local_files_only=True`. Download manually before first run.
 - `sqlite3` database at `data/papers.db` — one table (`papers`) with per-phase status columns. All pipeline state persists here; restart is safe.
-- Report output goes to `data/reports/` (Markdown + PDF via pandoc/xelatex).
+- Report output goes to `data/reports/` (Markdown format).
 
 ## Language
 

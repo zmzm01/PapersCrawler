@@ -1,10 +1,5 @@
 domain_description: >
-  本研究组关注激光等离子体物理中的粒子加速与辐射产生机制，
-  包括激光尾波场电子加速（LWFA）、靶背鞘场离子加速（TNSA）、
-  辐射压加速（RPA）、等离子体透镜与束流输运、惯性约束聚变中的
-  等离子体诊断、高亮度X/γ射线源、以及机器学习在加速器控制与
-  优化中的应用等方向。实验上关注高功率飞秒激光与固体/气体靶的
-  相互作用，理论上关注PIC模拟、流体模型与粒子动力学研究。
+  (I) Laser-driven ion acceleration and irradiation applications: The plasma acceleration mechanism driven by high-power lasers promises to enable compact accelerators and radiation sources of the future. At present, proton beams accelerated by PW-class lasers have reached energies approaching 100 MeV, establishing a preliminary foundation for applications in biomedicine, materials science, high energy density science, and other fields. This research will optimize and improve the physical principles and experimental techniques of laser accelerators to enhance the quality and controllability of the accelerated ion beams; it will also explore new irradiation phenomena and application areas based on such ultrafast ion beams. (II) High-gradient plasma beam transport elements: Using capillary discharge plasma systems, researchers have achieved the current energy record of 8 GeV for laser-accelerated electrons. Meanwhile, plasma can sustain extremely high electromagnetic fields and realize focusing gradients three orders of magnitude higher than those of conventional magnet elements, holding the promise of enabling compact beam transport lines on the centimeter scale. Beamline designs based on high-gradient plasma will realize the complete miniaturization of laser accelerators and expand their range of applications. (III) Next-generation accelerator control system research: The control system serves as the brain and central nervous system of an accelerator. This research will investigate accelerator control methods by designing modular hardware and software platform architectures and API interfaces, establishing full-lifecycle equipment control and data acquisition, large-scale scientific facility databases, and physical control models. By integrating machine learning and other optimization algorithms, it will design and develop highly intelligent, automated, modular, and standardized software and hardware control systems that can be applied to a variety of large scientific and industrial facilities.
 
 keywords:
   # General & Core Concepts

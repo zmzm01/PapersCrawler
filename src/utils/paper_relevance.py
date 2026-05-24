@@ -18,6 +18,7 @@ paper_relevance.py
 
 import re
 import json
+import time
 import logging
 from typing import List, Optional, Dict, Any
 
@@ -248,16 +249,21 @@ class PaperRelevanceChecker:
         }
 
         try:
+            t0 = time.time()
             resp = requests.post(
                 config["api_url"],
                 headers=headers,
                 json=payload,
                 timeout=config.get("timeout", 300),
             )
+            t1 = time.time()
             resp.raise_for_status()  # 非 2xx 状态码触发 HTTPError
-            # 从 DeepSeek 响应中提取模型输出内容
-            # 响应结构: {"choices": [{"message": {"content": "..."}}]}
             content = resp.json()["choices"][0]["message"]["content"]
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"DeepSeek API 响应耗时 {t1-t0:.1f}s, "
+                f"输入 {len(prompt)} 字符, 输出 {len(content)} 字符"
+            )
             return content
         except requests.exceptions.RequestException as e:
             raise LLMAPICallError(f"网络请求失败: {e}") from e

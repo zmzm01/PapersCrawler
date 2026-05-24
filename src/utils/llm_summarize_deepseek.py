@@ -21,6 +21,8 @@ import os
 from pathlib import Path
 import sys
 import json
+import time
+import logging
 import requests
 from typing import Optional, Dict, Any
 
@@ -164,17 +166,21 @@ class DeepSeekPaperSummarizer:
         }
 
         try:
+            t0 = time.time()
             resp = requests.post(
                 config["api_url"],
                 headers=headers,
                 json=payload,
                 timeout=config.get("timeout", 300),
             )
+            t1 = time.time()
             resp.raise_for_status()
-            # 从响应中提取 content：
-            # DeepSeek Chat Completions API 返回格式为
-            # {"choices": [{"message": {"content": "..."}}], ...}
             content = resp.json()["choices"][0]["message"]["content"]
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"DeepSeek Summarize API 响应耗时 {t1-t0:.1f}s, "
+                f"输入 {len(article_text)} 字符, 输出 {len(content)} 字符"
+            )
             return content
         except requests.exceptions.RequestException as e:
             raise LLMAPICallError(f"网络请求失败: {e}") from e
