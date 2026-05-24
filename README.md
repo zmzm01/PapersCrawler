@@ -45,6 +45,8 @@ PapersCrawler/
 │   │   ├── pdf_converter.py     # Markdown → PDF (pandoc + xelatex)
 │   │   └── email_sender.py      # SMTP 邮件发送
 │   └── test_for_rss_parse.py    # RSS 解析调试脚本
+├── tools/                       # 辅助工具
+│   └── reset_pipeline.py        # 重置流水线状态（语义重判 / Publisher 重试）
 └── README.md
 ```
 
@@ -151,6 +153,36 @@ pytest tests/ -v -k "not pdf"
 pytest tests/test_db.py -v
 ```
 
+### 5. 重置流水线状态
+
+```bash
+# 更新 domain_description / 关键词后，重置语义判断 + 下游全部结果
+python tools/reset_pipeline.py reset-semantic
+
+# 仅重置 APS 论文的语义判断
+python tools/reset_pipeline.py reset-semantic --publisher aps
+
+# 重置 Publisher 页面抓取失败的论文（触发 Phase C 重试）
+python tools/reset_pipeline.py reset-publisher
+
+# 仅重试 APS 的失败抓取
+python tools/reset_pipeline.py reset-publisher --publisher aps
+
+# 重置 MinerU PDF 解析失败的论文（触发 Phase E2 重试）
+python tools/reset_pipeline.py reset-mineru
+
+# 仅重试 APS 的 MinerU 失败解析
+python tools/reset_pipeline.py reset-mineru --publisher aps
+
+# 重置 LLM 总结失败的论文（触发 Phase F 重试）
+python tools/reset_pipeline.py reset-summary
+
+# 重置报告状态，使已报告论文重新出现在下次报告中
+python tools/reset_pipeline.py reset-report
+```
+
+脚本执行前会打印 SQL 和影响行数，需要手动确认 `y` 才执行。
+
 ## 支持的出版社/期刊
 
 | 出版社    | 期刊数                                              | 爬虫类             |
@@ -234,7 +266,8 @@ Publisher Page → abstract (补充非 OA 论文摘要)
 
 **Phase E2 — MinerU PDF**
 - PDF 下载：`requests.get()` → Playwright 浏览器（复用反检测策略和 session cookie）
-- MinerU 输出持久化到 `data/mineru_output/`，不再删除
+- MinerU 输出持久化到 `data/mineru_output/`，PDF 副本也保存到同一目录 `paper.pdf`
+- DB 新增 `mineru_output_dir` 列存储相对路径
 - Playwright 初始化移入 `try` 块，`finally` 增加 None 检查
 
 **Phase F — LLM Summary**
@@ -263,3 +296,34 @@ Publisher Page → abstract (补充非 OA 论文摘要)
 - 新增：`semantic_filter_error`, `report_status`, `report_date`
 - 新增方法：`get_papers_for_report()`, `mark_papers_reported()`
 - 删除方法：`update_keyword_filter()`
+
+### 2026-05-24 — 性能优化与工具链完善
+
+**Phase E — LLM 相关性判断**
+- 并发化：串行 `for` → `ThreadPoolExecutor`（并发上限 `LLM_CONCURRENT_MAX=20`）— N 篇论文总耗时从 `Σ(slow)` 降为 `max(slow)`
+- 无摘要论文不再提交 LLM，标记 `llm_relevance_status = 'skipped'` 跳过
+
+**Phase E2 — MinerU PDF 下载修复**
+- PDF 下载：`page.on("response")` 监听所有网络响应捕获 PDF（解决出版商 PDF viewer 页面导致 response.body() 返回 HTML 的问题）
+- 兜底：监听失败时用 `page.evaluate(fetch)` 重新获取
+- PDF 保存到 MinerU 输出目录 `paper.pdf`（不再删除）
+- DB 新增 `mineru_output_dir` 列存储相对路径
+
+**Phase F — LLM 总结**
+- 并发化：同 Phase E 使用 `ThreadPoolExecutor`
+
+**LLM API 诊断**
+- `call_deepseek_api()` 增加请求计时日志（输入/输出字符数 + 耗时），便于定位 API 性能瓶颈
+- `MinerU _poll_batch()` 错误信息增加 `err_code`，根据 MinerU API 错误码表辅助排查
+
+**工具链**
+- 新增 `tools/reset_pipeline.py`，支持 5 个子命令：
+  - `reset-semantic` — 重置语义判断及下游全部状态
+  - `reset-publisher` — 重置 Publisher 抓取（`failed` + `skipped`）
+  - `reset-mineru` — 重置 MinerU 解析（`failed` + `skipped`）
+  - `reset-summary` — 重置 LLM 总结（`failed` + `skipped`）
+  - `reset-report` — 重置报告状态（重新汇入报告）
+- 所有命令支持 `--publisher` 过滤，执行前交互确认
+
+**DB Schema**
+- 新增：`mineru_output_dir`

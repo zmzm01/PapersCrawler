@@ -198,6 +198,7 @@ class DatabaseClient:
             mineru_parse_error TEXT,
             mineru_parse_date TEXT,
             mineru_fulltext TEXT,
+            mineru_output_dir TEXT,
 
             -- 语义相似度初筛
             semantic_similarity_score REAL,
@@ -225,6 +226,7 @@ class DatabaseClient:
             "mineru_parse_error TEXT",
             "mineru_parse_date TEXT",
             "mineru_fulltext TEXT",
+            "mineru_output_dir TEXT",
         ]
         for col_def in mineru_columns:
             col_name = col_def.split()[0]
@@ -567,21 +569,22 @@ class DatabaseClient:
     # Phase E2: MinerU PDF 全文解析
     # ==================================================================
 
-    def update_mineru_result(self, doi, fulltext, status, status_date):
+    def update_mineru_result(self, doi, fulltext, output_dir, status, status_date):
         """
-        Phase E2 专用: 存储 MinerU PDF 解析得到的全文 Markdown 文本。
+        Phase E2 专用: 存储 MinerU PDF 解析得到的全文 Markdown 文本和输出路径。
 
         fulltext 来自 MinerU 输出目录下的 full.md 文件内容。
-        该文本将在 Phase F (LLM 总结) 中替代标题+摘要作为输入，
-        以获得更准确的论文总结。
+        output_dir 为 MinerU 输出目录的相对路径（如 mineru_output/10_1103_xxx）。
+        该文本将在 Phase F (LLM 总结) 中替代标题+摘要作为输入。
 
         Raises:
             DataBaseDOINotExists: DOI 在数据库中不存在
 
         Args:
-            doi:       论文 DOI
-            fulltext:  MinerU 解析出的 Markdown 全文
-            status:    FetchStatus 状态值
+            doi:         论文 DOI
+            fulltext:    MinerU 解析出的 Markdown 全文
+            output_dir:  MinerU 输出目录相对路径（含 paper.pdf）
+            status:      FetchStatus 状态值
             status_date: 处理日期时间字符串
         """
         if not self.paper_doi_exists(doi):
@@ -592,11 +595,12 @@ class DatabaseClient:
             """
             UPDATE papers
             SET mineru_fulltext = ?,
+                mineru_output_dir = ?,
                 mineru_parse_status = ?,
                 mineru_parse_date = ?
             WHERE doi = ?
             """,
-            (fulltext, status, status_date, doi),
+            (fulltext, output_dir, status, status_date, doi),
         )
         self.conn.commit()
 

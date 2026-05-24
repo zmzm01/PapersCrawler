@@ -222,7 +222,9 @@ class MinerUParser:
                         return item["full_zip_url"]
 
                     if state == "failed":
-                        raise RuntimeError(f"解析失败: {item.get('err_msg', '未知错误')}")
+                        err_code = item.get("err_code", "")
+                        err_msg = item.get("err_msg", "未知错误")
+                        raise RuntimeError(f"解析失败 (code={err_code}): {err_msg}")
 
                     # 打印进度信息
                     progress = item.get("extract_progress", {})

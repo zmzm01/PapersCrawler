@@ -78,7 +78,7 @@ LLM_API_CONFIG_DICT_RELE = {
     "model": "deepseek-v4-flash",
     # 思考模式: "enabled" 表示开启深度思考, "disabled" 表示关闭
     # 注意: 思考模式下不支持 temperature/top_p 等参数
-    "thinking": "enabled",
+    "thinking": "disabled",
     # API 调用超时 (秒)
     "timeout": 300,
 }
@@ -153,20 +153,24 @@ SEMANTIC_SIMILARITY_THRESHOLD = 0.3
 
 # 每阶段最多处理 N 篇论文 (0 = 不限制)
 MAX_PAPERS_PER_PHASE = 0
-SKIP_PHASE_C = False
-SKIP_PHASE_E = False
-SKIP_PHASE_E2 = False
+SKIP_PHASE_C = True
+SKIP_PHASE_E = True
+SKIP_PHASE_E2 = True
 SKIP_PHASE_F = False
-SKIP_PHASE_H = False  # 邮件推送 (SMTP 已配置)
+SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
 # 避免连续请求触发 Cloudflare 速率限制，降低 IP 信誉受损风险
 PUBLISHER_PAGE_DELAY_MIN = 5
-PUBLISHER_PAGE_DELAY_MAX = 20
+PUBLISHER_PAGE_DELAY_MAX = 10
 
 # Phase C Publisher 爬虫: 同 publisher 内连续抓取失败 N 篇后中止该 publisher
 # 避免在被 Cloudflare 拦截时持续请求，进一步损害 IP 信誉
 PUBLISHER_MAX_CONSECUTIVE_FAILURES = 5
+
+# LLM API 并发上限: Phase E/F 同时发起的 DeepSeek 请求数
+# DeepSeek-V4-flash 官方限制 2500 并发，保守设 20
+LLM_CONCURRENT_MAX = 50
 
 # 过滤 Nature 新闻 (d41586 DOI)，只保留研究论文
 SKIP_NATURE_NEWS = True

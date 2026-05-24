@@ -31,10 +31,12 @@ import json
 import logging
 import os
 import random
+import shutil
 import sys
 import time
 import tempfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +53,7 @@ from config import (
     SKIP_NATURE_NEWS,
     PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX,
     PUBLISHER_MAX_CONSECUTIVE_FAILURES,
+    LLM_CONCURRENT_MAX,
 )
 
 from utils.db import DatabaseClient, FetchStatus
@@ -683,17 +686,10 @@ def phase_e_llm_relevance(db):
     调用 DeepSeek LLM 对初筛通过的论文进行相关性判断。
 
     工作流程：
-    1. 查询 llm_relevance_status = 'pending' 的论文（已在 Phase D 通过初筛）
-    2. 如果没有待处理论文且有关键词配置，则跳过
-    3. 加载关键词表，构造提示词
-    4. 调用 PaperRelevanceChecker.call_deepseek_api (json_object 模式)
-    5. 解析返回的 JSON，提取 relevant/confidence/reason
-    6. 更新数据库
-
-    注意事项：
-    - 如果关键词未配置，所有论文的 llm_relevance_status 仍为 pending
-    - 此时直接跳过 Phase E（由 Phase F 自行决定是否总结）
-    - API 调用间隔 0.5 秒（DeepSeek 免费版限制较宽松）
+    1. 查询 llm_relevance_status = 'pending' 的论文
+    2. 加载关键词和领域描述，构造提示词
+    3. 通过 ThreadPoolExecutor 并发调用 LLM API
+    4. 主线程统一解析 JSON 并写入数据库
 
     Args:
         db: DatabaseClient 实例
@@ -720,52 +716,80 @@ def phase_e_llm_relevance(db):
     logger.info(f"Phase E: {len(paper_tasks)} 篇论文待判断相关性")
 
     checker = PaperRelevanceChecker(keywords, domain_description)
-    success_count = 0
 
+    # 预构建所有 prompt（主线程中，无网络 I/O）
+    tasks = []
+    skipped_no_abstract = 0
     for paper in paper_tasks:
         doi = paper["doi"]
-        title = paper["title"] or ""
-        abstract = paper["abstract"] or ""
-        timestamp = str(datetime.now())
-
-        try:
-            # ---- 构造提示词并调用 API ----
-            prompt = checker.build_default_prompt(title, abstract)
-            result_str = checker.call_deepseek_api(prompt, LLM_API_CONFIG_DICT_RELE)
-
-            # ---- 解析 JSON 响应 ----
-            result = json.loads(result_str)
-            relevant = 1 if result.get("relevant", False) else 0
-            confidence = result.get("confidence", "low")
-            reason = result.get("reason", "")
-
-            # ---- 写入数据库 ----
-            db.update_llm_relevance(
-                doi, relevant, confidence, reason,
-                FetchStatus.SUCCESS.value, timestamp
+        abstract = (paper["abstract"] or "").strip()
+        if not abstract:
+            logger.info(f"无摘要，跳过 LLM 判断: {doi}")
+            db.update_process_status(
+                doi, "llm_relevance_status",
+                FetchStatus.SKIPPED.value,
+                "llm_relevance_date", str(datetime.now())
             )
-            success_count += 1
-            logger.debug(f"LLM 相关性判断: {doi} → relevant={bool(relevant)}, "
-                         f"confidence={confidence}")
-            time.sleep(0.5)  # API 调用间隔，避免触发频率限制
+            skipped_no_abstract += 1
+            continue
+        prompt = checker.build_default_prompt(
+            paper["title"] or "", abstract
+        )
+        tasks.append((paper, prompt))
 
-        except (LLMAPICallError, LLMResponseParseError) as e:
-            logger.warning(f"LLM 相关性 API 错误 [{doi}]: {e}")
-            db.update_llm_relevance_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+    if skipped_no_abstract:
+        logger.info(f"Phase E: {skipped_no_abstract} 篇因无摘要跳过")
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"LLM 返回非 JSON [{doi}]: {e}")
-            db.update_llm_relevance_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+    if not tasks:
+        logger.info("Phase E: 无有效待判断论文（均无摘要）")
+        return
 
-        except Exception as e:
-            logger.error(f"LLM 相关性异常 [{doi}]: {e}")
-            db.update_llm_relevance_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+    # 并发调用 LLM API
+    max_workers = min(len(tasks), LLM_CONCURRENT_MAX)
+    logger.info(f"Phase E: 使用 {max_workers} 个并发请求")
+    success_count = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(checker.call_deepseek_api, prompt, LLM_API_CONFIG_DICT_RELE): (paper, prompt)
+            for paper, prompt in tasks
+        }
+        for future in as_completed(futures):
+            paper, _ = futures[future]
+            doi = paper["doi"]
+            timestamp = str(datetime.now())
+            try:
+                result_str = future.result()
+                result = json.loads(result_str)
+                relevant = 1 if result.get("relevant", False) else 0
+                confidence = result.get("confidence", "low")
+                reason = result.get("reason", "")
+
+                db.update_llm_relevance(
+                    doi, relevant, confidence, reason,
+                    FetchStatus.SUCCESS.value, timestamp
+                )
+                success_count += 1
+                logger.debug(f"LLM 相关性判断: {doi} → relevant={bool(relevant)}, "
+                             f"confidence={confidence}")
+
+            except (LLMAPICallError, LLMResponseParseError) as e:
+                logger.warning(f"LLM 相关性 API 错误 [{doi}]: {e}")
+                db.update_llm_relevance_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"LLM 返回非 JSON [{doi}]: {e}")
+                db.update_llm_relevance_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
+
+            except Exception as e:
+                logger.error(f"LLM 相关性异常 [{doi}]: {e}")
+                db.update_llm_relevance_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
 
     logger.info(f"Phase E 完成: {success_count} 篇判断成功")
 
@@ -865,21 +889,47 @@ def phase_e2_mineru(db):
 
             try:
                 # ---- 步骤 1: 通过 Playwright 下载 PDF 到临时文件 ----
+                # 出版商 PDF 链接通常先返回 HTML 预览页，再由 JS viewer 异步加载真实 PDF。
+                # page.goto() 的 response 只代表导航请求（HTML），需监听所有网络响应捕获 PDF。
                 logger.info(f"下载 PDF: {doi} ← {pdf_url}")
-                response = pdf_page.goto(pdf_url, wait_until="commit", timeout=60000)
-                pdf_content = response.body()
+                pdf_body = None
 
-                # 检查响应是否为有效 PDF
-                content_type = response.headers.get("content-type", "")
-                if "pdf" not in content_type.lower() and len(pdf_content) < 1024:
+                def _capture_pdf(response):
+                    nonlocal pdf_body
+                    ct = (response.headers.get("content-type") or "").lower()
+                    if "application/pdf" in ct or "application/octet-stream" in ct:
+                        try:
+                            pdf_body = response.body()
+                        except Exception:
+                            pass  # 响应体已被浏览器消费（PDF viewer 内嵌场景）
+
+                pdf_page.on("response", _capture_pdf)
+                try:
+                    pdf_page.goto(pdf_url, wait_until="networkidle", timeout=60000)
+                finally:
+                    pdf_page.remove_listener("response", _capture_pdf)
+
+                if pdf_body is None or pdf_body[:5] != b'%PDF-':
+                    # 兜底：通过页面内 fetch 重新获取（浏览器 session/cookie 可用）
+                    logger.debug(f"响应监听未捕获 PDF，尝试 fetch 兜底: {doi}")
+                    raw = pdf_page.evaluate(f"""
+                        async () => {{
+                            const resp = await fetch('{pdf_url}');
+                            const buf = await resp.arrayBuffer();
+                            return Array.from(new Uint8Array(buf));
+                        }}
+                    """)
+                    pdf_body = bytes(raw) if raw else None
+
+                if pdf_body is None or pdf_body[:5] != b'%PDF-':
                     raise RuntimeError(
-                        f"响应不是 PDF (Content-Type: {content_type})"
+                        "页面未返回有效 PDF（可能被重定向到预览页或需登录）"
                     )
 
                 with tempfile.NamedTemporaryFile(
                     suffix=".pdf", delete=False
                 ) as tmp:
-                    tmp.write(pdf_content)
+                    tmp.write(pdf_body)
                     pdf_path = tmp.name
 
                 # ---- 步骤 2: MinerU 解析 PDF，结果持久化到 data/mineru_output/ ----
@@ -893,16 +943,21 @@ def phase_e2_mineru(db):
                 # ---- 步骤 3: 读取全文 Markdown 并写入数据库 ----
                 if full_md_path.exists():
                     fulltext = full_md_path.read_text(encoding="utf-8")
+                    # 相对路径（相对于 data/），用于定位 PDF 和 MinerU 输出
+                    rel_dir = str(mineru_output_dir.relative_to(MINERU_OUTPUT_DIR.parent))
                     db.update_mineru_result(
-                        doi, fulltext, FetchStatus.SUCCESS.value, timestamp
+                        doi, fulltext, rel_dir,
+                        FetchStatus.SUCCESS.value, timestamp
                     )
                     success_count += 1
                     logger.info(f"MinerU 成功: {doi} ({len(fulltext)} 字符)")
                 else:
                     raise RuntimeError("MinerU 输出缺少 full.md")
 
-                # ---- 步骤 4: 清理临时 PDF 文件 ----
-                Path(pdf_path).unlink(missing_ok=True)
+                # ---- 步骤 4: 将 PDF 保存到 MinerU 输出目录 ----
+                pdf_dest = mineru_output_dir / "paper.pdf"
+                shutil.move(pdf_path, str(pdf_dest))
+                logger.debug(f"PDF 已保存: {pdf_dest}")
                 pdf_path = None
 
             except Exception as e:
@@ -960,13 +1015,11 @@ def phase_f_llm_summary(db):
       - main_results_and_physics: 主要结果与物理解释 (Markdown)
       - take_home_message:        要点与局限
 
-     输入优先级:
-       1. MinerU 解析的全文 (mineru_fulltext) — 无全文则跳过，不回退到标题+摘要
+     输入: MinerU 全文（无全文则跳过）
+     并发: ThreadPoolExecutor 并行调用 LLM API
 
-    费用估算: 每篇论文约消耗 2K~8K tokens (输入+输出总和)
-
-    Args:
-        db: DatabaseClient 实例
+     Args:
+         db: DatabaseClient 实例
     """
     logger.info("--- Phase F: LLM 总结 ---")
     if SKIP_PHASE_F:
@@ -985,7 +1038,6 @@ def phase_f_llm_summary(db):
         if p["llm_relevance_result"]
     ]
 
-    # 如果关键词与领域描述均未配置（跳过了 Phase D & E），则所有论文都尝试总结
     domain_config = load_keywords()
     if not domain_config.get("keywords") and not domain_config.get("domain_description"):
         relevant_papers = papers
@@ -994,64 +1046,73 @@ def phase_f_llm_summary(db):
         logger.info("Phase F: 无相关论文需要总结")
         return
 
-    logger.info(f"Phase F: {len(relevant_papers)} 篇相关论文待总结")
-
+    # ---- 筛选有 MinerU 全文的论文 & 预构建输入 ----
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
-    success_count = 0
-
+    tasks = []
     for paper in relevant_papers:
         doi = paper["doi"]
-        title = paper["title"] or ""
-        timestamp = str(datetime.now())
-
-        # ---- 构造输入: MinerU 全文（无全文则跳过） ----
         mineru_text = paper["mineru_fulltext"] or ""
         if not mineru_text.strip():
             logger.info(f"无 MinerU 全文，跳过总结: {doi}")
             db.update_llm_summary_error(
-                doi, "No MinerU fulltext available", FetchStatus.SKIPPED.value, timestamp
+                doi, "No MinerU fulltext available",
+                FetchStatus.SKIPPED.value, str(datetime.now())
             )
             continue
-        article_text = f"标题: {title}\n\n全文:\n{mineru_text}"
+        article_text = f"标题: {paper['title'] or ''}\n\n全文:\n{mineru_text}"
         logger.debug(f"使用 MinerU 全文 for {doi}: {len(mineru_text)} 字符")
+        tasks.append((paper, article_text))
 
-        try:
-            result_str = summarizer.call_deepseek_api(
-                article_text, SUMMARIES_PROMPT
-            )
+    if not tasks:
+        logger.info("Phase F: 无可用全文，跳过")
+        return
 
-            # 验证返回的是合法 JSON（防止存入无效数据）
-            json.loads(result_str)
+    logger.info(f"Phase F: {len(tasks)} 篇论文待总结")
 
-            db.update_llm_summary(
-                doi, result_str, FetchStatus.SUCCESS.value, timestamp
-            )
-            success_count += 1
-            time.sleep(1)  # 总结比相关性判断消耗更多 token，间隔适当放慢
+    max_workers = min(len(tasks), LLM_CONCURRENT_MAX)
+    logger.info(f"Phase F: 使用 {max_workers} 个并发请求")
+    success_count = 0
 
-        except (LLMAPICallError, LLMResponseParseError) as e:
-            logger.warning(f"LLM 总结 API 错误 [{doi}]: {e}")
-            db.update_llm_summary_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(summarizer.call_deepseek_api, article_text, SUMMARIES_PROMPT): paper
+            for paper, article_text in tasks
+        }
+        for future in as_completed(futures):
+            paper = futures[future]
+            doi = paper["doi"]
+            timestamp = str(datetime.now())
+            try:
+                result_str = future.result()
+                json.loads(result_str)
+                db.update_llm_summary(
+                    doi, result_str, FetchStatus.SUCCESS.value, timestamp
+                )
+                success_count += 1
 
-        except LLMContextLengthExceed as e:
-            logger.warning(f"LLM 总结上下文过长 [{doi}]: {e}")
-            db.update_llm_summary_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+            except (LLMAPICallError, LLMResponseParseError) as e:
+                logger.warning(f"LLM 总结 API 错误 [{doi}]: {e}")
+                db.update_llm_summary_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"LLM 返回非 JSON [{doi}]: {e}")
-            db.update_llm_summary_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+            except LLMContextLengthExceed as e:
+                logger.warning(f"LLM 总结上下文过长 [{doi}]: {e}")
+                db.update_llm_summary_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
 
-        except Exception as e:
-            logger.error(f"LLM 总结意外错误 [{doi}]: {e}")
-            db.update_llm_summary_error(
-                doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
-            )
+            except json.JSONDecodeError as e:
+                logger.warning(f"LLM 返回非 JSON [{doi}]: {e}")
+                db.update_llm_summary_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
+
+            except Exception as e:
+                logger.error(f"LLM 总结意外错误 [{doi}]: {e}")
+                db.update_llm_summary_error(
+                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
+                )
 
     logger.info(f"Phase F 完成: {success_count} 篇论文已总结")
 
