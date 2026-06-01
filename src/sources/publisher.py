@@ -53,7 +53,7 @@ from cloakbrowser import launch_persistent_context
 
 from typing import List
 
-from src.common import Paper
+from common import Paper
 
 
 # ──────────────────────────────────────────────────────────
