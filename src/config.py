@@ -14,8 +14,14 @@ config.py
   - 路径均相对于项目根目录自动计算（无需手动修改 BASE_DIR）
 """
 
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 import yaml
+
+# 从 .env 文件加载密钥（如不存在则静默跳过）
+load_dotenv()
 
 
 # ==================================================================
@@ -59,10 +65,10 @@ MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 REQUEST_TIMEOUT = 30
 
 # CrossRef API 要求的联系邮箱（礼貌标识，CrossRef 强烈建议提供）
-CROSSREF_MAILTO = "czmczm01@qq.com"
+CROSSREF_MAILTO = os.getenv("CROSSREF_MAILTO", "your_email@example.com")
 
-# MinerU PDF 解析 API Token（有效期 90 天，过期后需重新获取）
-MINERU_TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4ODYwMDQwMiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3OTA3ODA1MSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiOGNjZGFhZDUtODZiNy00MTViLTgxOWQtMDQ1NThkMTIzN2ZlIiwiZW1haWwiOiJjem1jem0wMUBxcS5jb20iLCJleHAiOjE3ODY4NTQwNTF9.Or7R0nyxGtxTlLspbrfIYxrTBWPTIwbF4Yo8YEbhIMYwmu9er48ajVqne4kzbV77VfNFJUE0K6iwc-QXalRB_A"
+# MinerU PDF 解析 API Token（从 .env 加载，未配置则跳过 E2 阶段）
+MINERU_TOKEN = os.getenv("MINERU_TOKEN", "")
 
 
 # ==================================================================
@@ -72,8 +78,8 @@ MINERU_TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4ODYwMDQwMiIsI
 LLM_API_CONFIG_DICT_RELE = {
     # API 端点: DeepSeek Chat Completions 接口
     "api_url": "https://api.deepseek.com/chat/completions",
-    # API 密钥: 从 https://platform.deepseek.com 获取
-    "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
+    # API 密钥: 从 .env 的 DEEPSEEK_API_KEY 加载
+    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     # 模型选择: deepseek-v4-flash (快速) 或 deepseek-v4-pro (更强)
     "model": "deepseek-v4-flash",
     # 思考模式: "enabled" 表示开启深度思考, "disabled" 表示关闭
@@ -86,8 +92,8 @@ LLM_API_CONFIG_DICT_RELE = {
 LLM_API_CONFIG_DICT_SUMM = {
     # API 端点: DeepSeek Chat Completions 接口
     "api_url": "https://api.deepseek.com/chat/completions",
-    # API 密钥: 从 https://platform.deepseek.com 获取
-    "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
+    # API 密钥: 从 .env 的 DEEPSEEK_API_KEY 加载
+    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     # 模型选择: deepseek-v4-flash (快速) 或 deepseek-v4-pro (更强)
     "model": "deepseek-v4-pro",
     # 思考模式: "enabled" 表示开启深度思考, "disabled" 表示关闭
@@ -153,10 +159,10 @@ SEMANTIC_SIMILARITY_THRESHOLD = 0.3
 
 # 每阶段最多处理 N 篇论文 (0 = 不限制)
 MAX_PAPERS_PER_PHASE = 0
-SKIP_PHASE_C = True
+SKIP_PHASE_C = False
 SKIP_PHASE_E = True
 SKIP_PHASE_E2 = True
-SKIP_PHASE_F = False
+SKIP_PHASE_F = True
 SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
@@ -166,11 +172,11 @@ PUBLISHER_PAGE_DELAY_MAX = 10
 
 # Phase C Publisher 爬虫: 同 publisher 内连续抓取失败 N 篇后中止该 publisher
 # 避免在被 Cloudflare 拦截时持续请求，进一步损害 IP 信誉
-PUBLISHER_MAX_CONSECUTIVE_FAILURES = 5
+PUBLISHER_MAX_CONSECUTIVE_FAILURES = 3
 
 # LLM API 并发上限: Phase E/F 同时发起的 DeepSeek 请求数
-# DeepSeek-V4-flash 官方限制 2500 并发，保守设 20
-LLM_CONCURRENT_MAX = 50
+# DeepSeek-V4-flash 官方限制 2500 并发，保守设 100
+LLM_CONCURRENT_MAX = 100
 
 # 过滤 Nature 新闻 (d41586 DOI)，只保留研究论文
 SKIP_NATURE_NEWS = True

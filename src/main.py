@@ -247,11 +247,11 @@ def phase_a_rss(db, publishers):
 
             # ---- 逐篇插入数据库（含去重检查） ----
             for paper in papers:
-                paperDOI = paper["doi"]
+                paperDOI = paper.doi
 
                 if not paperDOI:
                     # 无 DOI 的论文无法在后续阶段处理，跳过
-                    logger.debug(f"跳过无 DOI 论文: {paper['title']}")
+                    logger.debug(f"跳过无 DOI 论文: {paper.title}")
                     continue
 
                 # 去重：DOI 已存在的论文不再重复插入
@@ -267,8 +267,8 @@ def phase_a_rss(db, publishers):
                 logger.debug(f"写入新论文: {paperDOI}")
                 # 写入 RSS 阶段的基本信息（DOI, 标题, 链接, 期刊名, 出版商, 日期）
                 db.insert_rss_basicinfo(
-                    paperDOI, paper["title"], paper["link"],
-                    journal_name, publisher, paper["updated"]
+                    paperDOI, paper.title, paper.url,
+                    journal_name, publisher, paper.date
                 )
                 # 记录创建日期
                 db.insert_paper_created_date(paperDOI, timestamp)
@@ -1209,6 +1209,7 @@ def phase_g_report(db, report_dir):
     logger.info(f"已标记 {len(reported_dois)} 篇论文为 reported")
 
     logger.info(f"Phase G 完成: {len(paper_list)} 篇论文汇入报告")
+    logger.info(f"如需 PDF 版本，请运行: python tools/convert_md_to_pdf.py {md_path}")
 
 
 # ==================================================================

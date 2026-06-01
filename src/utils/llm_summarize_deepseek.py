@@ -26,15 +26,7 @@ import logging
 import requests
 from typing import Optional, Dict, Any
 
-from utils.paper_relevance import LLMAPICallError, LLMResponseParseError
-
-
-class LLMConfigurationError(Exception):
-    """LLM 配置错误——API URL、API Key 等必要参数缺失或值无效"""
-
-
-class LLMContextLengthExceed(Exception):
-    """发送文本可能过长了——输入文本的估算 token 数超过模型上下文窗口或预设的 chunk 限制"""
+from src.common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError, LLMContextLengthExceed
 
 
 class DeepSeekPaperSummarizer:
@@ -70,7 +62,7 @@ class DeepSeekPaperSummarizer:
     # ------------------------------------------------------------------
     # API 调用
     # ------------------------------------------------------------------
-    def call_deepseek_api(self, article_text, system_prompt: str) -> Dict[str, Any]:
+    def call_deepseek_api(self, article_text, system_prompt: str) -> str:
         """
         调用 DeepSeek API 生成论文结构化总结。
 
@@ -263,7 +255,7 @@ if __name__ == "__main__":
     # 实际运行前需要设置有效的 DEEPSEEK_API_KEY 环境变量或直接填入 api_key
     LLM_API_CONFIG_DICT = {
         "api_url": "https://api.deepseek.com/chat/completions",
-        "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
+        "api_key": os.getenv("DEEPSEEK_API_KEY", "sk-placeholder"),
         "model_name": "deepseek-v4-pro", # or deepseek-v4-pro stronger
         "thinking": "enabled",
         "timeout": 300,

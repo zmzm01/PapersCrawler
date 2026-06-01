@@ -25,16 +25,7 @@ from typing import List, Optional, Dict, Any
 import requests  # 用于 LLM API 调用；也可改用 openai 库
 
 
-class LLMConfigurationError(Exception):
-    """LLM 配置错误——当 API 配置信息（如 api_key、api_url）缺失或无效时抛出"""
-
-
-class LLMAPICallError(Exception):
-    """LLM API 调用失败——网络请求层面的错误（超时、连接失败、HTTP 4xx/5xx 等）"""
-
-
-class LLMResponseParseError(Exception):
-    """LLM 响应解析失败——API 返回了数据但结构不符合预期（缺少字段、类型错误等）"""
+from src.common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError
 
 
 class PaperRelevanceChecker:
@@ -176,7 +167,7 @@ class PaperRelevanceChecker:
     # ------------------------------------------------------------------
     # API 调用
     # ------------------------------------------------------------------
-    def call_deepseek_api(self, prompt: str, llm_api_config: Dict[str, Any]) -> Dict[str, Any]:
+    def call_deepseek_api(self, prompt: str, llm_api_config: Dict[str, Any]) -> str:
         """
         调用 DeepSeek API 进行相关性判断。
 
@@ -461,7 +452,7 @@ if __name__ == "__main__":
     # 注意：实际使用时请将 api_key 替换为有效的 DeepSeek API Key
     LLM_API_CONFIG_DICT = {
         "api_url": "https://api.deepseek.com/chat/completions",
-        "api_key": "sk-3cc8e7b0cc4e429da42fbce0b75aa482",
+        "api_key": os.getenv("DEEPSEEK_API_KEY", "sk-placeholder"),
         "model_name": "deepseek-v4-flash", # or deepseek-v4-pro stronger
         "thinking": "enabled",
         "timeout": 300,
