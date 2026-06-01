@@ -680,6 +680,7 @@ class DatabaseClient:
         cur = self.conn.execute("""
         SELECT * FROM papers
         WHERE llm_relevance_result = 1
+          AND llm_relevance_status = 'success'
         ORDER BY paperdate_rss DESC
         """)
         return cur.fetchall()
