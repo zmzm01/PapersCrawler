@@ -1,7 +1,7 @@
 """
 学术出版商论文元数据爬取模块。
 
-本模块通过 Playwright 驱动 Chromium 浏览器，结合 parsel 选择器，从 7 种主流
+本模块通过 cloakbrowser 驱动 Chromium 浏览器，结合 parsel 选择器，从 7 种主流
 学术出版商的网页中提取论文元数据（标题、作者、DOI、摘要、期刊、日期、PDF链接等）。
 
 支持的出版商（对应 7 个 Scraper 子类）：
@@ -14,13 +14,9 @@
     - Optica (OSA/Optica Publishing)    → OpticaScraper
 
 Cloudflare 反爬对抗策略：
-    1. 浏览器启动参数 `--disable-blink-features=AutomationControlled`
-       去除 Chromium 自动化标志。
-    2. 通过 page.evaluate 注入 JS 代码，覆盖 navigator.webdriver 为 false、
-       伪造 navigator.chrome.runtime、navigator.languages 和 navigator.plugins，
-       使浏览器指纹更接近真实用户。
-    3. 页面加载后等待 5 秒（fetch_page 中的 wait_for_timeout），给 Cloudflare
-       Challenge 足够时间自动通过。
+    cloakbrowser 自动处理浏览器指纹伪装，无需手动注入反检测 JS。
+    页面加载后等待 5 秒（fetch_page 中的 wait_for_timeout），给 Cloudflare
+    Challenge 足够时间自动通过。
 
 类继承层次：
     BasePublisherScraper          ← 基类，封装浏览器启动/关闭、页面抓取/保存
@@ -34,7 +30,7 @@ Cloudflare 反爬对抗策略：
 
 异常类：
     PageParseError       ← 页面解析通用异常（如 HTML 文件不存在、页面结构变化）
-    NaturePageNotPaper   ← Nature/Science 页面不是论文文章时抛出（如 News/Podcast）
+    NonResearchPageError   ← Nature/Science 页面不是论文文章时抛出（如 News/Podcast）
 
 使用流程：
     1. 实例化对应 Scraper，传入浏览器缓存目录。
@@ -46,6 +42,7 @@ Cloudflare 反爬对抗策略：
 
 import re
 import json
+import logging
 from pathlib import Path
 
 from parsel import Selector
@@ -70,16 +67,16 @@ from common import Paper
 class BasePublisherScraper:
     """出版商爬虫基类。
 
-    封装了基于 Playwright 的 Chromium 浏览器启动、页面抓取、HTML 保存
-    和浏览器关闭等通用逻辑。子类只需实现 parse_page() 方法即可。
+    封装了基于 cloakbrowser 的 Chromium 浏览器启动、页面抓取、HTML 保存、
+    PDF 下载和浏览器关闭等通用逻辑。子类只需实现 parse_page() 方法即可。
 
     设计理念：同一个浏览器实例可复用于多个出版商的页面抓取，
     通过持久化 user_data_dir 保留登录态和 Cookie，避免重复登录。
 
     Attributes:
         user_data_dir (Path): Chromium 持久化数据目录，用于缓存 session/Cookie。
-        context:             Playwright 浏览器上下文。
-        page:                Playwright Page 对象。
+        context:             浏览器上下文。
+        page:                浏览器 Page 对象。
         html:                当前页面的 HTML 源码字符串。
     """
 
@@ -117,7 +114,7 @@ class BasePublisherScraper:
         )
         self.page = self.context.new_page()
 
-    def fetch_page(self, url=None, html_path=None, timeout=5000):
+    def fetch_page(self, url=None, html_path=None, timeout=8000):
         """获取论文页面 HTML 源码。
 
         支持两种模式：
@@ -175,6 +172,55 @@ class BasePublisherScraper:
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
 
+    def download_pdf(self, pdf_url: str, page_url: str | None = None,
+                     timeout: int = 60000) -> bytes:
+        """利用已有浏览器上下文下载 PDF。
+
+        先访问文章页面（page_url）建立正确的 referrer/session 上下文，
+        再在当前页面中用 fetch 请求 PDF 链接。
+
+        这解决了部分出版商（如 APS closed OA）直接访问 pdf_url 会被
+        302 重定向到文章页的问题。
+
+        Args:
+            pdf_url:  PDF 下载链接。
+            page_url: 论文页面 URL，提供后先访问此页面建立上下文。
+            timeout:  goto 超时时间（毫秒），默认 60000。
+
+        Returns:
+            bytes: PDF 文件的原始字节。
+
+        Raises:
+            RuntimeError: 无法获取有效 PDF。
+        """
+        logger = logging.getLogger(__name__)
+
+        # 先在论文页面建立上下文（referrer / cookie / session）
+        if page_url:
+            logger.debug(f"访问论文页面建立上下文: {page_url}")
+            self.page.goto(page_url, wait_until="domcontentloaded",
+                           timeout=timeout)
+            self.page.wait_for_timeout(5000)
+
+        # 在当前页面上下文中 fetch PDF（继承 referrer / cookie）
+        logger.debug(f"下载 PDF: {pdf_url}")
+        url_escaped = json.dumps(pdf_url)
+        raw = self.page.evaluate(f"""
+            async () => {{
+                const resp = await fetch({url_escaped});
+                const buf = await resp.arrayBuffer();
+                return Array.from(new Uint8Array(buf));
+            }}
+        """)
+        pdf_body = bytes(raw) if raw else None
+
+        if pdf_body is None or pdf_body[:5] != b'%PDF-':
+            raise RuntimeError(
+                "页面未返回有效 PDF（可能需登录或链接不可用）"
+            )
+
+        return pdf_body
+
     def close(self):
         """关闭浏览器上下文。
 
@@ -195,7 +241,7 @@ class PageParseError(Exception):
     pass
 
 
-class NaturePageNotPaper(Exception):
+class NonResearchPageError(Exception):
     """非论文页面异常。
 
     在 Nature 或 Science 爬虫中，当检测到页面类型不是学术论文时抛出。
@@ -289,7 +335,7 @@ class NatureScraper(BasePublisherScraper):
 
     边界情况处理：
         - 页面类型过滤：通过 <meta name="dc.type"> 检查是否为 OriginalPaper。
-          若不是（如 News、Podcast、Highlight），则抛出 NaturePageNotPaper 异常，
+          若不是（如 News、Podcast、Highlight），则抛出 NonResearchPageError 异常，
           由调用方跳过该页面。
         - 摘要来源优先级：优先使用正文 #Abs1-content 中的摘要文本，
           JSON-LD 中的 description 可能混杂非摘要内容（如期刊宣传语），
@@ -317,7 +363,7 @@ class NatureScraper(BasePublisherScraper):
             - keywords:  JSON-LD 中 mainEntity.keywords（预留）
 
         边界处理：
-            - 若 dc.type 不是 "OriginalPaper"，抛出 NaturePageNotPaper
+            - 若 dc.type 不是 "OriginalPaper"，抛出 NonResearchPageError
             - 若 dc.type 为空，说明页面结构可能已变化，抛出 PageParseError
             - JSON-LD 解析失败时各字段使用空默认值，不影响流程
 
@@ -325,7 +371,7 @@ class NatureScraper(BasePublisherScraper):
             Paper: 包含提取元数据的 Paper 实例。
 
         Raises:
-            NaturePageNotPaper: 页面不是学术论文（如 News/Podcast）。
+            NonResearchPageError: 页面不是学术论文（如 News/Podcast）。
             PageParseError:     无法获取 dc.type，页面结构可能已变化。
         """
         sel = Selector(text=self.html)
@@ -340,7 +386,7 @@ class NatureScraper(BasePublisherScraper):
                 "No dc.type in Nature page, maybe the page structure has changed."
             )
         if dctype != "OriginalPaper":
-            raise NaturePageNotPaper("This Nature page is not OriginalPaper.")
+            raise NonResearchPageError("This Nature page is not OriginalPaper.")
 
         # ─── 获取 PDF 下载链接 ───
         # Nature 的 PDF 链接格式为相对路径：/articles/s41567-026-03184-9.pdf
@@ -380,8 +426,8 @@ class NatureScraper(BasePublisherScraper):
                 data = None
             if data:
                 title = data.get("headline", "")
-                abstract_jsonld = data.get("description", "")  # 备用摘要
-                keywords = data.get("keywords", [])
+                # abstract_jsonld = data.get("description", "")  # 备用摘要（当前未使用，保留供后续参考）
+                # keywords = data.get("keywords", [])  # 备用关键词（当前未使用，保留供后续参考）
                 authors = [a["name"] for a in data.get("author", [])]
                 date = data.get("datePublished", "")
                 # 标准化日期格式: "2026-05-19T00:00:00Z" → "2026-05-19"
@@ -446,14 +492,14 @@ class ScienceScraper(BasePublisherScraper):
                          div[role="paragraph"] 的全部文本内容
 
         边界处理：
-            - 若 dc.Type 不是 "research-article"，抛出 NaturePageNotPaper
+            - 若 dc.Type 不是 "research-article"，抛出 NonResearchPageError
             - 若 dc.Type 为空，说明页面结构可能已变化，抛出 PageParseError
 
         Returns:
             Paper: 包含提取元数据的 Paper 实例。
 
         Raises:
-            NaturePageNotPaper: 页面不是研究论文。
+            NonResearchPageError: 页面不是研究论文。
             PageParseError:     无法获取 dc.Type，页面结构可能已变化。
         """
         sel = Selector(text=self.html)
@@ -466,7 +512,7 @@ class ScienceScraper(BasePublisherScraper):
                 "No dc.Type in Science page, maybe the page structure has changed."
             )
         if dctype != "research-article":
-            raise NaturePageNotPaper("This Science page is not research-article.")
+            raise NonResearchPageError("This Science page is not research-article.")
 
         # ─── 从 <meta> 标签提取元数据 ───
         title = sel.css('meta[name="dc.Title"]::attr(content)').get() or ""

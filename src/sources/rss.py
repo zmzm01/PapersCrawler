@@ -14,7 +14,6 @@ rss.py - RSS 数据源处理模块
 import requests
 import feedparser
 from pathlib import Path
-from datetime import datetime
 from dateutil import parser
 
 from common import Paper
