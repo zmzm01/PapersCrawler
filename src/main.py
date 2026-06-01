@@ -912,9 +912,10 @@ def phase_e2_mineru(db):
                 if pdf_body is None or pdf_body[:5] != b'%PDF-':
                     # 兜底：通过页面内 fetch 重新获取（浏览器 session/cookie 可用）
                     logger.debug(f"响应监听未捕获 PDF，尝试 fetch 兜底: {doi}")
+                    url_escaped = json.dumps(pdf_url)
                     raw = pdf_page.evaluate(f"""
                         async () => {{
-                            const resp = await fetch('{pdf_url}');
+                            const resp = await fetch({url_escaped});
                             const buf = await resp.arrayBuffer();
                             return Array.from(new Uint8Array(buf));
                         }}

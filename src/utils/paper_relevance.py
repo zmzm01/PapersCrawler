@@ -25,7 +25,7 @@ from typing import List, Optional, Dict, Any
 import requests  # 用于 LLM API 调用；也可改用 openai 库
 
 
-from src.common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError
+from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError
 
 
 class PaperRelevanceChecker:

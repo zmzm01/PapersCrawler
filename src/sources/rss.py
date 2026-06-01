@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 from dateutil import parser
 
-from src.common import Paper
+from common import Paper
 
 
 class RSSProcessor:

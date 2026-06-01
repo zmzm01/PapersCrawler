@@ -26,7 +26,7 @@ import logging
 import requests
 from typing import Optional, Dict, Any
 
-from src.common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError, LLMContextLengthExceed
+from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError, LLMContextLengthExceed
 
 
 class DeepSeekPaperSummarizer:
