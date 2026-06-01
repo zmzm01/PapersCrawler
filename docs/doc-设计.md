@@ -95,7 +95,7 @@ class Paper:
 | `LLMResponseParseError` | API 响应结构异常（缺少字段） |
 | `LLMContextLengthExceed` | 文本超模型上下文窗口 |
 
-各模块特有的异常（如 `PageParseError`、`NaturePageNotPaper`、`NotFoundError`）保留在各自模块中。
+各模块特有的异常（如 `PageParseError`、`NonResearchPageError`、`NotFoundError`）保留在各自模块中。
 
 # 流水线架构
 
