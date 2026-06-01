@@ -49,40 +49,18 @@ import json
 from pathlib import Path
 
 from parsel import Selector
-from playwright.sync_api import sync_playwright
+from cloakbrowser import launch_persistent_context
 
-from dataclasses import dataclass, field
 from typing import List
+
+from src.common import Paper
 
 
 # ──────────────────────────────────────────────────────────
 # Paper 数据类：封装一篇论文的所有元数据
 # ──────────────────────────────────────────────────────────
 
-@dataclass
-class Paper:
-    """论文元数据的数据类。
 
-    所有字段均为可选，解析失败时对应字段为 None 或空值。
-
-    Attributes:
-        doi:       数字对象标识符（Digital Object Identifier），如 "10.1103/PhysRevLett.xxx"
-        title:     论文标题
-        date:      发表日期（格式因出版商而异）
-        journal:   期刊名称，如 "Physical Review Letters"
-        abstract:  论文摘要文本
-        authors:   作者姓名列表，如 ["Alice", "Bob"]
-        pdf_url:   论文 PDF 下载链接
-        url:       论文标准 URL（canonical url）
-    """
-    doi: str | None = None
-    title: str | None = None
-    date: str | None = None
-    journal: str | None = None
-    abstract: str | None = None
-    authors: List[str] | None = None
-    pdf_url: str | None = None
-    url: str | None = None  # canonical url
 
 
 # ──────────────────────────────────────────────────────────
@@ -123,65 +101,21 @@ class BasePublisherScraper:
         self.page = None
 
     def start_browser(self, proxy=None):
-        """启动 Chromium 浏览器并注入反检测 JS。
+        """启动 Chromium 浏览器（通过 cloakbrowser）。
 
-        启动持久化上下文的 Chromium 浏览器，通过启动参数和 JS 注入
-        来对抗 Cloudflare 等反爬检测。
-
-        反检测策略：
-            1. ``--disable-blink-features=AutomationControlled``
-               禁用 Chrome DevTools Protocol 的自动化标志。
-            2. 注入 JS 覆盖 ``navigator.webdriver`` 为 false，
-               避免被检测为 Playwright 驱动的浏览器。
-            3. 伪造 ``navigator.chrome.runtime``、``navigator.languages``
-               和 ``navigator.plugins``，使浏览器指纹更像普通 Chrome。
+        使用 cloakbrowser.launch_persistent_context 创建持久化浏览器上下文，
+        自动处理浏览器指纹伪装和 Cloudflare 绕过。
 
         Args:
             proxy: 可选代理配置字典，格式如 {"server": "http://127.0.0.1:10808"}，
                    用于需要特定区域 IP 的出版商（如 Optica 可能需要美国 IP）。
         """
-        self.pw = sync_playwright().start()
-        self.context = self.pw.chromium.launch_persistent_context(
+        self.context = launch_persistent_context(
             user_data_dir=str(self.user_data_dir),
             headless=False,
-            # 禁用自动化特征标志，对抗 Cloudflare 检测
-            args=["--disable-blink-features=AutomationControlled"],
             proxy=proxy,
-            # 设置明确的 viewport，避免 xvfb 默认分辨率异常触发指纹检测
-            viewport={"width": 1920, "height": 1080},
         )
         self.page = self.context.new_page()
-
-        # ───────────────────────────────────────────────────
-        # 注入反检测 JS：覆盖 Playwright 暴露的自动化特征
-        # ───────────────────────────────────────────────────
-        # navigator.webdriver 默认为 true 是 Playwright 最明显的特征，
-        # 将其设为 false 可绕过大量基于该属性判断是否为机器人的检测。
-        # navigator.chrome.runtime 在正常 Chrome 中存在，Playwright 中不存在，
-        # 伪造该对象使其指纹更接近真实浏览器。
-        # navigator.languages 和 navigator.plugins 同理，Playwright 的默认值
-        # 可能为空或不完整，伪造常见值以通过指纹检测。
-        self.page.evaluate("""
-        () => {
-            // 覆盖 webdriver 属性，使检测脚本认为这不是自动化浏览器
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            // 伪造 window.navigator.chrome 对象，正常 Chrome 中存在该属性
-            window.navigator.chrome = { runtime: {} };
-            // 伪造浏览器语言列表，模拟英语用户
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            // 伪造插件数组长度，使其不为空（真实浏览器通常有插件）
-            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-            // 伪造硬件并发数（CPU 核心数），headless 默认为 1，真实桌面通常 >= 4
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-            // 伪造设备内存（GB），headless 可能未设置
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-            // 伪造最大触摸点数，桌面设备应为 0
-            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-        }
-        """)
-
-        # 可在开发时取消注释以下行，访问 bot 检测页面验证伪装效果
-        # self.page.goto("https://bot.sannysoft.com/", timeout=120000)
 
     def fetch_page(self, url=None, html_path=None, timeout=5000):
         """获取论文页面 HTML 源码。
@@ -242,12 +176,11 @@ class BasePublisherScraper:
             f.write(html)
 
     def close(self):
-        """关闭浏览器上下文并停止 Playwright。
+        """关闭浏览器上下文。
 
         释放所有 Chromium 相关资源，应在爬取完成后调用。
         """
         self.context.close()
-        self.pw.stop()
 
 
 # ──────────────────────────────────────────────────────────

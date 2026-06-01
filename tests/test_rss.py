@@ -37,12 +37,12 @@ def test_parse_rss_with_cached_data():
     papers = rsspro.parse_rss(xml_text, journal_config)
 
     assert len(papers) > 0, "应至少解析出 1 篇论文"
-    assert "doi" in papers[0]
-    assert "title" in papers[0]
-    assert "link" in papers[0]
+    assert papers[0].doi is not None
+    assert papers[0].title is not None
+    assert papers[0].url is not None
 
     # 检查至少有一篇有 DOI
-    dois = [p["doi"] for p in papers if p["doi"]]
+    dois = [p.doi for p in papers if p.doi]
     assert len(dois) > 0, "至少应有一篇论文提取到 DOI"
 
 
@@ -97,9 +97,8 @@ def test_parse_rss_entries_have_required_fields():
 
         papers = rsspro.parse_rss(xml_text, {"id": "test"})
         for paper in papers:
-            assert isinstance(paper.get("title"), str)
-            assert isinstance(paper.get("link"), str)
-            assert isinstance(paper.get("rss_fetched_at"), str)
+            assert isinstance(paper.title, str)
+            assert isinstance(paper.url, str)
         tested += 1
 
     assert tested > 0, "至少应测试 1 个 RSS 文件"

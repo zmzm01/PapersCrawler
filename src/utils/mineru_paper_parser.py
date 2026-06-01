@@ -289,7 +289,7 @@ def parse_paper(pdf_path, token, output_dir=None):
 
 
 if __name__ == "__main__":
-    token = "<REDACTED_MINERU_JWT>"
+    token = os.getenv("MINERU_TOKEN", "your-token-placeholder")
     parser = MinerUParser(token)
     dir_path = Path(__file__).parent
     parser.parse_pdf(dir_path / "qdgp-tydj.pdf", dir_path / "qdgp-tydj")

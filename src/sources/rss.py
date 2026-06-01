@@ -17,6 +17,8 @@ from pathlib import Path
 from datetime import datetime
 from dateutil import parser
 
+from src.common import Paper
+
 
 class RSSProcessor:
     """
@@ -126,14 +128,12 @@ class RSSProcessor:
                 # 统一转换为 YYYY-MM-DD 格式，便于后续数据库存储和比较
                 dt = dt.strftime('%Y-%m-%d')
 
-            paper = {
-                "doi": doi,
-                "title": entry.get("title", ""),
-                "link": entry.get("link", ""),
-                "updated": dt,
-                # 记录本次抓取的时间戳，用于判断数据新鲜度和去重
-                "rss_fetched_at": datetime.now().isoformat(),
-            }
+            paper = Paper(
+                doi=doi,
+                title=entry.get("title", ""),
+                url=entry.get("link", ""),
+                date=dt,
+            )
             papers.append(paper)
         return papers
 
