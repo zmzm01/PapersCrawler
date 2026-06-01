@@ -42,12 +42,6 @@ SEMANTIC_CASCADE = [
     "llm_relevance_reason = NULL",
     "llm_relevance_error = NULL",
     "llm_relevance_date = NULL",
-    # Phase E2 — MinerU PDF 全文解析
-    "mineru_parse_status = 'pending'",
-    "mineru_parse_error = NULL",
-    "mineru_parse_date = NULL",
-    "mineru_fulltext = NULL",
-    "mineru_output_dir = NULL",
     # Phase F — LLM 论文总结
     "llm_summary_status = 'pending'",
     "llm_summary_error = NULL",
@@ -111,12 +105,23 @@ def cmd_reset_semantic(publisher=None):
 
 
 def cmd_reset_publisher(publisher=None):
-    """重置 Publisher 页面抓取失败/跳过的论文。"""
+    """重置 Publisher 页面抓取失败/跳过的论文（跳过非论文页面）。"""
+    exclude_non_research = (
+        "AND (publisher_page_fetched_error IS NULL"
+        " OR publisher_page_fetched_error NOT LIKE 'NonResearchPageError:%')"
+    )
     if publisher:
-        where = "WHERE publisher_page_fetched_status IN ('failed', 'skipped') AND publisher = ?"
+        where = (
+            "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
+            f" {exclude_non_research}"
+            " AND publisher = ?"
+        )
         params = (publisher,)
     else:
-        where = "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
+        where = (
+            "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
+            f" {exclude_non_research}"
+        )
         params = ()
 
     count_sql = f"SELECT COUNT(*) FROM papers {where}"

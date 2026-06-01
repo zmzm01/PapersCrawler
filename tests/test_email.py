@@ -95,7 +95,7 @@ def test_send_real_email():
         cfg = yaml.safe_load(f) or {}
 
     # 跳过未配置凭证的情况
-    if "your_" in cfg.get("username", "your_") or "your_" in cfg.get("password", "your_"):
+    if "@" not in cfg.get("username", ""):
         pytest.skip("Email credentials not configured")
 
     sender = EmailSender(
