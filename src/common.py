@@ -18,7 +18,7 @@ common.py
 保留在各自模块中定义。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 
 

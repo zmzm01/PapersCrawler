@@ -5,7 +5,7 @@
   - 各出版社 HTML 解析逻辑
   - Paper 数据类
   - Cloudflare 防检测 JS 注入
-  - 异常处理 (NaturePageNotPaper, PageParseError)
+  - 异常处理 (NonResearchPageError, PageParseError)
 
 使用保存的 HTML 示例文件进行解析测试，不需要启动浏览器。
 """
@@ -21,7 +21,7 @@ from sources.publisher import (
     Paper, BasePublisherScraper,
     NatureScraper, ScienceScraper, APSScraper,
     AIPScraper, IOPScraper, CambridgeScraper, OpticaScraper,
-    NaturePageNotPaper, PageParseError,
+    NonResearchPageError, PageParseError,
 )
 
 
@@ -145,7 +145,7 @@ def test_nature_scraper_not_original_paper():
 
         scraper = NatureScraper(tmpdir)
         scraper.fetch_page(html_path=html_path)
-        with pytest.raises(NaturePageNotPaper):
+        with pytest.raises(NonResearchPageError):
             scraper.parse_page()
 
 
@@ -160,7 +160,7 @@ def test_science_scraper_type_check():
 
         scraper = ScienceScraper(tmpdir)
         scraper.fetch_page(html_path=html_path)
-        with pytest.raises(NaturePageNotPaper):  # 复用同一异常类
+        with pytest.raises(NonResearchPageError):
             scraper.parse_page()
 
 
