@@ -20,7 +20,7 @@ import re
 import json
 import time
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 
 import requests  # 用于 LLM API 调用；也可改用 openai 库
 
@@ -262,85 +262,9 @@ class PaperRelevanceChecker:
             raise LLMResponseParseError(f"API 返回结构异常: {e}") from e
 
     # ------------------------------------------------------------------
-    # 更好的方法（推荐作为补充）：
-    # 基于语义相似度（sentence embeddings）
-    #
-    # 相比关键词匹配的优势：
-    # - 能捕获同义词（如 "GNN" ↔ "graph neural network" ↔ "graph attention network"）
-    # - 能处理上下位词关系（如 "node classification" 与 "graph learning" 有一定相关性）
-    # - 不依赖外部 API，可在离线环境运行
-    #
-    # 局限性：
-    # - 需要下载预训练模型（首次运行时会自动下载，约 80MB）
-    # - 计算速度受限于模型大小和硬件
-    # - 阈值需要根据具体领域标定（建议在标注数据上测试后设定）
-    # 可安装 sentence-transformers 库后使用
+    # 语义相似度（推荐使用 SemanticFilter 类，支持模型一次加载多次复用）
+    # 详见本文件下方 SemanticFilter 类的 compute_similarity() 方法
     # ------------------------------------------------------------------
-    def semantic_similarity(
-        self,
-        title: str,
-        abstract: str,
-        model_name: str = "all-MiniLM-L6-v2",
-        domain_description: Optional[str] = None,
-    ) -> float:
-        """
-        使用句子嵌入模型计算论文与领域的语义相似度。
-
-        工作流程：
-        1. 构造两个文本：
-           - domain_description：研究领域描述（默认由关键词拼接而成，也可手动传入更详细的描述）。
-           - paper_text：论文的标题 + 摘要（用句号连接）。
-        2. 使用 SentenceTransformer 将两个文本编码为固定长度的向量。
-        3. 计算两个向量的余弦相似度（cosine similarity），值域为 [0, 1]。
-        4. 分数越接近 1 表示论文与研究领域越相关。
-
-        模型选择建议：
-        - "all-MiniLM-L6-v2"（默认）：轻量、快速，适合大规模批量筛选。
-        - "all-mpnet-base-v2"：精度更高但速度较慢。
-        - "paraphrase-multilingual-MiniLM-L12-v2"：多语言支持（含中文），适合中文论文。
-
-        需要安装 sentence-transformers: pip install sentence-transformers
-
-        Parameters
-        ----------
-        title : str
-            论文标题。
-        abstract : str
-            论文摘要。
-        model_name : str
-            HuggingFace 上的句子嵌入模型名称，默认为 "all-MiniLM-L6-v2"。
-        domain_description : Optional[str]
-            对研究领域的自然语言描述，若为空则用关键词拼接（"研究领域涵盖：kw1, kw2, ..."）。
-            建议传入更详细的领域描述以获得更准确的相似度分数。
-
-        Returns
-        -------
-        float
-            余弦相似度得分（0~1），越高越相关。
-        ---
-        """
-        try:
-            from sentence_transformers import SentenceTransformer, util
-        except ImportError:
-            raise ImportError(
-                "请安装 sentence-transformers 库: pip install sentence-transformers"
-            )
-
-        if domain_description is None:
-            domain_description = (
-                "研究领域涵盖：" + ", ".join(self.keywords)
-            )
-
-        model = SentenceTransformer(model_name)
-        paper_text = f"{title}. {abstract}"
-        # encode 返回 PyTorch tensor，convert_to_tensor=True 避免转 numpy 开销
-        embeddings = model.encode(
-            [domain_description, paper_text],
-            convert_to_tensor=True,
-        )
-        # util.cos_sim 计算两个张量间的余弦相似度
-        cosine_score = util.cos_sim(embeddings[0], embeddings[1]).item()
-        return cosine_score
 
 
 # ------------------------------------------------------------------
@@ -477,6 +401,9 @@ if __name__ == "__main__":
     # llm_result = checker.call_deepseek_api(prompt, LLM_API_CONFIG_DICT)
     # print(llm_result)
 
-    # 3. (更好) 语义相似度
-    sim = checker.semantic_similarity(title, abstract)
-    print(f"语义相似度: {sim:.3f}")
+    # 3. 语义相似度（使用 SemanticFilter，见下方该类的 compute_similarity() 方法）
+    # from utils.paper_relevance import SemanticFilter
+    # from config import SEMANTIC_MODEL_PATH
+    # sf = SemanticFilter(SEMANTIC_MODEL_PATH, "研究领域涵盖：" + ", ".join(keywords))
+    # sim = sf.compute_similarity(title, abstract)
+    # print(f"语义相似度: {sim:.3f}")

@@ -159,16 +159,21 @@ SEMANTIC_SIMILARITY_THRESHOLD = 0.3
 
 # 每阶段最多处理 N 篇论文 (0 = 不限制)
 MAX_PAPERS_PER_PHASE = 0
-SKIP_PHASE_C = False
+# 阶段开关（True = 跳过该阶段）
+SKIP_PHASE_A = False
+SKIP_PHASE_B = False
+SKIP_PHASE_C = True
+SKIP_PHASE_D = False
 SKIP_PHASE_E = True
-SKIP_PHASE_E2 = True
+SKIP_PHASE_E2 = False
 SKIP_PHASE_F = True
+SKIP_PHASE_G = False
 SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
 # 避免连续请求触发 Cloudflare 速率限制，降低 IP 信誉受损风险
-PUBLISHER_PAGE_DELAY_MIN = 5
-PUBLISHER_PAGE_DELAY_MAX = 10
+PUBLISHER_PAGE_DELAY_MIN = 3
+PUBLISHER_PAGE_DELAY_MAX = 5
 
 # Phase C Publisher 爬虫: 同 publisher 内连续抓取失败 N 篇后中止该 publisher
 # 避免在被 Cloudflare 拦截时持续请求，进一步损害 IP 信誉
@@ -180,6 +185,13 @@ LLM_CONCURRENT_MAX = 100
 
 # 过滤 Nature 新闻 (d41586 DOI)，只保留研究论文
 SKIP_NATURE_NEWS = True
+
+# Publisher 爬虫代理配置（按 publisher 标识）
+# 需要代理的出版商在此配置，key 为 publisher 标识（如 "optica"），
+# value 为 Playwright proxy 字典（{"server": "..."})
+PUBLISHER_PROXY = {
+    "optica": {"server": "http://127.0.0.1:10808"},
+}
 
 
 # ==================================================================

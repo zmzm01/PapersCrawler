@@ -6,12 +6,12 @@ PapersCrawler 主入口 —— 8 阶段文献追踪流水线。
 流水线架构:
   Phase A — RSS 抓取      : 从配置的期刊 RSS Feed 发现新论文，记录到数据库
   Phase B — CrossRef 补充 : 通过 DOI 从 CrossRef API 获取完整元数据
-  Phase C — Publisher 抓取: 使用 Playwright 浏览器爬取期刊页面摘要
+  Phase C — Publisher 抓取: 使用 cloakbrowser 爬取期刊页面摘要
   Phase D — 语义相似度初筛: 基于 sentence-transformers 计算论文与领域的语义相似度
   Phase E — LLM 相关性    : 调用 DeepSeek API 对初筛通过的论文做相关性判断
   Phase E2 — MinerU 全文  : 对相关论文下载 PDF 并用 MinerU 解析全文
   Phase F — LLM 总结      : 对判定相关的论文（优先用 MinerU 全文）生成结构化总结
-  Phase G — 报告生成      : 生成 Markdown + PDF 双格式报告
+  Phase G — 报告生成      : 生成 Markdown 格式报告
   Phase H — 邮件推送      : 通过 SMTP 将报告发送给团队成员
 
 运行方式:
@@ -49,10 +49,12 @@ from config import (
     MINERU_TOKEN, MINERU_OUTPUT_DIR,
     SEMANTIC_MODEL_PATH, SEMANTIC_SIMILARITY_THRESHOLD,
                 MAX_PAPERS_PER_PHASE,
-    SKIP_PHASE_C, SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_H,
+    SKIP_PHASE_A, SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
+    SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
     SKIP_NATURE_NEWS,
     PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX,
     PUBLISHER_MAX_CONSECUTIVE_FAILURES,
+    PUBLISHER_PROXY,
     LLM_CONCURRENT_MAX,
 )
 
@@ -60,9 +62,10 @@ from utils.db import DatabaseClient, FetchStatus
 from sources.rss import RSSProcessor
 from sources.crossref import CrossrefClient, NotFoundError
 from sources.publisher import (
+    BasePublisherScraper,
     NatureScraper, ScienceScraper, APSScraper,
     AIPScraper, IOPScraper, CambridgeScraper, OpticaScraper,
-    NaturePageNotPaper, PageParseError,
+    NonResearchPageError, PageParseError,
 )
 from utils.paper_relevance import (
     PaperRelevanceChecker,
@@ -77,7 +80,7 @@ from utils.llm_summarize_deepseek import (
 from utils.paper_report_generator import generate_report
 from utils.email_sender import EmailSender
 from utils.mineru_paper_parser import MinerUParser
-from playwright.sync_api import sync_playwright
+
 
 
 # ==================================================================
@@ -96,7 +99,7 @@ SCRAPER_MAP = {
     "iop":       (IOPScraper,       BROWSER_SESSION_DIR / "iop",       None),
     "cambridge": (CambridgeScraper, BROWSER_SESSION_DIR / "cambridge", None),
     "optica":    (OpticaScraper,    BROWSER_SESSION_DIR / "optica",
-                  {"server": "http://127.0.0.1:10808"}),
+                  PUBLISHER_PROXY.get("optica")),
 }
 
 
@@ -211,6 +214,9 @@ def phase_a_rss(db, publishers):
         db:         DatabaseClient 实例
         publishers: 期刊配置列表 (来自 publishers.yaml)
     """
+    if SKIP_PHASE_A:
+        logger.info("Phase A: SKIP_PHASE_A=True, skipping")
+        return
     logger.info("--- Phase A: RSS Feed 抓取 ---")
     rsspro = RSSProcessor()
     timestamp = datetime.now().strftime("%Y%m%d")
@@ -304,6 +310,9 @@ def phase_b_crossref(db):
     Args:
         db: DatabaseClient 实例
     """
+    if SKIP_PHASE_B:
+        logger.info("Phase B: SKIP_PHASE_B=True, skipping")
+        return
     logger.info("--- Phase B: CrossRef 元数据补充 ---")
     crClient = CrossrefClient(mailto=CROSSREF_MAILTO, timeout=REQUEST_TIMEOUT)
 
@@ -382,7 +391,7 @@ def phase_b_crossref(db):
 # ==================================================================
 # Phase C: Publisher 页面抓取
 #
-# 职责: 使用 Playwright 浏览器访问期刊页面，提取摘要和 PDF 链接
+# 职责: 使用 cloakbrowser 访问期刊页面，提取摘要和 PDF 链接
 # 策略: 按 publisher 分组，同一出版商复用同一个浏览器实例
 # ==================================================================
 
@@ -397,7 +406,7 @@ def phase_c_publisher(db):
     4. 处理完毕后关闭浏览器（finally 保证资源释放）
 
     边界情况：
-    - NaturePageNotPaper: Nature/Science 中非论文页面（News, Podcast 等），跳过
+    - NonResearchPageError: Nature/Science 中非论文页面（News, Podcast 等），跳过
     - PageParseError: 页面结构变化导致解析失败，标记失败
     - 其他异常: 记录错误并继续处理下一篇论文
 
@@ -464,93 +473,110 @@ def phase_c_publisher(db):
                     )
                     continue
 
-                try:
-                    # ---- 步骤 1: 浏览器访问页面 ----
-                    scraper.fetch_page(page_url)
+                # ---- 重试机制：5s → 15s → 随机冷却 120s + 45s ----
+                paper_succeeded = False
+                paper_skipped = False
+                last_error = None
 
-                    # ---- 步骤 2: 解析页面提取元数据 ----
-                    paperPage = scraper.parse_page()
+                for attempt in range(3):
+                    try:
+                        if attempt == 0:
+                            timeout = 5000
+                            cooloff = 0
+                        elif attempt == 1:
+                            timeout = 15000
+                            cooloff = 0
+                        else:
+                            timeout = 45000
+                            cooloff = random.uniform(120, 180)
+                            logger.debug(
+                                f"两次重试均失败，等待 {cooloff:.0f}s 后第三次重试 "
+                                f"(timeout=45s) [{paperDOI}]"
+                            )
+                            time.sleep(cooloff)
+                        scraper.fetch_page(page_url, timeout=timeout)
+                        paperPage = scraper.parse_page()
 
-                    # ---- Cloudflare 拦截检测 ----
-                    _cf_blocked = (
-                        "challenge-platform" in scraper.html
-                        or "_cf_chl_opt" in scraper.html
-                        or "cf-browser-verification" in scraper.html
-                    )
-                    if _cf_blocked or (not paperPage.title and not paperPage.doi and not paperPage.abstract):
-                        logger.warning(
-                            f"Publisher 页面数据不完整（可能被 Cloudflare 拦截）: {paperDOI}"
+                        # ---- Cloudflare 拦截检测 ----
+                        _cf_blocked = (
+                            "challenge-platform" in scraper.html
+                            or "_cf_chl_opt" in scraper.html
+                            or "cf-browser-verification" in scraper.html
                         )
+                        if _cf_blocked or (not paperPage.title and not paperPage.doi and not paperPage.abstract):
+                            if attempt == 0:
+                                logger.debug(f"首次被拦截/数据空，重试 [{paperDOI}]")
+                                continue
+                            raise PageParseError(
+                                "Title, DOI and Abstract all empty "
+                                "(possible Cloudflare block)"
+                            )
+
+                        # ---- 成功：写入数据库 ----
+                        consecutive_failures = 0
+                        authors_json = (
+                            json.dumps(paperPage.authors, ensure_ascii=False)
+                            if paperPage.authors else "[]"
+                        )
+                        db.update_publisher_page(
+                            paperDOI, paperPage.abstract or "",
+                            authors_json, paperPage.pdf_url or "",
+                            paperPage.date or "",
+                            FetchStatus.SUCCESS.value, timestamp
+                        )
+                        paper_succeeded = True
+                        logger.debug(f"Publisher 页面抓取成功: {paperDOI}")
+                        break
+
+                    except NonResearchPageError:
+                        consecutive_failures = 0
+                        logger.info(f"非论文页面，跳过: {paperDOI}")
                         db.update_error_message(
                             paperDOI, "publisher_page_fetched_status",
-                            FetchStatus.FAILED.value,
+                            FetchStatus.SKIPPED.value,
                             "publisher_page_fetched_error",
-                            "Title, DOI and Abstract all empty (possible Cloudflare block)",
+                            "NonResearchPageError: not a research article",
                             "publisher_page_fetched_date", timestamp
                         )
-                        consecutive_failures += 1
-                        if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
-                            logger.warning(
-                                f"Publisher {publisher} 连续 {consecutive_failures} 篇抓取失败，中止该 publisher，剩余论文保留待处理状态"
-                            )
-                            break
+                        paper_skipped = True
+                        break  # 非论文，不重试
+
+                    except Exception as e:
+                        last_error = e
+                        if attempt == 0:
+                            logger.debug(f"首次失败 ({e})，重试 [{paperDOI}]")
+                            continue
+                        # 两次均失败，继续到 loop 外处理
+                        break
+
+                # ---- 处理重试结果 ----
+                if not paper_succeeded and not paper_skipped:
+                    error_msg = (
+                        str(last_error) if last_error
+                        else "Unknown error (all attempts failed)"
+                    )
+                    if isinstance(last_error, PageParseError):
+                        logger.warning(f"页面解析失败 [{paperDOI}]: {error_msg}")
                     else:
-                        # ---- 步骤 3: 写入数据库 ----
-                        consecutive_failures = 0
-                        authors_json = json.dumps(
-                            paperPage.authors, ensure_ascii=False
-                        ) if paperPage.authors else "[]"
-                        pdf_url = paperPage.pdf_url or ""
-                        abstract = paperPage.abstract or ""
-                        paperdate_page = paperPage.date or ""
+                        logger.error(f"Publisher 抓取异常 [{paperDOI}]: {error_msg}")
 
-                        db.update_publisher_page(
-                            paperDOI, abstract, authors_json, pdf_url,
-                            paperdate_page, FetchStatus.SUCCESS.value, timestamp
-                        )
-                        logger.debug(f"Publisher 页面抓取成功: {paperDOI}")
-
-                except NaturePageNotPaper:
-                    # Nature/Science 中非论文页面（如 News），静默跳过
-                    consecutive_failures = 0
-                    logger.info(f"非论文页面，跳过: {paperDOI}")
-                    db.update_process_status(
-                        paperDOI, "publisher_page_fetched_status",
-                        FetchStatus.SKIPPED.value,
-                        "publisher_page_fetched_date", timestamp
-                    )
-
-                except PageParseError as e:
-                    logger.warning(f"页面解析失败 [{paperDOI}]: {e}")
                     db.update_error_message(
                         paperDOI, "publisher_page_fetched_status",
                         FetchStatus.FAILED.value,
-                        "publisher_page_fetched_error", str(e),
+                        "publisher_page_fetched_error", error_msg[:500],
                         "publisher_page_fetched_date", timestamp
                     )
                     consecutive_failures += 1
+
                     if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
                         logger.warning(
-                            f"Publisher {publisher} 连续 {consecutive_failures} 篇抓取失败，中止该 publisher，剩余论文保留待处理状态"
+                            f"Publisher {publisher} "
+                            f"连续 {consecutive_failures} 篇抓取失败，"
+                            f"中止该 publisher，剩余论文保留待处理状态"
                         )
                         break
 
-                except Exception as e:
-                    logger.error(f"Publisher 抓取异常 [{paperDOI}]: {e}")
-                    db.update_error_message(
-                        paperDOI, "publisher_page_fetched_status",
-                        FetchStatus.FAILED.value,
-                        "publisher_page_fetched_error", str(e),
-                        "publisher_page_fetched_date", timestamp
-                    )
-                    consecutive_failures += 1
-                    if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
-                        logger.warning(
-                            f"Publisher {publisher} 连续 {consecutive_failures} 篇抓取失败，中止该 publisher，剩余论文保留待处理状态"
-                        )
-                        break
-
-                # 页面间随机延迟，避免连续请求触发速率限制
+                # 页面间随机延迟
                 delay = random.uniform(PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX)
                 logger.debug(f"随机延迟 {delay:.1f}s 后处理下一篇...")
                 time.sleep(delay)
@@ -599,6 +625,9 @@ def phase_d_semantic_filter(db, domain_config):
         db:            DatabaseClient 实例
         domain_config: {"keywords": list[str], "domain_description": str}
     """
+    if SKIP_PHASE_D:
+        logger.info("Phase D: SKIP_PHASE_D=True, skipping")
+        return
     logger.info("--- Phase D: 语义相似度初筛 ---")
 
     keywords = domain_config.get("keywords", [])
@@ -807,21 +836,16 @@ def phase_e_llm_relevance(db):
 # ==================================================================
 
 def phase_e2_mineru(db):
-    """
-    对 LLM 判定为相关的论文，下载 PDF 并调用 MinerU API 解析全文。
+    """对 LLM 判定为相关的论文，下载 PDF 并调用 MinerU API 解析全文。
 
     工作流程：
-    1. 检查 MINERU_TOKEN 是否已配置，未配置则跳过
-    2. 查询 llm_relevance_result = 1 且 pdf_url 非空、mineru_parse_status = 'pending' 的论文
-    3. 逐篇下载 PDF → 保存为临时文件 → 调用 MinerUParser.parse_pdf
-    4. 读取 full.md 内容写入数据库
-    5. 清理临时文件（PDF 和 MinerU 输出目录）
+    1. 检查 MINERU_TOKEN 是否配置
+    2. 查询相关论文中待处理 PDF
+    3. 启动独立浏览器用于 PDF 下载
+    4. 逐篇下载 PDF → MinerU 解析 → 数据库写入
 
-    MinerU 输出结构:
-      {output_dir}/
-        ├── full.md           # Markdown 全文（Phase F 的输入源）
-        ├── images/           # 文中提取的图片
-        └── layout.json 等   # 版面识别结果
+    PDF 下载使用 BasePublisherScraper.download_pdf()，
+    通过 cloakbrowser 引擎驱动，session 单独放在 mineru_download 目录。
 
     Args:
         db: DatabaseClient 实例
@@ -831,109 +855,54 @@ def phase_e2_mineru(db):
         logger.info("Phase E2: SKIP_PHASE_E2=True, skipping")
         return
 
-    # ---- Token 检查：未配置则静默跳过 ----
     if not MINERU_TOKEN:
         logger.info("Phase E2: MINERU_TOKEN 未配置，跳过 PDF 全文解析")
         return
 
-    # ---- 筛选待处理论文：相关 + 有 PDF + 未解析 ----
     relevant_papers = db.get_relevant_papers()
     papers_with_pdf = [
         p for p in relevant_papers
         if p["pdf_url"] and p["mineru_parse_status"] == "pending"
     ]
-
     if not papers_with_pdf:
         logger.info("Phase E2: 无待解析的 PDF")
         return
 
     logger.info(f"Phase E2: {len(papers_with_pdf)} 篇论文待 MinerU 解析")
 
-    # ---- 初始化 MinerU 解析器 ----
     parser = MinerUParser(MINERU_TOKEN)
+
+    # 启动独立浏览器用于 PDF 下载（session 单独存放）
+    dl_dir = BROWSER_SESSION_DIR / "mineru_download"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    downloader = BasePublisherScraper(dl_dir)
+    downloader.start_browser()
 
     success_count = 0
     failed_count = 0
-    pw = None
-    pdf_context = None
 
     try:
-        # ---- 初始化 Playwright 浏览器用于 PDF 下载 ----
-        # 复用 Phase C 的反检测策略，出版商 PDF 链接通常需要 session cookie / Cloudflare 认证
-        pw = sync_playwright().start()
-        pdf_context = pw.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_SESSION_DIR / "mineru_download"),
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
-            viewport={"width": 1920, "height": 1080},
-        )
-        pdf_page = pdf_context.new_page()
-        # 注入反检测 JS（与 Phase C Publisher Scraper 一致）
-        pdf_page.evaluate("""
-        () => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            window.navigator.chrome = { runtime: {} };
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-        }
-        """)
-
         for paper in papers_with_pdf:
             doi = paper["doi"]
             pdf_url = paper["pdf_url"]
+            page_url = paper["page_url"]
             timestamp = str(datetime.now())
             pdf_path = None
 
             try:
-                # ---- 步骤 1: 通过 Playwright 下载 PDF 到临时文件 ----
-                # 出版商 PDF 链接通常先返回 HTML 预览页，再由 JS viewer 异步加载真实 PDF。
-                # page.goto() 的 response 只代表导航请求（HTML），需监听所有网络响应捕获 PDF。
+                # ---- 步骤 1: 下载 PDF ----
                 logger.info(f"下载 PDF: {doi} ← {pdf_url}")
-                pdf_body = None
-
-                def _capture_pdf(response):
-                    nonlocal pdf_body
-                    ct = (response.headers.get("content-type") or "").lower()
-                    if "application/pdf" in ct or "application/octet-stream" in ct:
-                        try:
-                            pdf_body = response.body()
-                        except Exception:
-                            pass  # 响应体已被浏览器消费（PDF viewer 内嵌场景）
-
-                pdf_page.on("response", _capture_pdf)
-                try:
-                    pdf_page.goto(pdf_url, wait_until="networkidle", timeout=60000)
-                finally:
-                    pdf_page.remove_listener("response", _capture_pdf)
-
-                if pdf_body is None or pdf_body[:5] != b'%PDF-':
-                    # 兜底：通过页面内 fetch 重新获取（浏览器 session/cookie 可用）
-                    logger.debug(f"响应监听未捕获 PDF，尝试 fetch 兜底: {doi}")
-                    url_escaped = json.dumps(pdf_url)
-                    raw = pdf_page.evaluate(f"""
-                        async () => {{
-                            const resp = await fetch({url_escaped});
-                            const buf = await resp.arrayBuffer();
-                            return Array.from(new Uint8Array(buf));
-                        }}
-                    """)
-                    pdf_body = bytes(raw) if raw else None
-
-                if pdf_body is None or pdf_body[:5] != b'%PDF-':
-                    raise RuntimeError(
-                        "页面未返回有效 PDF（可能被重定向到预览页或需登录）"
-                    )
+                pdf_bytes = downloader.download_pdf(
+                    pdf_url, page_url=page_url
+                )
 
                 with tempfile.NamedTemporaryFile(
                     suffix=".pdf", delete=False
                 ) as tmp:
-                    tmp.write(pdf_body)
+                    tmp.write(pdf_bytes)
                     pdf_path = tmp.name
 
-                # ---- 步骤 2: MinerU 解析 PDF，结果持久化到 data/mineru_output/ ----
+                # ---- 步骤 2: MinerU 解析 ----
                 logger.debug(f"MinerU 解析中: {doi}")
                 safe_doi = doi.replace("/", "_").replace("\\", "_")
                 mineru_output_dir = parser.parse_pdf(
@@ -941,24 +910,25 @@ def phase_e2_mineru(db):
                 )
                 full_md_path = mineru_output_dir / "full.md"
 
-                # ---- 步骤 3: 读取全文 Markdown 并写入数据库 ----
+                # ---- 步骤 3: 写入数据库 ----
                 if full_md_path.exists():
                     fulltext = full_md_path.read_text(encoding="utf-8")
-                    # 相对路径（相对于 data/），用于定位 PDF 和 MinerU 输出
-                    rel_dir = str(mineru_output_dir.relative_to(MINERU_OUTPUT_DIR.parent))
+                    rel_dir = str(mineru_output_dir.relative_to(
+                        MINERU_OUTPUT_DIR.parent
+                    ))
                     db.update_mineru_result(
                         doi, fulltext, rel_dir,
                         FetchStatus.SUCCESS.value, timestamp
                     )
                     success_count += 1
-                    logger.info(f"MinerU 成功: {doi} ({len(fulltext)} 字符)")
+                    logger.info(
+                        f"MinerU 成功: {doi} ({len(fulltext)} 字符)"
+                    )
                 else:
                     raise RuntimeError("MinerU 输出缺少 full.md")
 
-                # ---- 步骤 4: 将 PDF 保存到 MinerU 输出目录 ----
-                pdf_dest = mineru_output_dir / "paper.pdf"
-                shutil.move(pdf_path, str(pdf_dest))
-                logger.debug(f"PDF 已保存: {pdf_dest}")
+                # ---- 步骤 4: 保存 PDF 副本 ----
+                shutil.move(pdf_path, str(mineru_output_dir / "paper.pdf"))
                 pdf_path = None
 
             except Exception as e:
@@ -967,30 +937,18 @@ def phase_e2_mineru(db):
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp
                 )
                 failed_count += 1
-                # 清理残留的临时 PDF
                 try:
                     if pdf_path:
                         Path(pdf_path).unlink(missing_ok=True)
                 except Exception:
                     pass
 
-            # PDF 下载间随机延迟，避免触发速率限制
             delay = random.uniform(3, 8)
             logger.debug(f"PDF 下载延迟 {delay:.1f}s...")
             time.sleep(delay)
 
     finally:
-        # 释放 Playwright 资源
-        try:
-            if pdf_context:
-                pdf_context.close()
-        except Exception:
-            pass
-        try:
-            if pw:
-                pw.stop()
-        except Exception:
-            pass
+        downloader.close()
 
     logger.info(
         f"Phase E2 完成: {success_count} 成功, {failed_count} 失败"
@@ -1139,6 +1097,9 @@ def phase_g_report(db, report_dir):
         db:         DatabaseClient 实例
         report_dir: 报告输出目录路径
     """
+    if SKIP_PHASE_G:
+        logger.info("Phase G: SKIP_PHASE_G=True, skipping")
+        return
     logger.info("--- Phase G: 报告生成 ---")
     papers = db.get_papers_for_report()
     if not papers:
@@ -1255,7 +1216,7 @@ def phase_h_email(report_dir):
     # ---- 凭证检查：跳过未填写真实值的模板 ----
     username = email_cfg.get("username", "")
     password = email_cfg.get("password", "")
-    if not username or not password or "your_" in username or "your_" in password:
+    if not username or not password or "@" not in username:
         logger.info("Phase H: 邮件凭证未配置，跳过")
         return
 
