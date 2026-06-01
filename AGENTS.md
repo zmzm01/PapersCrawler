@@ -4,13 +4,12 @@
 
 ```bash
 # Install deps (no requirements.txt, no package manager)
-pip install requests feedparser beautifulsoup4 parsel playwright pyyaml python-dateutil
+pip install python-dotenv requests feedparser beautifulsoup4 parsel cloakbrowser "cloakbrowser[geoip]" pyyaml python-dateutil
 pip install sentence-transformers  # optional, for Phase D
-playwright install chromium
 
 # Run (must be from project root - no `__init__.py` in src/, no package install)
 python src/main.py                   # desktop with display
-xvfb-run -a python src/main.py      # headless server (Playwright uses headful Chromium)
+xvfb-run -a python src/main.py      # headless server (cloakbrowser uses headful Chromium)
 
 # Config self-test: python src/config.py
 ```
@@ -54,18 +53,17 @@ Scripts prompt for confirmation before executing; prints affected row count.
 ## Architecture
 
 - **Not a package** — `src/` has no `__init__.py`. All imports resolve relative to project root at runtime. Run scripts from repo root.
-- **8-phase pipeline** in `src/main.py`: RSS → CrossRef → Publisher (Playwright) → Semantic Filter (D) → LLM Relevance (E) → MinerU PDF (E2) → LLM Summary (F) → Report → Email.
+- **8-phase pipeline** in `src/main.py`: RSS → CrossRef → Publisher (cloakbrowser) → Semantic Filter (D) → LLM Relevance (E) → MinerU PDF (E2) → LLM Summary (F) → Report → Email.
 - **Phase D gates Phase E** — papers scoring below `SEMANTIC_SIMILARITY_THRESHOLD` (0.3) are marked irrelevant and skip the LLM phase entirely (saves API costs).
-- **Playwright uses headful Chromium** — Cloudflare bypass requires a visible browser. Use `xvfb-run -a` on headless servers.
-- **Publisher scrapers** (`src/sources/publisher.py`) are per-publisher classes. Each publisher gets a persistent browser context with `headless=False`, fixed UA/viewport, and 2–30s random delays between pages.
+- **cloakbrowser uses headful Chromium** — Cloudflare bypass requires a visible browser. cloakbrowser handles browser fingerprinting automatically. Use `xvfb-run -a` on headless servers.
+- **Publisher scrapers** (`src/sources/publisher.py`) are per-publisher classes. Each publisher gets a persistent browser context with `headless=False` and 2–30s random delays between pages.
 
 ## Config & Secrets
 
-- API keys and tokens are in `src/config.py` (DeepSeek, CrossRef, MinerU JWT).
+- API keys and tokens loaded via `python-dotenv` from `.env` file (DeepSeek, CrossRef, MinerU JWT).
 - Email credentials in `configs/email.yaml`.
 - **Do not commit credential files.** They contain real secrets.
 - Keywords: `configs/keywords.yaml` — Chinese and English terms for laser plasma physics.
-- No `.env` or environment variable support.
 
 ## Dependencies / Models
 
