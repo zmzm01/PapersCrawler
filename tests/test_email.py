@@ -1,26 +1,26 @@
 """
-测试: 邮件发送 (email_sender.py)
+Tests: Email sending (email_sender.py)
 
-覆盖范围:
-  - EmailSender 类实例化
-  - MIME 邮件对象构建
-  - 收件人列表处理 (单个/多个)
-  - 附件添加逻辑
-
-SMTP 实际发送测试需要真实服务器，默认跳过。
+Coverage:
+  - EmailSender instantiation
+  - Recipient list handling (single / multiple)
+  - TLS vs SSL mode
+  - send() method with mocked SMTP (TLS, SSL, attachments)
 """
 
 import os
 import sys
-import pytest
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from utils.email_sender import EmailSender
 
 
+# ---- Instantiation ----
+
 def test_email_sender_instantiation():
-    """验证 EmailSender 正确初始化。"""
+    """Verify EmailSender correctly initializes from config."""
     sender = EmailSender(
         smtp_host="smtp.example.com",
         smtp_port=587,
@@ -36,20 +36,20 @@ def test_email_sender_instantiation():
 
 
 def test_single_recipient():
-    """单个收件人字符串应被转为列表。"""
+    """Single recipient string should be converted to a list."""
     sender = EmailSender("h", 587, "u", "p", "f", "to@test.com")
     assert sender.to_addrs == ["to@test.com"]
 
 
 def test_multiple_recipients():
-    """多个收件人列表保持不变。"""
+    """Multiple recipients list should be preserved."""
     sender = EmailSender("h", 587, "u", "p", "f", ["a@t.com", "b@t.com"])
     assert len(sender.to_addrs) == 2
     assert "a@t.com" in sender.to_addrs
 
 
 def test_ssl_mode():
-    """SSL 模式 (port 465)。"""
+    """SSL mode (port 465) should set use_tls=False."""
     sender = EmailSender(
         smtp_host="smtp.example.com",
         smtp_port=465,
@@ -62,50 +62,89 @@ def test_ssl_mode():
     assert sender.use_tls is False
 
 
-def test_send_builds_mime_message():
-    """验证 send 方法构建的 MIME 消息。"""
-    # 由于不连接真实服务器，我们通过 mock 验证
-    from email.mime.multipart import MIMEMultipart
-    msg = MIMEMultipart()
-    msg["From"] = "from@test.com"
-    msg["To"] = "to@test.com"
-    msg["Subject"] = "Test Subject"
+# ---- send() method (mocked SMTP) ----
 
-    from email.mime.text import MIMEText
-    msg.attach(MIMEText("Body text", "plain", "utf-8"))
+def test_send_tls_calls_correct_methods():
+    """Verify send() with TLS calls starttls, login, send_message, quit."""
+    with patch('smtplib.SMTP') as mock_smtp:
+        mock_instance = MagicMock()
+        mock_smtp.return_value = mock_instance
 
-    # 验证邮件对象结构
-    assert msg["Subject"] == "Test Subject"
-    assert msg["From"] == "from@test.com"
+        sender = EmailSender(
+            "smtp.test.com", 587, "user", "pass",
+            "from@test.com", ["to@test.com"]
+        )
+        result = sender.send("Test Subject", "Test Body")
 
-    # 验证正文存在
-    payloads = [p for p in msg.get_payload() if isinstance(p, MIMEText)]
-    assert len(payloads) == 1
+        mock_smtp.assert_called_once_with("smtp.test.com", 587, timeout=30)
+        mock_instance.starttls.assert_called_once()
+        mock_instance.login.assert_called_once_with("user", "pass")
+        mock_instance.send_message.assert_called_once()
+        mock_instance.quit.assert_called_once()
+        assert result is True
 
 
-@pytest.mark.skip(reason="需要真实 SMTP 服务器和凭证")
-def test_send_real_email():
-    """集成测试: 真实发送邮件 (需要配置 real_credentials)。"""
-    import json
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "configs", "email.yaml"
-    )
-    import yaml
-    with open(config_path, "r") as f:
-        cfg = yaml.safe_load(f) or {}
+def test_send_ssl_calls_correct_methods():
+    """Verify send() with SSL uses SMTP_SSL and skips starttls."""
+    with patch('smtplib.SMTP_SSL') as mock_smtp:
+        mock_instance = MagicMock()
+        mock_smtp.return_value = mock_instance
 
-    # 跳过未配置凭证的情况
-    if "@" not in cfg.get("username", ""):
-        pytest.skip("Email credentials not configured")
+        sender = EmailSender(
+            "smtp.test.com", 465, "user", "pass",
+            "from@test.com", ["to@test.com"],
+            use_tls=False,
+        )
+        result = sender.send("Test Subject", "Test Body")
 
-    sender = EmailSender(
-        smtp_host=cfg["smtp_host"],
-        smtp_port=cfg["smtp_port"],
-        username=cfg["username"],
-        password=cfg["password"],
-        from_addr=cfg["from_addr"],
-        to_addrs=cfg["to_addrs"],
-        use_tls=cfg.get("use_tls", True),
-    )
-    result = sender.send("Test", "Hello from pytest", body_type="plain")
-    assert result is True
+        mock_smtp.assert_called_once_with("smtp.test.com", 465, timeout=30)
+        mock_instance.login.assert_called_once_with("user", "pass")
+        mock_instance.send_message.assert_called_once()
+        mock_instance.quit.assert_called_once()
+        assert result is True
+
+
+def test_send_with_attachment():
+    """Verify send() with a valid attachment."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
+        f.write("test attachment content")
+        tmp_path = f.name
+
+    try:
+        with patch('smtplib.SMTP') as mock_smtp:
+            mock_instance = MagicMock()
+            mock_smtp.return_value = mock_instance
+
+            sender = EmailSender(
+                "smtp.test.com", 587, "user", "pass",
+                "from@test.com", ["to@test.com"]
+            )
+            result = sender.send("Subject", "Body", attachments=[tmp_path])
+
+            assert result is True
+            mock_instance.send_message.assert_called_once()
+            # Verify the sent message is multipart (has attachment)
+            sent_msg = mock_instance.send_message.call_args[0][0]
+            assert sent_msg.is_multipart()
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_send_with_missing_attachment():
+    """Non-existent attachment should be silently skipped."""
+    with patch('smtplib.SMTP') as mock_smtp:
+        mock_instance = MagicMock()
+        mock_smtp.return_value = mock_instance
+
+        sender = EmailSender(
+            "smtp.test.com", 587, "user", "pass",
+            "from@test.com", ["to@test.com"]
+        )
+        result = sender.send("Subject", "Body", attachments=["/nonexistent/file.pdf"])
+
+        assert result is True
+        mock_instance.send_message.assert_called_once()
+        # MIMEMultipart is always multipart; verify no attachment payload
+        sent_msg = mock_instance.send_message.call_args[0][0]
+        assert len(sent_msg.get_payload()) == 1  # only text body, no attachment
