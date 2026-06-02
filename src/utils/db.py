@@ -431,13 +431,14 @@ class DatabaseClient:
         self.conn.execute(
             """
             UPDATE papers
-            SET abstract = ?, authors_json = ?, pdf_url = ?,
+            SET abstract = CASE WHEN ? != '' THEN ? ELSE abstract END,
+                authors_json = ?, pdf_url = ?,
                 paperdate_page = ?,
                 publisher_page_fetched_status = ?,
                 publisher_page_fetched_date = ?
             WHERE doi = ?
             """,
-            (abstract, authors_json, pdf_url, paperdate_page,
+            (abstract, abstract, authors_json, pdf_url, paperdate_page,
              status, status_date, doi),
         )
         self.conn.commit()

@@ -125,7 +125,10 @@ SUMMARIES_PROMPT = """
 【内容要求】
 1. 所有字段必须用中文学术语言，信息密度高，不遗漏关键物理内涵。
 2. 如果某项信息在论文中未提及，对应字段的值必须设为 "未提供"。绝不编造内容。
-3. 所有 LaTeX 命令在 JSON 字符串内必须用双反斜杠（如 \\(\\omega\\)，\\(\\frac{}{}\\)）。行内公式用 \\(...\\) 或 $...$，独立公式用 $$...$$。
+3. 反斜杠转义规则：JSON 字符串中，每个反斜杠必须双写（写两个 \\ 来得到一个 \）。
+   例如，要表示 LaTeX 的行内公式开始标记（反斜杠加左括号），JSON 中必须写为两个反斜杠加左括号。
+   如果只写一个反斜杠，JSON 解析器会报 "Invalid escape" 错误。
+   行内公式用 \\(...\\) 或 $...$ 包裹，独立公式用 $$...$$ 包裹，**禁止裸写 LaTeX 命令**。
 4. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
 
 【main_results_and_physics 字段的 Markdown 要求】
@@ -162,11 +165,11 @@ MAX_PAPERS_PER_PHASE = 0
 # 阶段开关（True = 跳过该阶段）
 SKIP_PHASE_A = False
 SKIP_PHASE_B = False
-SKIP_PHASE_C = True
+SKIP_PHASE_C = False
 SKIP_PHASE_D = False
-SKIP_PHASE_E = True
+SKIP_PHASE_E = False
 SKIP_PHASE_E2 = False
-SKIP_PHASE_F = True
+SKIP_PHASE_F = False
 SKIP_PHASE_G = False
 SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 

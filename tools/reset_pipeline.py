@@ -42,11 +42,6 @@ SEMANTIC_CASCADE = [
     "llm_relevance_reason = NULL",
     "llm_relevance_error = NULL",
     "llm_relevance_date = NULL",
-    # Phase F — LLM 论文总结
-    "llm_summary_status = 'pending'",
-    "llm_summary_error = NULL",
-    "llm_summary_date = NULL",
-    "llm_summary_result = NULL",
     # Phase G — 报告状态
     "report_status = 'pending'",
     "report_date = NULL",

@@ -157,27 +157,41 @@ class DeepSeekPaperSummarizer:
             "response_format": {"type": "json_object"},
         }
 
-        try:
-            t0 = time.time()
-            resp = requests.post(
-                config["api_url"],
-                headers=headers,
-                json=payload,
-                timeout=config.get("timeout", 300),
-            )
-            t1 = time.time()
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            logger = logging.getLogger(__name__)
-            logger.info(
-                f"DeepSeek Summarize API 响应耗时 {t1-t0:.1f}s, "
-                f"输入 {len(article_text)} 字符, 输出 {len(content)} 字符"
-            )
-            return content
-        except requests.exceptions.RequestException as e:
-            raise LLMAPICallError(f"网络请求失败: {e}") from e
-        except (KeyError, IndexError, TypeError) as e:
-            raise LLMResponseParseError(f"API 返回结构异常: {e}") from e
+        last_error = None
+        for attempt in range(2):
+            try:
+                t0 = time.time()
+                resp = requests.post(
+                    config["api_url"],
+                    headers=headers,
+                    json=payload,
+                    timeout=config.get("timeout", 300),
+                )
+                t1 = time.time()
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"DeepSeek Summarize API 响应耗时 {t1-t0:.1f}s, "
+                    f"输入 {len(article_text)} 字符, 输出 {len(content)} 字符"
+                )
+                return content
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt == 0:
+                    logger.debug(f"API 失败，{2**attempt}s 后重试: {e}")
+                    time.sleep(2 ** attempt)
+                    continue
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
+                last_error = e
+                if attempt == 0:
+                    logger.debug(f"API 响应异常，{2**attempt}s 后重试: {e}")
+                    time.sleep(2 ** attempt)
+                    continue
+        if isinstance(last_error, requests.exceptions.RequestException):
+            raise LLMAPICallError(f"网络请求失败: {last_error}") from last_error
+        else:
+            raise LLMResponseParseError(f"API 返回结构异常: {last_error}") from last_error
 
 
     # ------------------------------------------------------------------
