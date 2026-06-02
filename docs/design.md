@@ -31,32 +31,44 @@ PapersCrawler/
 │   ├── doc-MinerU-Usage.md      # MinerU API 使用参考
 │   └── doc-Data-Sources-Invest.md  # 数据源调研记录
 ├── slides/                      # 报告/演示文稿区域 (预留)
-├── tests/                       # 单元测试
-│   ├── conftest.py              # pytest 配置 + 自定义 markers
+├── tests/                       # 测试 (T1/T2: pytest 自动化, T3: 手动真实测试)
+│   ├── conftest.py              # pytest 配置 (src 路径)
+│   ├── fixtures/                # 真实响应快照 (由 T3 脚本生成)
+│   ├── real/                    # T3 真实测试脚本 (需 .env 配置)
+│   │   ├── real_crossref.py     #   CrossRef API 真实调用
+│   │   ├── real_llm_api.py      #   DeepSeek API 真实调用
+│   │   ├── real_email.py        #   SMTP 真实发送
+│   │   └── run_all.sh           #   一键运行全部 T3 测试
 │   ├── test_db.py               # 数据库操作
 │   ├── test_rss.py              # RSS 解析
-│   ├── test_crossref.py         # CrossRef 元数据
+│   ├── test_crossref.py         # CrossRef 元数据 (mock)
 │   ├── test_publisher_parse.py  # Publisher 页面解析
-│   ├── test_relevance.py        # 相关性判断
+│   ├── test_relevance.py        # 相关性判断 (mock)
+│   ├── test_phases.py           # 阶段模块导入测试
 │   ├── test_report.py           # 报告生成
 │   ├── test_pdf.py              # PDF 转换
-│   └── test_email.py            # 邮件发送
+│   └── test_email.py            # 邮件发送 (mock)
 ├── src/
 │   ├── common.py                # 共享数据模型 (Paper dataclass) + 共享异常
 │   ├── config.py                # 全局配置 (路径、密钥来自 .env)
-│   ├── main.py                  # 主入口 — 8 阶段流水线
-│   ├── sources/
+│   ├── main.py                  # CLI 入口 (委托 pipeline.runner)
+│   ├── db/
+│   │   └── database.py          # SQLite 数据库 CRUD + FetchStatus 枚举
+│   ├── sources/                 # 数据源
 │   │   ├── rss.py               # RSS Feed 抓取与解析 (返回 Paper dataclass)
 │   │   ├── crossref.py          # CrossRef DOI 元数据查询 (返回 PaperMetadata)
 │   │   └── publisher.py         # 7 个出版社的 cloakbrowser 页面抓取器
-│   └── utils/
-│       ├── db.py                # SQLite 数据库 CRUD + FetchStatus 枚举
-│       ├── paper_relevance.py   # 语义过滤器 + LLM 相关性判断 (SemanticFilter / PaperRelevanceChecker)
-│       ├── llm_summarize_deepseek.py  # DeepSeek API 论文总结 + LLMFormulaFixer
-│       ├── paper_report_generator.py  # Markdown/HTML 报告生成 + 标题重定级
-│       ├── mineru_paper_parser.py     # MinerU API PDF 全文解析 (批量上传 + 轮询)
-│       ├── pdf_converter.py     # Markdown → PDF (pandoc + xelatex，备用路径)
-│       └── email_sender.py      # SMTP 邮件发送 (TLS/SSL)
+│   ├── processors/              # 业务逻辑处理器 (原 utils/)
+│   │   ├── paper_relevance.py   # 语义过滤器 + LLM 相关性判断
+│   │   ├── llm_summarize_deepseek.py  # DeepSeek API 论文总结
+│   │   ├── mineru_paper_parser.py     # MinerU API PDF 全文解析
+│   │   ├── paper_report_generator.py  # Markdown/HTML 报告生成
+│   │   ├── pdf_converter.py     # Markdown → PDF 转换
+│   │   └── email_sender.py      # SMTP 邮件发送
+│   └── pipeline/                # 流水线编排 (从 main.py 拆分)
+│       ├── base.py              # 共享上下文 (SCRAPER_MAP, logger)
+│       ├── phase_a.py ~ phase_h.py  # 各阶段独立模块
+│       └── runner.py            # 编排器 (全跑/选择性跑)
 ├── tools/                       # 辅助工具
 │   ├── reset_pipeline.py        # 重置流水线状态（5 子命令 + --publisher 过滤）
 │   ├── convert_md_to_pdf.py     # Markdown → PDF (pandoc + cloakbrowser 主路径)
@@ -303,7 +315,7 @@ SKIP_PHASE_H = True   # 邮件推送
 
 ## 2. Phase C 重试机制
 
-`phase_c_publisher()` 中对每篇论文最多尝试 3 次（`main.py:473-578`）：
+`phase_c_publisher()` 中对每篇论文最多尝试 3 次（`pipeline/phase_c.py`）：
 
 | 尝试 | timeout | 冷却 | 条件 |
 |------|---------|------|------|
@@ -330,7 +342,7 @@ LLM 输出的 JSON 字符串中 LaTeX 反斜杠未正确转义是常见问题。
 API 返回 → json.loads() 验证 → 失败则 re.sub 修复 → 修复后重试 json.loads() → 仍失败则抛异常重试 API
 ```
 
-**第二层** — Phase E/F 主线程（`main.py:792, 1055`）：
+**第二层** — Phase E/F 主线程（`pipeline/phase_e.py`, `pipeline/phase_f.py`）：
 ```
 future.result() → re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str) → json.loads() → 写入 DB
 ```

@@ -356,6 +356,30 @@ python src/main.py
 
 **结果**：`pytest tests/` → 83 passed, 0 skipped（从 78 passed, 5 skipped 改进）
 
+# 2026-06-02 — 代码重构：utils/ → processors/, db.py 迁移, main.py 拆分
+
+**背景**：`src/utils/` 名不副实（装的是核心业务逻辑而非工具函数），`main.py` 单文件 1310 行，阶段函数耦合紧密，不利于 Web UI 按需调用。
+
+**变更**：
+
+1. `src/utils/db.py` → `src/db/database.py`
+   - 数据库是基础设施，独立为 `src/db/` 包
+   - 更新 3 处导入
+
+2. `src/utils/` → `src/processors/`
+   - 仅重命名目录，文件名不变
+   - 更新 17 处导入（src/tests/tools 共 9 文件）
+
+3. `main.py` (1310 行) → `src/pipeline/` (13 文件)
+   - `pipeline/base.py` — 共享上下文（SCRAPER_MAP, create_scraper, logger）
+   - `pipeline/phase_a.py ~ phase_h.py` — 每个阶段独立文件
+   - `pipeline/runner.py` — 编排器，支持 `run_pipeline()` 全跑和 `run_phases()` 选择性跑
+   - `main.py` → 简化到 10 行 CLI 包装
+
+4. 新增 `tests/test_phases.py` — 验证各 phase 模块可导入，函数签名正确
+
+**结果**：pytest 83 passed, 当前结构与 Web UI 兼容
+
 # 遗留问题 / 待办
 
 - **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
