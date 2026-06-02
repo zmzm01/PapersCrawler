@@ -202,6 +202,22 @@ class BasePublisherScraper:
                            timeout=timeout)
             self.page.wait_for_timeout(5000)
 
+            # 从页面提取同域 PDF 链接（解决 APS link.aps.org 跨域问题）
+            on_page_url = self.page.evaluate("""
+                () => {
+                    for (const a of document.querySelectorAll('a')) {
+                        if (a.textContent.trim() === 'PDF') {
+                            return new URL(a.getAttribute('href'),
+                                           location.origin).href;
+                        }
+                    }
+                    return null;
+                }
+            """)
+            if on_page_url:
+                logger.debug(f"页面中找到同域 PDF 链接: {on_page_url}")
+                pdf_url = on_page_url
+
         # 在当前页面上下文中 fetch PDF（继承 referrer / cookie）
         logger.debug(f"下载 PDF: {pdf_url}")
         url_escaped = json.dumps(pdf_url)
