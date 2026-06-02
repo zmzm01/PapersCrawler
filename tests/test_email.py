@@ -14,7 +14,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from utils.email_sender import EmailSender
+from processors.email_sender import EmailSender
 
 
 # ---- Instantiation ----

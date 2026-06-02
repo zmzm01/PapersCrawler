@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from utils.paper_relevance import PaperRelevanceChecker
+from processors.paper_relevance import PaperRelevanceChecker
 
 
 # ---- Keyword match counting ----
@@ -161,7 +161,7 @@ def semantic_filter():
     pytest.importorskip("sentence_transformers",
                         reason="sentence-transformers not installed")
     try:
-        from utils.paper_relevance import SemanticFilter
+        from processors.paper_relevance import SemanticFilter
         from config import SEMANTIC_MODEL_PATH
         sf = SemanticFilter(
             model_name=SEMANTIC_MODEL_PATH,
@@ -207,6 +207,6 @@ def test_semantic_filter_empty_input(semantic_filter):
 
 def test_semantic_filter_class_exists():
     """SemanticFilter class should be importable (no model download needed)."""
-    from utils.paper_relevance import SemanticFilter
+    from processors.paper_relevance import SemanticFilter
     assert SemanticFilter is not None
     assert hasattr(SemanticFilter, 'compute_similarity')

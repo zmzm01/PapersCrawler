@@ -49,7 +49,7 @@ def main():
     # 仅发送到第一个地址（通常是自己的地址）
     test_addr = to_addrs[0]
 
-    from utils.email_sender import EmailSender
+    from processors.email_sender import EmailSender
 
     sender = EmailSender(
         smtp_host=cfg["smtp_host"],
