@@ -275,8 +275,22 @@ class PaperRelevanceChecker:
                 return content
             except requests.exceptions.RequestException as e:
                 last_error = e
+                # 提取状态码，提供针对性错误提示
+                status_code = getattr(e.response, 'status_code', None)
+                if status_code == 401:
+                    msg = f"DeepSeek API Key 错误 (401)，请检查 .env 中的 DEEPSEEK_API_KEY"
+                elif status_code == 402:
+                    msg = f"DeepSeek 账号余额不足 (402)，请前往 platform.deepseek.com 充值"
+                elif status_code == 429:
+                    msg = f"DeepSeek 请求速率上限 (429)，可降低 LLM_CONCURRENT_MAX"
+                elif status_code == 503:
+                    msg = f"DeepSeek 服务器繁忙 (503)"
+                elif status_code:
+                    msg = f"DeepSeek API HTTP {status_code}"
+                else:
+                    msg = str(e)
                 if attempt == 0:
-                    logger.debug(f"API 失败，{2**attempt}s 后重试: {e}")
+                    logger.debug(f"API 失败 ({msg})，{2**attempt}s 后重试")
                     time.sleep(2 ** attempt)
                     continue
             except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
@@ -286,7 +300,10 @@ class PaperRelevanceChecker:
                     time.sleep(2 ** attempt)
                     continue
         if isinstance(last_error, requests.exceptions.RequestException):
-            raise LLMAPICallError(f"网络请求失败: {last_error}") from last_error
+            status_code = getattr(last_error.response, 'status_code', '?')
+            raise LLMAPICallError(
+                f"DeepSeek API 失败 (HTTP {status_code}): {last_error}"
+            ) from last_error
         else:
             raise LLMResponseParseError(f"API 返回结构异常: {last_error}") from last_error
 

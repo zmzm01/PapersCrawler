@@ -329,6 +329,15 @@ python src/main.py
 - 新增 `SKIP_FORMULA_FIX = True` 配置开关（**实验性功能**，默认关闭，需评估 prompt 效果后再开启）
 - `phase_f_llm_summary()` 中条件初始化 + 条件调用 fixer，默认跳过
 
+## 错误处理增强 + RSS 缓存简化
+
+1. RSS 缓存改为每次覆盖，去除日期后缀
+2. RSS 空解析结果增加 `logger.warning`
+3. CrossRef 增加 429 请求过频特殊检测
+4. Publisher Phase C 增加 CF 拦截时升级 cloakbrowser 提示 + `PageParseError` 时页面结构变更提示
+5. DeepSeek API 调用增加状态码解析（401/402/429/503），映射为针对性错误信息
+6. MinerU Token 过期自动检测（解码 JWT 的 `exp` 字段），30 天前 warning，7 天前 error
+
 # 遗留问题 / 待办
 
 - **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现

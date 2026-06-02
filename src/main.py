@@ -29,9 +29,10 @@ PapersCrawler 主入口 —— 8 阶段文献追踪流水线。
 
 import json
 import logging
-import re
 import os
 import random
+import re
+import requests
 import shutil
 import sys
 import time
@@ -236,22 +237,17 @@ def phase_a_rss(db, publishers):
         journal_name = journal["name"]
 
         try:
-            # ---- 本地缓存优先：同一天不重复请求 RSS Feed ----
+            # ---- 重新请求 RSS Feed，覆盖缓存 ----
             RAW_RSS_DIR.mkdir(parents=True, exist_ok=True)
-            rss_file_save_path = RAW_RSS_DIR / f"{journalid}_{timestamp}.xml"
+            rss_file_save_path = RAW_RSS_DIR / f"{journalid}.xml"
 
-            if rss_file_save_path.exists():
-                # 从本地缓存读取（减少网络请求）
-                xml_text = rss_file_save_path.read_text()
-                logger.debug(f"使用缓存的 RSS: {rss_file_save_path}")
-            else:
-                # 缓存不存在，发起 HTTP 请求
-                xml_text = rsspro.fetch_rss(rss_url)
-                rsspro.save_raw_rss(xml_text, str(rss_file_save_path))
-                logger.debug(f"RSS 已缓存: {rss_file_save_path}")
+            xml_text = rsspro.fetch_rss(rss_url)
+            rsspro.save_raw_rss(xml_text, str(rss_file_save_path))
 
             # ---- 解析 RSS XML，提取论文列表 ----
             papers = rsspro.parse_rss(xml_text, journal)
+            if not papers:
+                logger.warning(f"RSS 解析结果为空 [{journalid}]，可能 Feed 格式异常或网络问题")
             logger.info(f"{journalid}: 发现 {len(papers)} 篇论文")
 
             # ---- 逐篇插入数据库（含去重检查） ----
@@ -371,6 +367,18 @@ def phase_b_crossref(db):
         except NotFoundError as e:
             # DOI 不存在于 CrossRef，可能是新论文尚未注册
             logger.warning(f"CrossRef 无记录: {paperDOI}")
+            db.update_error_message(
+                paperDOI, "cr_metadata_fetched_status",
+                FetchStatus.FAILED.value,
+                "cr_metadata_fetched_error", str(e),
+                "cr_metadata_fetched_date", timestamp
+            )
+
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429:
+                logger.warning(f"CrossRef 请求过频 (429) [{paperDOI}]，后续请求将自动退避")
+            else:
+                logger.error(f"CrossRef HTTP 错误 [{paperDOI}]: {e}")
             db.update_error_message(
                 paperDOI, "cr_metadata_fetched_status",
                 FetchStatus.FAILED.value,
@@ -506,13 +514,24 @@ def phase_c_publisher(db):
                             or "_cf_chl_opt" in scraper.html
                             or "cf-browser-verification" in scraper.html
                         )
-                        if _cf_blocked or (not paperPage.title and not paperPage.doi and not paperPage.abstract):
+                        if _cf_blocked:
+                            logger.warning(
+                                f"Cloudflare 拦截检测 [{paperDOI}]。"
+                                f"建议升级 cloakbrowser: pip install --upgrade cloakbrowser"
+                            )
                             if attempt == 0:
-                                logger.debug(f"首次被拦截/数据空，重试 [{paperDOI}]")
+                                logger.debug(f"首次被拦截，重试 [{paperDOI}]")
                                 continue
                             raise PageParseError(
                                 "Title, DOI and Abstract all empty "
                                 "(possible Cloudflare block)"
+                            )
+                        if not paperPage.title and not paperPage.doi and not paperPage.abstract:
+                            if attempt == 0:
+                                logger.debug(f"首次数据空，重试 [{paperDOI}]")
+                                continue
+                            raise PageParseError(
+                                "Title, DOI and Abstract all empty"
                             )
 
                         # ---- 成功：写入数据库 ----
@@ -559,7 +578,12 @@ def phase_c_publisher(db):
                         else "Unknown error (all attempts failed)"
                     )
                     if isinstance(last_error, PageParseError):
-                        logger.warning(f"页面解析失败 [{paperDOI}]: {error_msg}")
+                        logger.warning(
+                            f"页面解析失败 [{paperDOI}]: {error_msg}\n"
+                            f"  可能原因：页面结构已变化、selector 失效、"
+                            f"或被 Cloudflare 拦截。"
+                            f"建议检查 publisher 站点是否改版"
+                        )
                     else:
                         logger.error(f"Publisher 抓取异常 [{paperDOI}]: {error_msg}")
 
