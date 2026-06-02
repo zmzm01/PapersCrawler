@@ -123,6 +123,30 @@ python tools/convert_md_to_pdf.py data/reports/report_20260601.md
 
 > ⚠️ **已知问题**：公式渲染尚不支持，PDF 中公式部分显示为空白。如有公式渲染需求请先使用 Markdown 格式报告。欢迎贡献修复。
 
+### 7. Web UI（新增）
+
+提供图形化界面控制流水线、查看状态、生成报告。
+
+```bash
+# 安装额外依赖
+pip install fastapi uvicorn jinja2
+
+# 启动（桌面环境）
+PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
+
+# 启动（无头服务器，Phase C 需要显示）
+xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080'
+```
+
+打开浏览器访问 `http://localhost:8080`。
+
+**页面功能：**
+- **Dashboard** — 各阶段论文状态统计（成功/失败/跳过/待处理）
+- **Pipeline** — 点击按钮独立运行每个阶段，实时日志流（SSE）
+- **Report** — 选择出版社范围，生成 Markdown 报告
+- **Logs** — 流水线日志查看，支持按级别过滤
+- **Config** — 只读展示 publishers.yaml / keywords.yaml / 阶段开关状态
+
 ## 支持的出版社/期刊
 
 | 出版社    | 期刊数                                              | 爬虫类             |
