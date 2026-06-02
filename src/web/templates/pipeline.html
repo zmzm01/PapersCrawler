@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Control{% endblock %}
+{% block content %}
+<h2>Pipeline Control</h2>
+
+<div class="pipeline-control">
+  <button class="btn btn-primary" onclick="runAll()" id="run-all-btn">Run All Phases</button>
+  <span id="running-status" class="running-indicator"></span>
+</div>
+
+<table class="phase-table">
+  <thead>
+    <tr>
+      <th>Phase</th>
+      <th>Label</th>
+      <th>Skip</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for phase in phases %}
+    <tr>
+      <td><strong>{{ phase.key }}</strong></td>
+      <td>{{ phase.label }}</td>
+      <td>
+        <span class="badge badge-{{ 'skipped' if phase.skipped else 'pending' }}">
+          {{ 'Skipped' if phase.skipped else 'Enabled' }}
+        </span>
+      </td>
+      <td>
+        <button
+          class="btn btn-sm btn-secondary"
+          onclick="runPhase('{{ phase.key }}')"
+          id="run-{{ phase.key }}">
+          Run
+        </button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Live Log</h3>
+<pre id="log-viewer" class="log-viewer"><code>Waiting for log output...</code></pre>
+
+<script>
+const logViewer = document.getElementById('log-viewer');
+const evtSource = new EventSource('/pipeline/logs');
+evtSource.onmessage = function(e) {
+  const data = JSON.parse(e.data);
+  logViewer.innerHTML += data.text;
+  logViewer.scrollTop = logViewer.scrollHeight;
+};
+
+function setRunning(phase) {
+  document.getElementById('running-status').textContent = 'Running: ' + (phase || '');
+}
+
+async function runPhase(phase) {
+  setRunning(phase);
+  const btn = document.getElementById('run-' + phase);
+  btn.disabled = true;
+  const r = await fetch('/pipeline/run/' + phase, { method: 'POST' });
+  const data = await r.json();
+  if (data.error) {
+    alert(data.error);
+    setRunning('');
+    btn.disabled = false;
+  }
+  // Re-enable after a delay (poll for completion)
+  const check = setInterval(async () => {
+    const sr = await fetch('/pipeline/status');
+    const sd = await sr.json();
+    // Simple heuristic: check if running phase changed
+    btn.disabled = false;
+    setRunning('');
+    clearInterval(check);
+  }, 5000);
+}
+
+async function runAll() {
+  setRunning('ALL');
+  document.getElementById('run-all-btn').disabled = true;
+  const r = await fetch('/pipeline/run-all', { method: 'POST' });
+  const data = await r.json();
+  if (data.error) {
+    alert(data.error);
+    setRunning('');
+    document.getElementById('run-all-btn').disabled = false;
+  }
+  const check = setInterval(async () => {
+    document.getElementById('run-all-btn').disabled = false;
+    setRunning('');
+    clearInterval(check);
+  }, 10000);
+}
+</script>
+{% endblock %}

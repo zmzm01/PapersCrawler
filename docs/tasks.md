@@ -380,7 +380,30 @@ python src/main.py
 
 **结果**：pytest 83 passed, 当前结构与 Web UI 兼容
 
+# 2026-06-02 — Web UI 添加：FastAPI + SSE + 5 页面
+
+**动机**：提供图形化界面替代 SKIP 开关来控制流水线阶段，查看数据库状态，灵活生成报告。
+
+**实现**：
+- 新增 `src/web/` 模块，基于 FastAPI + Jinja2
+- 5 个页面：Dashboard（状态概览）、Pipeline（阶段控制 + 日志流）、Report（报告生成）、Logs（日志查看）、Config（配置展示）
+- SSE (Server-Sent Events) 实时推送流水线日志到浏览器
+- 子进程执行阶段（`POST /pipeline/run/{phase}`），互斥锁防并发
+- 启动命令：`PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080`
+- 无头服务器：`xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080'`
+- `pipeline/runner.py` 新增 `__main__` 入口，支持 CLI `python src/pipeline/runner.py A B C`
+
+**文件**：
+- `src/web/__init__.py`, `src/web/app.py`
+- `src/web/templates/{base,dashboard,pipeline,report,logs,config}.html`
+- `src/web/static/css/style.css`, `src/web/static/js/app.js`
+
 # 遗留问题 / 待办
+
+- **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
+- **并发升级** — 当前 Phase E/F 使用 ThreadPoolExecutor，但 DB 写入仍是串行瓶颈。考虑异步架构（asyncio + aiosqlite）
+- **无摘要兜底** — Phase E 对无摘要论文标记 skipped，将来可尝试用 OCR/title-only 轻度判断
+- **配置热加载** — 目前配置在 `main()` 入口一次性加载，修改后需重启
 
 - **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
 - **并发升级** — 当前 Phase E/F 使用 ThreadPoolExecutor，但 DB 写入仍是串行瓶颈。考虑异步架构（asyncio + aiosqlite）

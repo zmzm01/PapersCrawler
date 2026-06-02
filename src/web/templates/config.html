@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Configuration{% endblock %}
+{% block content %}
+<h2>Configuration</h2>
+
+<h3>Phase Switches</h3>
+<table class="config-table">
+  <thead>
+    <tr><th>Phase</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for key, skipped in skip_config.items() %}
+    <tr>
+      <td>Phase {{ key }}</td>
+      <td>
+        <span class="badge badge-{{ 'skipped' if skipped else 'pending' }}">
+          {{ 'Skipped' if skipped else 'Enabled' }}
+        </span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Publishers ({{ publishers|length }})</h3>
+<table class="config-table">
+  <thead>
+    <tr><th>ID</th><th>Name</th><th>Publisher</th><th>Enabled</th></tr>
+  </thead>
+  <tbody>
+    {% for p in publishers %}
+    <tr>
+      <td>{{ p.id }}</td>
+      <td>{{ p.name }}</td>
+      <td>{{ p.publisher }}</td>
+      <td>{{ 'Yes' if p.get('enabled', True) else 'No' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Keywords</h3>
+<p><strong>Domain description:</strong></p>
+<pre class="config-pre">{{ keywords.domain_description }}</pre>
+<p><strong>Keywords ({{ keywords.keywords|length }}):</strong></p>
+<pre class="config-pre">{{ keywords.keywords | join('\n') }}</pre>
+
+<h3>publishers.yaml</h3>
+<pre class="config-pre">{{ publishers_raw }}</pre>
+
+<h3>keywords.yaml</h3>
+<pre class="config-pre">{{ keywords_raw }}</pre>
+{% endblock %}
