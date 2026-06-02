@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Report Generation{% endblock %}
+{% block content %}
+<h2>Generate Report</h2>
+
+<form id="report-form" class="report-form">
+  <div class="form-group">
+    <label for="publisher">Publisher (optional, leave empty for all):</label>
+    <select name="publisher" id="publisher">
+      <option value="">-- All publishers --</option>
+      {% for p in publishers %}
+      <option value="{{ p }}">{{ p }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <button type="submit" class="btn btn-primary" id="generate-btn">Generate Report</button>
+</form>
+
+<div id="report-result" class="report-result" style="display:none;">
+  <h3>Report Generated</h3>
+  <p id="report-path"></p>
+  <a id="report-link" class="btn btn-sm btn-secondary" target="_blank">Open Report</a>
+</div>
+
+<script>
+document.getElementById('report-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  const r = await fetch('/report/generate', { method: 'POST' });
+  const data = await r.json();
+
+  btn.disabled = false;
+  btn.textContent = 'Generate Report';
+
+  if (data.ok) {
+    document.getElementById('report-result').style.display = 'block';
+    // Refresh the page to show latest report
+    setTimeout(() => location.reload(), 2000);
+  }
+});
+</script>
+{% endblock %}

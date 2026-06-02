@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h2>Pipeline Status</h2>
+
+<div class="stats-grid" id="dashboard-stats">
+  <div class="stat-card">
+    <div class="stat-value">{{ status.total }}</div>
+    <div class="stat-label">Total Papers</div>
+  </div>
+  {% for phase, counts in status.phases.items() %}
+  <div class="stat-card">
+    <div class="stat-mini-chart">
+      <span class="badge badge-success" title="success">{{ counts.success }}</span>
+      <span class="badge badge-failed" title="failed">{{ counts.failed }}</span>
+      <span class="badge badge-skipped" title="skipped">{{ counts.skipped }}</span>
+      <span class="badge badge-pending" title="pending">{{ counts.pending }}</span>
+    </div>
+    <div class="stat-label">{{ phase }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+setInterval(async () => {
+  const r = await fetch('/pipeline/status');
+  const data = await r.json();
+  const container = document.getElementById('dashboard-stats');
+  if (container) {
+    const cards = container.querySelectorAll('.stat-card');
+    // first card is total papers
+    cards[0].querySelector('.stat-value').textContent = data.total;
+    // remaining cards are phases
+    let i = 1;
+    for (const key of Object.keys(data.phases)) {
+      const c = data.phases[key];
+      const badges = cards[i].querySelectorAll('.badge');
+      badges[0].textContent = c.success;
+      badges[1].textContent = c.failed;
+      badges[2].textContent = c.skipped;
+      badges[3].textContent = c.pending;
+      i++;
+    }
+  }
+}, 10000);
+</script>
+{% endblock %}

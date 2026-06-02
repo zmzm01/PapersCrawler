@@ -73,3 +73,9 @@ def run_phases(phase_list=None):
 def run_pipeline():
     """Run the full pipeline (equivalent to old main())."""
     run_phases()
+
+
+if __name__ == "__main__":
+    import sys
+    phases = sys.argv[1:] if len(sys.argv) > 1 else None
+    run_phases(phases)
