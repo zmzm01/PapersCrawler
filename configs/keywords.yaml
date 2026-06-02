@@ -1,0 +1,58 @@
+domain_description: >
+  (I) Laser-driven ion acceleration and irradiation applications: The plasma acceleration mechanism driven by high-power lasers promises to enable compact accelerators and radiation sources of the future. At present, proton beams accelerated by PW-class lasers have reached energies approaching 100 MeV, establishing a preliminary foundation for applications in biomedicine, materials science, high energy density science, and other fields. This research will optimize and improve the physical principles and experimental techniques of laser accelerators to enhance the quality and controllability of the accelerated ion beams; it will also explore new irradiation phenomena and application areas based on such ultrafast ion beams. (II) High-gradient plasma beam transport elements: Using capillary discharge plasma systems, researchers have achieved the current energy record of 8 GeV for laser-accelerated electrons. Meanwhile, plasma can sustain extremely high electromagnetic fields and realize focusing gradients three orders of magnitude higher than those of conventional magnet elements, holding the promise of enabling compact beam transport lines on the centimeter scale. Beamline designs based on high-gradient plasma will realize the complete miniaturization of laser accelerators and expand their range of applications. (III) Next-generation accelerator control system research: The control system serves as the brain and central nervous system of an accelerator. This research will investigate accelerator control methods by designing modular hardware and software platform architectures and API interfaces, establishing full-lifecycle equipment control and data acquisition, large-scale scientific facility databases, and physical control models. By integrating machine learning and other optimization algorithms, it will design and develop highly intelligent, automated, modular, and standardized software and hardware control systems that can be applied to a variety of large scientific and industrial facilities.
+
+keywords:
+  # General & Core Concepts
+  - Laser-plasma acceleration
+  - High-gradient particle acceleration
+  - Compact plasma-based accelerators
+  - Table-top accelerators
+  - Advanced accelerator concepts
+
+  # Laser-Driven Electron Acceleration
+  - Laser wakefield acceleration (LWFA)
+  - Capillary discharge plasma waveguide
+  - High-brightness electron sources
+
+  # Laser-Driven Ion & Proton Acceleration
+  - Laser-driven ion acceleration
+  - Laser-driven proton acceleration
+  - Petawatt (PW) laser interaction
+  - Target normal sheath acceleration (TNSA)
+  - Radiation pressure acceleration (RPA)
+  - Monoenergetic proton beams
+  - Stable and tunable laser-driven proton accelerator
+  - Point-to-point magnetic beamline transport
+  - Energy-selective proton transport
+
+  # Plasma-Based Beam Optics & Transport
+  - Plasma lens
+  - Critical-density plasma lens
+  - High-gradient active plasma lens
+  - Plasma-based beam transport
+  - Compact ion beamline
+
+  # Radiation Sources
+  - Laser-driven radiation sources
+  - High-brightness X-ray / gamma-ray sources
+  - Betatron radiation
+  - Inverse Compton scattering
+
+  # Applications & Novel Diagnostics
+  - Ultrafast ion bunch
+  - Laser-driven ion beam applications
+  - Irradiation effects of laser-accelerated ions
+  - Biomedical applications (tumor radiotherapy)
+  - Materials science with ion beams
+  - High energy density physics (HEDP)
+  - Laser-driven Ion Beam Trajectory Probe (LITP)
+  - Magnetic confinement fusion plasma diagnostics
+
+  # Intelligent Accelerator Control
+  - Accelerator control system
+  - Intelligent automated accelerator operation
+  - Modular hardware/software architecture
+  - Machine learning for accelerator optimization
+  - Real-time data acquisition and control
+  - Physics-based control models
+  - Treatment control system for radiotherapy

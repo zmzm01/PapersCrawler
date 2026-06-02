@@ -136,10 +136,10 @@ publishers:
     name: Optica
     publisher: optica
     rss: https://opg.optica.org/rss/optica_feed.xml
-    enabled: true
+    enabled: false
 
   - id: opex
     name: Optics Express
     publisher: optica
     rss: https://opg.optica.org/rss/opex_feed.xml
-    enabled: true
+    enabled: false
