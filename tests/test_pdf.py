@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from utils.pdf_converter import markdown_to_pdf
+from processors.pdf_converter import markdown_to_pdf
 
 
 def _pandoc_available():

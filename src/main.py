@@ -70,20 +70,20 @@ from sources.publisher import (
     AIPScraper, IOPScraper, CambridgeScraper, OpticaScraper,
     NonResearchPageError, PageParseError,
 )
-from utils.paper_relevance import (
+from processors.paper_relevance import (
     PaperRelevanceChecker,
     SemanticFilter,
     LLMAPICallError,
     LLMResponseParseError,
 )
-from utils.llm_summarize_deepseek import (
+from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer,
     LLMFormulaFixer,
     LLMContextLengthExceed,
 )
-from utils.paper_report_generator import generate_report
-from utils.email_sender import EmailSender
-from utils.mineru_paper_parser import MinerUParser
+from processors.paper_report_generator import generate_report
+from processors.email_sender import EmailSender
+from processors.mineru_paper_parser import MinerUParser
 
 
 

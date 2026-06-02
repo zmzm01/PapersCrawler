@@ -449,7 +449,7 @@ if __name__ == "__main__":
     # print(llm_result)
 
     # 3. 语义相似度（使用 SemanticFilter，见下方该类的 compute_similarity() 方法）
-    # from utils.paper_relevance import SemanticFilter
+    # from processors.paper_relevance import SemanticFilter
     # from config import SEMANTIC_MODEL_PATH
     # sf = SemanticFilter(SEMANTIC_MODEL_PATH, "研究领域涵盖：" + ", ".join(keywords))
     # sim = sf.compute_similarity(title, abstract)

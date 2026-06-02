@@ -28,7 +28,7 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 
 def run_relevance():
-    from utils.paper_relevance import PaperRelevanceChecker
+    from processors.paper_relevance import PaperRelevanceChecker
     from config import LLM_API_CONFIG_DICT_RELE
 
     config = dict(LLM_API_CONFIG_DICT_RELE)
@@ -62,7 +62,7 @@ def run_relevance():
 
 
 def run_summary():
-    from utils.llm_summarize_deepseek import DeepSeekPaperSummarizer
+    from processors.llm_summarize_deepseek import DeepSeekPaperSummarizer
     from config import LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT
 
     config = dict(LLM_API_CONFIG_DICT_SUMM)
