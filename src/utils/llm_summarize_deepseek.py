@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import sys
 import json
+import re
 import time
 import logging
 import requests
@@ -170,7 +171,25 @@ class DeepSeekPaperSummarizer:
                 t1 = time.time()
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
+
                 logger = logging.getLogger(__name__)
+
+                # 验证 inner JSON 是否合法，尝试正则修复
+                try:
+                    json.loads(content)
+                except json.JSONDecodeError:
+                    fixed = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', content)
+                    try:
+                        json.loads(fixed)
+                        content = fixed
+                        logger.debug("正则修复 inner JSON 成功")
+                    except json.JSONDecodeError:
+                        # 修复后仍非法，交给重试循环
+                        raise json.JSONDecodeError(
+                            f"Invalid escape after fix: {fixed[-200:]}",
+                            fixed, 0
+                        )
+
                 logger.info(
                     f"DeepSeek Summarize API 响应耗时 {t1-t0:.1f}s, "
                     f"输入 {len(article_text)} 字符, 输出 {len(content)} 字符"
@@ -264,6 +283,64 @@ class DeepSeekPaperSummarizer:
         return total
 
 
+class LLMFormulaFixer:
+    """用 LLM 修复论文总结中裸写的 LaTeX 命令的公式包裹。
+
+    接收整个总结 dict，用 flash 模型检查并修正公式格式，
+    使用 json_object 模式保证返回合法 JSON。
+    修复失败时回退原内容，不抛异常。
+    """
+
+    FIX_PROMPT = """你是一个学术论文总结格式修正助手。请根据以下格式要求，修正下面 JSON 总结中的 LaTeX 公式包裹问题。
+
+【格式要求】
+- 行内公式必须用 \\(...\\) 包裹，禁止用 $...$
+- 独立公式（行间公式）必须用 \\[...\\] 包裹，禁止用 $$...$$
+- 所有 LaTeX 命令必须被数学模式包裹，禁止裸写
+- 在 JSON 字符串内，每个反斜杠必须双写（例如 \\( 应写为 \\\\(）
+
+请修正下面的 JSON 总结，输出结构完全相同的 JSON，仅修改公式包裹问题：
+"""
+
+    def __init__(self, llm_api_config: Dict[str, Any]):
+        self.config = llm_api_config
+        self._session = requests.Session()
+        self._session.headers.update({
+            "Authorization": f"Bearer {self.config['api_key']}",
+            "Content-Type": "application/json",
+        })
+
+    def fix_json_summary(self, summary_dict: dict) -> dict:
+        """对整个总结 JSON 运行公式修复，返回修正后的 dict。"""
+        input_json = json.dumps(summary_dict, ensure_ascii=False)
+        if input_json == "{}":
+            return summary_dict
+
+        payload = {
+            "model": self.config.get("model", "deepseek-v4-flash"),
+            "messages": [
+                {"role": "user", "content": self.FIX_PROMPT + input_json},
+            ],
+            "response_format": {"type": "json_object"},
+            "thinking": {"type": "disabled"},
+        }
+        try:
+            resp = self._session.post(
+                self.config["api_url"],
+                json=payload,
+                timeout=self.config.get("timeout", 60),
+            )
+            resp.raise_for_status()
+            fixed = json.loads(
+                resp.json()["choices"][0]["message"]["content"]
+            )
+            return fixed
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"公式修复失败，回退原内容: {e}")
+            return summary_dict
+
+
 if __name__ == "__main__":
     # ===== 配置和运行示例 =====
     # 实际运行前需要设置有效的 DEEPSEEK_API_KEY 环境变量或直接填入 api_key
@@ -293,7 +370,7 @@ if __name__ == "__main__":
     【内容要求】
     1. 所有字段必须用中文学术语言，信息密度高，不遗漏关键物理内涵。
     2. 如果某项信息在论文中未提及，对应字段的值必须设为 "未提供"。绝不编造内容。
-    3. 所有 LaTeX 命令在 JSON 字符串内必须用双反斜杠（如 \\\\(\\\\omega\\\\)，\\\\(\\\\frac{}{}\\\\)）。行内公式用 \\\\(...\\\\) 或 $...$，独立公式用 $$...$$。
+    3. 反斜杠转义规则：JSON 字符串中，每个反斜杠必须双写。行内公式必须用 \\\\(...\\\\) 包裹，禁止用 $...$。独立公式必须用 \\\\\\[...\\\\\\] 包裹，禁止用 $$...$$。
     4. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
 
     【main_results_and_physics 字段的 Markdown 要求】

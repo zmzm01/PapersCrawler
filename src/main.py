@@ -52,6 +52,7 @@ from config import (
                 MAX_PAPERS_PER_PHASE,
     SKIP_PHASE_A, SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
     SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
+    SKIP_FORMULA_FIX,
     SKIP_NATURE_NEWS,
     PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX,
     PUBLISHER_MAX_CONSECUTIVE_FAILURES,
@@ -76,6 +77,7 @@ from utils.paper_relevance import (
 )
 from utils.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer,
+    LLMFormulaFixer,
     LLMContextLengthExceed,
 )
 from utils.paper_report_generator import generate_report
@@ -398,7 +400,7 @@ def phase_b_crossref(db):
 
 def phase_c_publisher(db):
     """
-    对每篇论文，使用对应出版商的 Playwright Scraper 抓取页面元数据。
+    对每篇论文，使用对应出版商的 cloakbrowser Scraper 抓取页面元数据。
 
     工作流程：
     1. 查询 publisher_page_fetched_status = 'pending' 的论文
@@ -791,7 +793,7 @@ def phase_e_llm_relevance(db):
             try:
                 result_str = future.result()
                 # 修复 LLM 输出的非法 JSON 转义（如 \( → \\(）
-                result_str = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', result_str)
+                result_str = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 result = json.loads(result_str)
                 relevant = 1 if result.get("relevant", False) else 0
                 confidence = result.get("confidence", "low")
@@ -1010,6 +1012,9 @@ def phase_f_llm_summary(db):
 
     # ---- 筛选有 MinerU 全文的论文 & 预构建输入 ----
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
+    fixer = None
+    if not SKIP_FORMULA_FIX:
+        fixer = LLMFormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE)
     tasks = []
     for paper in relevant_papers:
         doi = paper["doi"]
@@ -1047,12 +1052,16 @@ def phase_f_llm_summary(db):
             try:
                 result_str = future.result()
                 # 修复 LLM 输出的非法 JSON 转义（如 \( → \\(）
-                result_str = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', result_str)
-                json.loads(result_str)
+                result_str = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str)
+                parsed = json.loads(result_str)
+                if fixer:
+                    parsed = fixer.fix_json_summary(parsed)
+                    result_str = json.dumps(parsed, ensure_ascii=False)
                 db.update_llm_summary(
                     doi, result_str, FetchStatus.SUCCESS.value, timestamp
                 )
                 success_count += 1
+                logger.info(f"LLM 总结成功 [{doi}]: {len(result_str)} 字符")
 
             except (LLMAPICallError, LLMResponseParseError) as e:
                 logger.warning(f"LLM 总结 API 错误 [{doi}]: {e}")

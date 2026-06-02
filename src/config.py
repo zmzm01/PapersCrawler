@@ -42,7 +42,7 @@ DB_PATH = DATA_DIR / "papers.db"
 # 运行日志文件路径
 LOG_FILE_PATH = DATA_DIR / "PaperCrawler.log"
 
-# 浏览器 Session 缓存目录（Playwright 持久化 Session 存放处）
+# 浏览器 Session 缓存目录（cloakbrowser 持久化 Session 存放处）
 # 按 publisher 分子目录，如 data/session_cached/nature/
 BROWSER_SESSION_DIR = DATA_DIR / "session_cached"
 
@@ -128,7 +128,9 @@ SUMMARIES_PROMPT = """
 3. 反斜杠转义规则：JSON 字符串中，每个反斜杠必须双写（写两个 \\ 来得到一个 \）。
    例如，要表示 LaTeX 的行内公式开始标记（反斜杠加左括号），JSON 中必须写为两个反斜杠加左括号。
    如果只写一个反斜杠，JSON 解析器会报 "Invalid escape" 错误。
-   行内公式用 \\(...\\) 或 $...$ 包裹，独立公式用 $$...$$ 包裹，**禁止裸写 LaTeX 命令**。
+    行内公式必须用 \\(...\\) 包裹，禁止用 $...$。
+    独立公式（行间公式）必须用 \\[...\\] 包裹，禁止用 $$...$$。
+    **所有 LaTeX 命令必须被数学模式包裹，禁止裸写**。
 4. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
 
 【main_results_and_physics 字段的 Markdown 要求】
@@ -163,15 +165,20 @@ SEMANTIC_SIMILARITY_THRESHOLD = 0.3
 # 每阶段最多处理 N 篇论文 (0 = 不限制)
 MAX_PAPERS_PER_PHASE = 0
 # 阶段开关（True = 跳过该阶段）
-SKIP_PHASE_A = False
-SKIP_PHASE_B = False
-SKIP_PHASE_C = False
-SKIP_PHASE_D = False
-SKIP_PHASE_E = False
-SKIP_PHASE_E2 = False
+SKIP_PHASE_A = True
+SKIP_PHASE_B = True
+SKIP_PHASE_C = True
+SKIP_PHASE_D = True
+SKIP_PHASE_E = True
+SKIP_PHASE_E2 = True
 SKIP_PHASE_F = False
 SKIP_PHASE_G = False
 SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
+
+# LLM 公式修复开关（实验性功能，默认关闭）
+# 使用 LLM 对总结 JSON 做二次公式包裹修正，代价是每篇多一次 flash API 调用。
+# True = 跳过，False = 启用（需评估 prompt 效果后再开启）
+SKIP_FORMULA_FIX = True
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
 # 避免连续请求触发 Cloudflare 速率限制，降低 IP 信誉受损风险
@@ -191,7 +198,7 @@ SKIP_NATURE_NEWS = True
 
 # Publisher 爬虫代理配置（按 publisher 标识）
 # 需要代理的出版商在此配置，key 为 publisher 标识（如 "optica"），
-# value 为 Playwright proxy 字典（{"server": "..."})
+# value 为 cloakbrowser proxy 字典（{"server": "..."})
 PUBLISHER_PROXY = {
     "optica": {"server": "http://127.0.0.1:10808"},
 }
