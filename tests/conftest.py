@@ -19,5 +19,5 @@ def pytest_configure(config):
         "markers", "slow: 执行耗时较长的测试"
     )
     config.addinivalue_line(
-        "markers", "browser: 需要 Playwright 浏览器的测试 (默认跳过)"
+        "markers", "browser: 需要 cloakbrowser 浏览器的测试 (默认跳过)"
     )

@@ -197,14 +197,27 @@ SUMMARY_RESET = [
 ]
 
 
-def cmd_reset_summary(publisher=None):
-    """重置 LLM 总结失败/跳过的论文。"""
-    if publisher:
-        where = "WHERE llm_summary_status IN ('failed', 'skipped') AND publisher = ?"
-        params = (publisher,)
+def cmd_reset_summary(publisher=None, reset_all=False):
+    """重置 LLM 总结状态。
+
+    默认只重置 failed + skipped 的论文。
+    使用 --all 时重置全部论文（包括 success）。
+    """
+    if reset_all:
+        if publisher:
+            where = "WHERE publisher = ?"
+            params = (publisher,)
+        else:
+            where = ""
+            params = ()
     else:
-        where = "WHERE llm_summary_status IN ('failed', 'skipped')"
-        params = ()
+        if publisher:
+            where = ("WHERE llm_summary_status IN ('failed', 'skipped')"
+                     " AND publisher = ?")
+            params = (publisher,)
+        else:
+            where = "WHERE llm_summary_status IN ('failed', 'skipped')"
+            params = ()
 
     count_sql = f"SELECT COUNT(*) FROM papers {where}"
     conn = sqlite3.connect(str(DB_PATH))
@@ -212,13 +225,22 @@ def cmd_reset_summary(publisher=None):
     conn.close()
 
     if count == 0:
-        print(f"无失败论文（publisher={publisher or '全部'}），无需操作")
+        print(f"无匹配论文（publisher={publisher or '全部'}），无需操作")
         return
 
     set_clause = ",\n            ".join(SUMMARY_RESET)
     sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
 
-    print(f"\n将重置 {count} 篇论文的 LLM 总结状态（publisher={publisher or '全部'}）")
+    mode = "--all，全部" if reset_all else "仅失败/跳过"
+    print(f"将重置 {count} 篇论文的 LLM 总结状态（{mode}）")
+    print()
+    print("  重置的状态列:")
+    print("    llm_summary_status   → pending")
+    print("    llm_summary_error    → NULL")
+    print("    llm_summary_date     → NULL")
+    print("    llm_summary_result   → NULL")
+    print("  不受影响的列:")
+    print("    mineru_*, llm_relevance_*, semantic_*, report_*")
     if not _confirm(count, "LLM 总结状态"):
         print("已取消")
         return
@@ -270,19 +292,90 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PapersCrawler 流水线状态重置工具")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_sem = sub.add_parser("reset-semantic", help="重置语义判断 + 下游结果")
+    p_sem = sub.add_parser("reset-semantic",
+        help="重置语义判断及下游全部结果",
+        description=(
+            "修改 domain_description / keywords 后使用。"
+            "重置 Phase D/E/G 为 pending，保留 MinerU 和 LLM 总结结果。"
+            "\n\n受影响的状态列:"
+            "\n  semantic_filter_*    → pending"
+            "\n  llm_relevance_*     → pending"
+            "\n  report_*            → pending"
+            "\n  不受影响:"
+            "\n  mineru_*, llm_summary_*"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_sem.add_argument("--publisher", help="仅重置指定出版社（如 aps, nature）")
 
-    p_pub = sub.add_parser("reset-publisher", help="重置失败的 Publisher 抓取")
+    p_pub = sub.add_parser("reset-publisher",
+        help="重置 Publisher 页面抓取失败/跳过的论文",
+        description=(
+            "将 publisher_page_fetched_status 为 failed / skipped 的论文重置为 pending，"
+            "触发 Phase C 重试。跳过非论文页面（NonResearchPageError）。"
+            "\n\n受影响的状态列:"
+            "\n  publisher_page_fetched_status   → pending"
+            "\n  publisher_page_fetched_error    → NULL"
+            "\n  不重置: 其他所有列"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_pub.add_argument("--publisher", help="仅重置指定出版社")
 
-    p_mineru = sub.add_parser("reset-mineru", help="重置失败的 MinerU PDF 解析")
-    p_mineru.add_argument("--publisher", help="仅重置指定出版社 (如 aps, nature)")
+    p_mineru = sub.add_parser("reset-mineru",
+        help="重置 MinerU PDF 解析失败/跳过的论文",
+        description=(
+            "将 mineru_parse_status 为 failed / skipped 的论文重置为 pending，"
+            "触发 Phase E2 重试。"
+            "\n\n受影响的状态列:"
+            "\n  mineru_parse_status   → pending"
+            "\n  mineru_parse_error    → NULL"
+            "\n  mineru_parse_date     → NULL"
+            "\n  mineru_fulltext       → NULL"
+            "\n  mineru_output_dir     → NULL"
+            "\n  不重置: 其他所有列"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_mineru.add_argument("--publisher", help="仅重置指定出版社")
 
-    p_sum = sub.add_parser("reset-summary", help="重置失败的 LLM 总结")
+    p_sum = sub.add_parser("reset-summary",
+        help="重置 LLM 总结状态（加 --all 重置包括 success 的全部论文）",
+        description=(
+            "默认只重置 failed + skipped 的论文。"
+            "使用 --all 可重置全部论文（包括 success 状态的），"
+            "适用于 prompt 修改后重新生成所有总结。"
+            "\n\n受影响的状态列:"
+            "\n  llm_summary_status   → pending"
+            "\n  llm_summary_error    → NULL"
+            "\n  llm_summary_date     → NULL"
+            "\n  llm_summary_result   → NULL"
+            "\n  不受影响:"
+            "\n  mineru_*, llm_relevance_*, semantic_*, report_*"
+            "\n\n示例:"
+            "\n  python tools/reset_pipeline.py reset-summary"
+            "\n    → 仅重置失败/跳过的论文"
+            "\n  python tools/reset_pipeline.py reset-summary --all"
+            "\n    → 重置全部论文（含 success），重新生成所有总结"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_sum.add_argument("--publisher", help="仅重置指定出版社")
+    p_sum.add_argument("--all", action="store_true",
+        help="重置全部论文（含 success），修改 prompt 后重新生成总结时使用")
 
-    p_rpt = sub.add_parser("reset-report", help="重置报告状态（重新汇入报告）")
+    p_rpt = sub.add_parser("reset-report",
+        help="重置报告状态，使已报告论文重新出现在下次报告中",
+        description=(
+            "将 report_status 为 reported 的论文重置为 pending，"
+            "使其重新汇入下次生成的报告。"
+            "\n\n受影响的状态列:"
+            "\n  report_status   → pending"
+            "\n  report_date     → NULL"
+            "\n  不重置: 其他所有列"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_rpt.add_argument("--publisher", help="仅重置指定出版社")
 
     args = parser.parse_args()
@@ -299,6 +392,6 @@ if __name__ == "__main__":
     elif args.command == "reset-mineru":
         cmd_reset_mineru(args.publisher)
     elif args.command == "reset-summary":
-        cmd_reset_summary(args.publisher)
+        cmd_reset_summary(args.publisher, reset_all=args.all)
     elif args.command == "reset-report":
         cmd_reset_report(args.publisher)

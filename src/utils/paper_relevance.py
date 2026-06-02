@@ -252,6 +252,21 @@ class PaperRelevanceChecker:
                 t1 = time.time()
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
+
+                # 验证 inner JSON 是否合法，尝试正则修复
+                try:
+                    json.loads(content)
+                except json.JSONDecodeError:
+                    fixed = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', content)
+                    try:
+                        json.loads(fixed)
+                        content = fixed
+                    except json.JSONDecodeError:
+                        raise json.JSONDecodeError(
+                            f"Invalid escape after fix: {fixed[-200:]}",
+                            fixed, 0
+                        )
+
                 logger = logging.getLogger(__name__)
                 logger.info(
                     f"DeepSeek API 响应耗时 {t1-t0:.1f}s, "
@@ -264,7 +279,7 @@ class PaperRelevanceChecker:
                     logger.debug(f"API 失败，{2**attempt}s 后重试: {e}")
                     time.sleep(2 ** attempt)
                     continue
-            except (KeyError, IndexError, TypeError) as e:
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
                 last_error = e
                 if attempt == 0:
                     logger.debug(f"API 响应异常，{2**attempt}s 后重试: {e}")
@@ -377,6 +392,7 @@ class SemanticFilter:
 # 使用示例
 # ------------------------------------------------------------------
 if __name__ == "__main__":
+    import os
     # 关键词表——定义你关心的研究领域术语
     keywords = [
         "graph neural network",

@@ -27,6 +27,7 @@ pdf_converter.py
 
 import subprocess
 import tempfile
+import logging
 from pathlib import Path
 
 
@@ -44,6 +45,11 @@ LATEX_TEMPLATE = r"""
 % ---- 数学公式支持 ----
 \usepackage{amsmath,amssymb}
 
+% ---- 文本模式兼容 ----
+\usepackage{textcomp}  % 让 \textsuperscript 在文本模式可用
+\let\oldtimes\times
+\renewcommand{\times}{\ensuremath{\oldtimes}}  % \times 在文本模式自动进入数学模式
+
 % ---- 其他功能 ----
 \usepackage{hyperref}                   % 超链接支持
 \usepackage{graphicx}                   % 图片支持
@@ -54,6 +60,9 @@ LATEX_TEMPLATE = r"""
     linkcolor=blue,                     % 内部链接颜色
     urlcolor=cyan,                      % URL 链接颜色
 }
+
+\newcommand{\tightlist}{%
+    \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 
 \begin{document}
 $body$                                  % pandoc 会将 Markdown 内容注入此处
@@ -124,12 +133,13 @@ def markdown_to_pdf(md_text, output_path, template=None):
             "--template", template_path,
             "-V", "mainfont=Noto Sans CJK SC",
             "--from", "markdown+raw_tex+tex_math_dollars",
-            "--mathjax",
         ]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         return output_path
 
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"pandoc 策略 A 失败 (stderr): {e.stderr[:500]}")
         # ---- 6. 策略 B: 回退到无模板 xelatex ----
         # 不使用自定义模板（因此也没有中文字体），适用于纯英文或 LaTeX 数学公式场景
         try:
@@ -142,7 +152,8 @@ def markdown_to_pdf(md_text, output_path, template=None):
             ]
             subprocess.run(cmd2, check=True, capture_output=True, text=True)
             return output_path
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"pandoc 策略 B 也失败 (stderr): {e.stderr[:500]}")
             return None
 
     except FileNotFoundError:

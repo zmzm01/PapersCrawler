@@ -101,19 +101,15 @@ python tools/reset_pipeline.py reset-report [--publisher aps]
 
 所有子命令支持 `--publisher` 过滤，执行前打印 SQL 和影响行数，需输入 `y` 确认。
 
-### 6. Markdown → PDF 转换（可选）
+### 6. Markdown → PDF 转换（实验性）
 
-报告默认输出为 Markdown。如需 PDF，可手动运行：
+报告默认输出为 Markdown。如需 PDF，可尝试：
 
 ```bash
 python tools/convert_md_to_pdf.py data/reports/report_20260601.md
 ```
 
-需系统安装 pandoc + texlive-xelatex：
-
-```bash
-sudo apt install pandoc texlive-xetex texlive-latex-extra fonts-noto-cjk
-```
+> ⚠️ **已知问题**：公式渲染尚不支持，PDF 中公式部分显示为空白。如有公式渲染需求请先使用 Markdown 格式报告。欢迎贡献修复。
 
 ## 支持的出版社/期刊
 
