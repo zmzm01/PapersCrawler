@@ -232,6 +232,45 @@ src/common.py
 
 **解决**：从 `SEMANTIC_CASCADE` 中移除 MinerU 相关列（`mineru_parse_status`、`mineru_fulltext`、`mineru_output_dir` 等）。`reset-semantic` 后已解析论文保持 `mineru_parse_status='success'`，Phase E2 自动跳过；需重跑时使用 `reset-mineru` 单独控制。
 
+## APS 跨域 PDF 下载修复（关键修改）
+
+**问题分析**：APS 使用双域名架构——短链 `link.aps.org` 负责跳转，实际内容在 `journals.aps.org`。数据库中的 `pdf_url` 来自 `citation_pdf_url` meta 标签，格式为 `http://link.aps.org/pdf/...`。当 `download_pdf()` 先 `goto(page_url)` 到达 `journals.aps.org` 后，再 `evaluate(fetch(link.aps.org/pdf/...))` 时，**浏览器因跨域拦截了 `fetch` 请求**（同源策略/SOP，不是 CORS 问题）。这就是 9 篇全部失败的根因。
+
+**关键发现**：页面上 PDF 按钮的 HTML 是 `<a href="/prl/pdf/...">PDF</a>`——这是一个**相对路径**，解析后与当前页面同域（`journals.aps.org`）。同域请求不受浏览器同源策略限制，`fetch` 可以正常获取 PDF。
+
+**解决**：`download_pdf()` 中 `goto(page_url)` + `wait_for_timeout(5000)` 后，执行 `page.evaluate` 扫描页面上所有 `<a>` 标签，找到文本为 "PDF" 的链接，用 `new URL(href, location.origin)` 解析为同域绝对 URL，替换 DB 中的跨域短链。
+
+**经验教训**：
+- 不要假设 `citation_pdf_url` 与当前页面同域——它可能经过短链服务
+- 从页面 HTML 中提取的链接（按钮/菜单）通常是同域的，比 meta 标签更可靠
+- **浏览器同源策略**是跨域 `fetch` 失败的根本原因，比 CORS 更严格（CORS 至少会给响应头交互机会，SOP 直接拒绝）
+- 其他 publisher（Nature/Science/Cambridge/AIP/IOP/Optica）的 `citation_pdf_url` 本就是同域，不受此问题影响
+
+## LLM API 重试 + JSON 转义修复
+
+**动机**：LLM Summary 和 Relevance 阶段偶发 API 失败且无重试；LLM 输出 JSON 中 LaTeX 反斜杠未正确转义，导致 `json.loads` 报 `Invalid \escape`。
+
+**解决**：
+- 两个 `call_deepseek_api()` 内层增加 `for attempt in range(2)` 重试，指数退避 `2^attempt s`
+- `SUMMARIES_PROMPT` 加强反斜杠转义说明，增加正确/错误示例
+- Phase E/F 的 `json.loads()` 前增加正则修复：`re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', result_str)`，将单反斜杠（非合法 JSON 转义）加倍
+
+## reset-semantic 保留 LLM Summary 结果
+
+**动机**：语义描述变更不影响已有的 LLM 总结结果，`reset-semantic` 不应清空已成功的总结。
+
+**解决**：从 `SEMANTIC_CASCADE` 中删除 Phase F 4 行（`llm_summary_status`、`llm_summary_result` 等）。`reset-semantic` 后已有总结保持 `'success'`，Phase F 自动跳过。
+
+## 空摘要修复
+
+**动机**：Phase C 用空字符串覆盖了已有摘要（来自 Phase B），且成功判定只检查 title+doi+abstract 全空，未排除 abstract 单独为空的情况。
+
+**解决**：
+- `update_publisher_page()` SQL 中 `abstract` 改为 `CASE WHEN ? != '' THEN ? ELSE abstract END`，防止空摘要覆盖已有值
+- 删除之前新增的空摘要检测（纠正/勘误类论文合法无摘要，Phase E 已有跳过逻辑）
+- 新增 `tools/reset_empty_abstract.py`：将已入库的空摘要论文的 Phase D/E/G 重置为 pending，保留 MinerU 和 LLM 总结
+- `call_deepseek_api()` 重试中增加 `json.JSONDecodeError` 捕获，防止 API 响应损坏时丢失重试机会
+
 # 遗留问题 / 待办
 
 - **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
