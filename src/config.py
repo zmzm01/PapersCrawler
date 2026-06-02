@@ -281,6 +281,46 @@ def load_email_config():
 
 
 # ==================================================================
+# MinerU Token 过期检测
+# ==================================================================
+
+def _check_mineru_token():
+    """检查 MINERU_TOKEN（JWT）是否即将过期。"""
+    if not MINERU_TOKEN:
+        return
+    import base64
+    import json as _json
+    import time
+    import logging
+    try:
+        parts = MINERU_TOKEN.split(".")
+        if len(parts) != 3:
+            return
+        payload = parts[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data = _json.loads(base64.b64decode(payload))
+        exp = data.get("exp", 0)
+        if not exp:
+            return
+        days_left = (exp - time.time()) / 86400
+        if days_left < 30:
+            logging.warning(
+                f"MinerU Token 将在 {days_left:.0f} 天后过期，"
+                f"请及时从 https://mineru.net 更新"
+            )
+        elif days_left < 7:
+            logging.error(
+                f"MinerU Token 将在 {days_left:.0f} 天后过期，"
+                f"请立即更新，否则 MinerU 解析将失败"
+            )
+    except Exception:
+        pass
+
+
+_check_mineru_token()
+
+
+# ==================================================================
 # 模块自测 (直接运行 python config.py 时触发)
 # ==================================================================
 if __name__ == "__main__":

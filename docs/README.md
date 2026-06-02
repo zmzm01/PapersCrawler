@@ -11,7 +11,7 @@
 ```bash
 pip install requests feedparser beautifulsoup4 parsel pyyaml python-dateutil
 pip install python-dotenv                  # .env 密钥加载
-pip install playwright cloakbrowser "cloakbrowser[geoip]"  # 浏览器自动化
+pip install cloakbrowser "cloakbrowser[geoip]"  # 浏览器自动化
 pip install sentence-transformers          # 语义相似度初筛（Phase D）
 pip install pytest                         # 测试
 ```
