@@ -1,0 +1,75 @@
+"""
+Pipeline orchestrator.
+
+Provides run_pipeline() for full execution and run_phases() for selective runs.
+"""
+
+from config import (
+    load_publishers, load_keywords,
+    DB_PATH, REPORT_DIR,
+    SKIP_PHASE_A, SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
+    SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
+)
+from db.database import DatabaseClient
+from pipeline.base import logger
+
+from pipeline.phase_a import phase_a_rss
+from pipeline.phase_b import phase_b_crossref
+from pipeline.phase_c import phase_c_publisher
+from pipeline.phase_d import phase_d_semantic_filter
+from pipeline.phase_e import phase_e_llm_relevance
+from pipeline.phase_e2 import phase_e2_mineru
+from pipeline.phase_f import phase_f_llm_summary
+from pipeline.phase_g import phase_g_report
+from pipeline.phase_h import phase_h_email
+
+
+def run_phases(phase_list=None):
+    """Run selected phases of the pipeline.
+
+    Parameters
+    ----------
+    phase_list : list of str, optional
+        Phase names to run (e.g. ["A", "C", "F"]).
+        If None, runs all non-skipped phases.
+    """
+    publishers = load_publishers()
+    keywords = load_keywords()
+    logger.info(f"Loaded {len(publishers)} publishers")
+    logger.info(f"Keywords: {len(keywords['keywords'])} items, "
+                f"domain: {len(keywords['domain_description'])} chars")
+
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
+    logger.info(f"Database ready: {DB_PATH}")
+
+    phase_map = {
+        "A": (phase_a_rss, [db, publishers], not SKIP_PHASE_A),
+        "B": (phase_b_crossref, [db], not SKIP_PHASE_B),
+        "C": (phase_c_publisher, [db], not SKIP_PHASE_C),
+        "D": (phase_d_semantic_filter, [db, keywords], not SKIP_PHASE_D),
+        "E": (phase_e_llm_relevance, [db], not SKIP_PHASE_E),
+        "E2": (phase_e2_mineru, [db], not SKIP_PHASE_E2),
+        "F": (phase_f_llm_summary, [db], not SKIP_PHASE_F),
+        "G": (phase_g_report, [db, REPORT_DIR], not SKIP_PHASE_G),
+        "H": (phase_h_email, [REPORT_DIR], not SKIP_PHASE_H),
+    }
+
+    if phase_list is None:
+        phase_list = [k for k, (_, _, enabled) in phase_map.items() if enabled]
+
+    for key in phase_list:
+        func, args, enabled = phase_map[key]
+        if not enabled:
+            logger.info(f"Phase {key}: SKIP_PHASE_{key}=True, skipping")
+            continue
+        func(*args)
+
+    logger.info("Pipeline finished")
+
+
+def run_pipeline():
+    """Run the full pipeline (equivalent to old main())."""
+    run_phases()
