@@ -24,8 +24,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import DB_PATH, LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT
 from db.database import DatabaseClient
-from utils.llm_summarize_deepseek import DeepSeekPaperSummarizer
-from utils.paper_relevance import LLMAPICallError, LLMResponseParseError
+from processors.llm_summarize_deepseek import DeepSeekPaperSummarizer
+from processors.paper_relevance import LLMAPICallError, LLMResponseParseError
 
 
 def show_context(text: str, error_pos: int, label: str, width: int = 60):

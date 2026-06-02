@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from utils.paper_report_generator import (
+from processors.paper_report_generator import (
     generate_report,
     generate_markdown,
     generate_html,
