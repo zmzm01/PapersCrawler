@@ -433,3 +433,27 @@ for col_def in mineru_columns:
 ```
 
 迁移按功能分组：MinerU → Semantic Filter → Report Status。新增列时在此追加即可。
+
+# 测试策略
+
+采用两套测试体系分工协作：
+
+## T1/T2 — pytest 自动化测试（`tests/`）
+
+**目标**：保护重构安全，防止回归。**100% 离线，零跳过**。
+
+| 层级 | 方法 | 覆盖范围 |
+|------|------|---------|
+| T1 纯逻辑 | 直接调用函数，无需 mock | DB CRUD、报告生成、关键词匹配、DOI 提取 |
+| T2 模拟 I/O | `unittest.mock` 模拟网络层 | CrossRef API、DeepSeek API、SMTP 邮件 |
+
+mock 数据来源：先通过 T3 真实测试捕获，固化在测试函数内联或 `tests/fixtures/` 中。
+
+## T3 — 真实集成测试（`tests/real/`）
+
+**目标**：验证模块与外部服务的真实连通性。
+
+- 独立 Python 脚本（非 pytest），需 `.env` 和 `configs/email.yaml` 配置
+- 手动运行：`bash tests/real/run_all.sh`
+- 捕获真实响应写入 `tests/fixtures/`，供 T2 测试使用
+- 每次重构后手动跑一次，确认外部接口仍正常
