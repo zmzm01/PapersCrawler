@@ -1,213 +1,150 @@
-# 项目概述
+# PapersCrawler — 文献自动追踪与推送
 
-本项目希望实现抓取领域核心期刊文章，筛选出与组内工作相关的文章，并实现自动推送。
+自动抓取领域核心期刊文章，筛选与组内工作相关的论文，生成结构化报告并推送。
 
-一段时间后可以实现热点与技术进展追踪。
+> **项目不是 Python package** — `src/` 下没有 `__init__.py`，所有 import 相对于项目根目录解析。必须从项目根目录运行。
 
-# 项目结构
+## 快速开始
 
-项目分成 4 个部分，以数据库为中心进行构建。
+### 1. 安装依赖
 
-```
-.
-├── configs                                           # 配置文件存放处
-│   ├── keywords.yaml                                # 本研究领域的关键词表
-│   ├── publishers.yaml                              # 需要抓取的 Journal 表
-│   └── prompts                                      # 存放 LLM Prompt 处
-├── data                                              # 数据目录
-│   ├── PaperCrawler.log                             # 运行 log
-│   ├── raw                                          # 存放运行过程中的 raw data
-│   │   ├── page                                    # 存放部分可能需要保存的 publisher 页面
-│   │   └── rss                                     # 存放 rss feed
-│   └── reports                                      # 存放生成的报告
-├── docs                                              # 存放本项目相关的文档
-│   ├── 数据源调研.md
-│   └── MinerUAPI文档PDF解析接口文档开发者文档.md
-├── README.md                                         # 本项目的说明文档
-└── src
-    ├── config.py                                     # 存放各种配置
-    ├── main.py                                       # 项目主入口
-    ├── sources                                       # 数据获取部分
-    │   ├── crossref.py                              # crossref metadata 获取
-    │   ├── publisher.py                             # publisher page scraper
-    │   └── rss.py                                   # rss feed fetch
-    ├── test_for_rss_parse.py                         # rss fetch 与解析测试
-    └── utils                                         # 各种工具
-        ├── db.py                                     # 数据库的创建与管理
-        ├── llm_summarize_deepseek.py                 # 用 DeepSeek API 进行 paper 总结
-        ├── paper_relevance.py                        # Paper 与本研究领域相关性判断
-        └── paper_report_generator.py                 # 报告生成
+```bash
+pip install requests feedparser beautifulsoup4 parsel pyyaml python-dateutil
+pip install python-dotenv                  # .env 密钥加载
+pip install playwright cloakbrowser "cloakbrowser[geoip]"  # 浏览器自动化
+pip install sentence-transformers          # 语义相似度初筛（Phase D）
+pip install pytest                         # 测试
 ```
 
-## Part.A 数据抓取
+### 2. 配置
 
-### 多数据源的配置与管理
+**复制 `.env.example` 为 `.env`，填写密钥：**
 
-配置文件 `cofigs/publishers.yaml` 负责配置需要期刊的：
+```bash
+cp .env.example .env
+```
 
-- id (用于方便命名文件)
-- 名称
-- publish (用于爬虫配置)
-- rss feed url
-- 其他配置选项
+```ini
+# .env — 不要提交到仓库
+CROSSREF_MAILTO=your_email@example.com
+MINERU_TOKEN=your_mineru_token_here
+DEEPSEEK_API_KEY=sk-your-deepseek-key
+```
 
-当前配置文件采用列表形式：
+**configs/keywords.yaml** — 填写研究领域关键词 + 领域段落描述（支持中英文）：
 
 ```yaml
-publishers:
-  # Nature Series
-  - id: nature
-    name: Nature
-    publisher: nature
-    rss: https://www.nature.com/nature.rss
-    enabled: true
-
-  - id: nphys
-    name: Nature Physics
-    publisher: nature
-    rss: https://www.nature.com/nphys.rss
-    enabled: true
+domain_description: "(I) Laser-driven ion acceleration..."
+keywords:
+  - Laser-plasma acceleration
+  - Laser wakefield acceleration (LWFA)
+  - ...
 ```
 
-为了读取文件，需要：
+**configs/email.yaml** — 邮件推送配置（可选，不填则跳过）：
 
-```
-pip install pyyaml
-```
-
-### 数据源优先级与容错策略
-
-```
-RSS → DOI
-       ↓
-Crossref metadata
-       ↓
-Publisher scrape/API
+```yaml
+smtp_host: "smtp.qq.com"
+smtp_port: 587
+use_tls: true
+username: "your_email@qq.com"
+password: "your_auth_code"          # 授权码，不是邮箱密码
+from_addr: "your_email@qq.com"
+to_addrs:
+  - "colleague1@example.com"
 ```
 
-- RSS 负责“发现”
-- Crossref 负责“补 metadata”
-- Publisher 页面负责“补 non-OA abstract”
+> ⚠️ `.env` 和 `configs/email.yaml` 包含真实密钥，**不要提交到公开仓库**。
 
-### Publisher crawler 策略
+配置自检：
 
-已知**直接** `requests` / `https` / `Playwrigt` 会被 cloudflare challenge 阻拦。
+```bash
+python src/config.py   # 打印已加载的期刊配置
+```
 
-对于**校园网环境**，`playwright` + headful chromium + persistent session 可以直接过 CF Challenge 且避开重复 Challenge 。
+### 3. 运行
 
-> **必须使用校园网**，非校园网 IP 质量不清楚，且拿不到全文。
-> 服务器可能需要 VPN 接入校园网环境然后 `xvfb + headful chromium` 。
+```bash
+# 桌面环境（有显示器）
+python src/main.py
 
-核心原则：伪装成一个真正的科研用户，而不是直接对抗/破解 cloudflare 。
+# 无图形界面服务器
+xvfb-run -a python src/main.py
+```
 
-1. 长期复用同一个 Browser
-   ```
-   启动一次 Chromium
-       ↓
-   抓几十篇 DOI
-       ↓
-   最后再关闭
-   ```
-2. Persistent Context
-   ```python
-   launch_persistent_context()
-   ```
-3. 按 publisher 分 session
-4. 固定浏览器指纹
-   - 不要随机：UA/viewport/locale/timezone
-   ```python
-   user_agent="固定 Chrome UA"
-   locale="zh-CN"
-   timezone_id="Asia/Shanghai"
-   viewport={"width": 1440, "height": 900}
-   ```
-5. 不要 headless
-6. 加入“真人节奏”
+### 4. 运行测试
 
-   ```python
-   sleep(random.uniform(3, 10))
-   ```
+```bash
+pytest tests/ -v                    # 全部离线测试
+pytest tests/ -v -k "not pdf"       # 跳过 PDF 测试（需 pandoc）
+pytest tests/test_db.py -v          # 单模块
+```
 
-   - 偶尔停 20~30 秒
-   - 页面间隔不固定
+### 5. 重置流水线状态
 
-7. 不要每篇 `new_page()` ，复用同一个 page
-   ```python
-   page.goto(url1)
-   page.goto(url2)
-   page.goto(url3)
-   ```
-8. 从“正常入口”进入
-   ```python
-   page.goto("https://journals.aps.org/")
-   page.goto(article)
-   ```
-9. 降低并发：当前阶段不要多线程
-10. 服务器上 `xvfb-run -a python crawler.py`
-11. 最关键现实：IP Reputation
+```bash
+# 语义判断 + 下游重置（更新 domain_description/keywords 后使用）
+python tools/reset_pipeline.py reset-semantic [--publisher aps]
 
-| 网络            | 推荐度 |
-| --------------- | ------ |
-| 学校网络        | 极高   |
-| 家宽            | 高     |
-| 手机热点        | 中高   |
-| VPS             | 低     |
-| 香港/新加坡机房 | 更低   |
+# Publisher 抓取重试（仅 failed + skipped）
+python tools/reset_pipeline.py reset-publisher [--publisher aps]
 
-现阶段可能不需要增强技术：
+# MinerU PDF 解析重试
+python tools/reset_pipeline.py reset-mineru [--publisher aps]
 
-- playwright stealth plugin
-- undetected chromium
-- TLS spoof
-- JA3 patch
+# LLM 总结重试
+python tools/reset_pipeline.py reset-summary [--publisher aps]
 
-CF 可能的关键检查因素：
+# 重置报告状态，使已报告论文重新出现在下次报告中
+python tools/reset_pipeline.py reset-report [--publisher aps]
+```
 
-| 因素          | 权重 |
-| ------------- | ---- |
-| IP reputation | 极高 |
-| ASN           | 极高 |
-| 浏览器真实性  | 高   |
-| Headless      | 中   |
-| JS challenge  | 低   |
+所有子命令支持 `--publisher` 过滤，执行前打印 SQL 和影响行数，需输入 `y` 确认。
 
-> publisher scraper 应该将 session 数据存放在 `data/browser_cache` 下（不同 publisher 分开）
+### 6. Markdown → PDF 转换（实验性）
 
-## Part.B 筛选与解析
+报告默认输出为 Markdown。如需 PDF，可尝试：
 
-提供本研究领域的关键词表，两步筛选：
+```bash
+python tools/convert_md_to_pdf.py data/reports/report_20260601.md
+```
 
-1. 通过关键词表初筛，如果 match = 0 则直接判断不相关
-2. 通过 LLM 判断相关性
+> ⚠️ **已知问题**：公式渲染尚不支持，PDF 中公式部分显示为空白。如有公式渲染需求请先使用 Markdown 格式报告。欢迎贡献修复。
 
-## Part.C 报告生成
+## 支持的出版社/期刊
 
-生成 markdown 报告即可（`paper_report_generator.py` 中写了 html 模板但是其实没什么用），最好转成好看的 PDF （注意 LaTeX 公式转换）。
+| 出版社    | 期刊数                                              | 爬虫类             |
+| --------- | --------------------------------------------------- | ------------------ |
+| Nature    | 4 (Nature, Nature Physics/Photonics/Communications) | `NatureScraper`    |
+| Science   | 2 (Science, Science Advances)                       | `ScienceScraper`   |
+| APS       | 7 (PRL ×2, PRAB ×2, PRE, PRApplied ×2)              | `APSScraper`       |
+| Cambridge | 1 (HPLSE)                                           | `CambridgeScraper` |
+| AIP       | 5 (PoP ×2, APL ×2, RSI)                             | `AIPScraper`       |
+| IOP       | 1 (PPCF)                                            | `IOPScraper`       |
+| Optica    | 2 (Optica, Optics Express)                          | `OpticaScraper`    |
 
-## Part.D 消息推送
+## Publisher 爬虫策略
 
-通过 SMTP 发邮件给组里同学：需要邮箱支持 IMAP/SMTP 服务授权（获取授权码）。
+参见 `src/sources/publisher.py` 中详细注释。核心原则：
 
-# TODOLIST
+1. **Persistent Context** — 同一个 publisher 共用一个浏览器 session
+2. **Headful Chromium** — 不使用无头模式（Cloudflare 检测 headless）
+3. **cloakbrowser** — 自动处理浏览器指纹伪装，无需手动注入反检测 JS
+4. **真人节奏** — 页面间 5~10s 随机延迟，publisher 间冷却 15s
+5. **失败熔断** — 同一 publisher 连续 5 篇失败后自动中止
+6. **校园网** — IP Reputation 是 anti-bot 最关键的因素
 
-- [x] RSS 抓取模块
-- [x] CrossRef 元数据抓取模块
-- [x] Publisher Scraper 模块抓 abstract
+## 数据源优先级
 
-- [x] 关键词筛选相关文献
-- [x] 对关键词筛选命中的文献，利用 LLM 精细判断相关性。
-   - [ ] AI 提供的语义相似度方法判断相关性
-- [x] MinerU PDF 解析
-- [x] 对于确定相关的文献：生成一句总结、提取关键词和技术点等 LLM 分析。
+```
+RSS → DOI (发现)
+   ↓
+CrossRef API → metadata (补充)
+   ↓
+Publisher Page → abstract (补充非 OA 论文摘要)
+```
 
-- [ ] 报告模板制作
-- [ ] SMTP 分发 / 下载页面
-- [ ] 日志模块
-- [ ] 热点/趋势分析（待调研）
+## 待办事项
 
-进一步优化：
-
-- [ ] RSS 抓取注意请求失败处理？以及 `requests` 基本伪装实现。
-- [ ] CrossRef 等多数据源聚合
-- [ ] 将4个模块彻底解耦，用数据库作为读写节点。
-- [ ] 并发升级（如进行此项需要对数据库进行同步升级！）
+- [ ] 热点/趋势分析
+- [ ] 并发升级 + 数据库同步升级
