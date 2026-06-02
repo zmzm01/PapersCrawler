@@ -338,6 +338,24 @@ python src/main.py
 5. DeepSeek API 调用增加状态码解析（401/402/429/503），映射为针对性错误信息
 6. MinerU Token 过期自动检测（解码 JWT 的 `exp` 字段），30 天前 warning，7 天前 error
 
+# 2026-06-02 — 测试体系重构：两套测试 + 零跳过
+
+**背景**：测试中 5 个 `@pytest.mark.skip` 从不执行，形同虚设。2 个 RSS 测试依赖缓存文件，不存在时静默通过（假阴性）。`EmailSender.send()` 方法从未被测试。
+
+**解决**：
+1. 新增 `tests/fixtures/` — 存放真实响应快照（由 T3 脚本生成）
+2. 新增 `tests/real/` — 3 个 T3 真实测试脚本（独立运行，无需 pytest）
+   - `real_crossref.py` — 调用 CrossRef API，验证并保存 fixture
+   - `real_llm_api.py` — 调用 DeepSeek API（相关性 + 总结），验证并保存 fixture
+   - `real_email.py` — 发送真实测试邮件到配置地址
+3. 改造 `test_rss.py` — 删 2 个文件依赖测试，新增内联 RSS XML 全流程测试
+4. 改造 `test_crossref.py` — 3 个 `@skip` → mock `requests.Session.get`
+5. 改造 `test_relevance.py` — 1 个 `@skip` → mock `requests.post`
+6. 改造 `test_email.py` — 删 `@skip` + 无效 MIME 测试，新增 4 个 mock smtplib 测试
+7. 清理 `conftest.py` — 删除不再使用的 markers（network/browser/slow）
+
+**结果**：`pytest tests/` → 83 passed, 0 skipped（从 78 passed, 5 skipped 改进）
+
 # 遗留问题 / 待办
 
 - **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
