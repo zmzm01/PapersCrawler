@@ -3,74 +3,81 @@
 ## Setup & Run
 
 ```bash
-# Install deps (no requirements.txt, no package manager)
-pip install python-dotenv requests feedparser beautifulsoup4 parsel cloakbrowser "cloakbrowser[geoip]" pyyaml python-dateutil
-pip install sentence-transformers  # optional, for Phase D
+pip install python-dotenv requests feedparser beautifulsoup4 parsel \
+            cloakbrowser "cloakbrowser[geoip]" pyyaml python-dateutil
+pip install sentence-transformers  # optional — only Phase D needs it
 
-# Run (must be from project root - no `__init__.py` in src/, no package install)
-python src/main.py                   # desktop with display
-xvfb-run -a python src/main.py      # headless server (cloakbrowser uses headful Chromium)
+cp .env.example .env               # fill in CROSSREF_MAILTO, MINERU_TOKEN, DEEPSEEK_API_KEY
+python src/config.py                # self-test: prints loaded journal config
 
-# Config self-test: python src/config.py
+python src/main.py                  # desktop
+xvfb-run -a python src/main.py     # headless (cloakbrowser needs headful Chromium)
 ```
 
 ## Tests
 
 ```bash
-pytest tests/ -v                    # all tests
-pytest tests/ -v -k "not pdf"       # skip PDF tests (needs pandoc + xelatex)
-pytest tests/test_db.py -v          # single module
+pytest tests/ -v                          # all tests
+pytest tests/ -v -k "not pdf"             # skip PDF tests (needs pandoc + xelatex)
+pytest tests/test_db.py -v                # single module
+```
+
+Tests with `network`, `slow`, or `browser` markers are **skipped by default** (see `tests/conftest.py:13-23`). To run them, pass `-m`:
+
+```bash
+pytest tests/ -m network                  # enable network-dependent tests
 ```
 
 No lint, formatter, or typechecker is configured.
 
-## Reset Pipeline
+## Phase Switching
+
+All 8 phases can be toggled in `src/config.py:168-176` via `SKIP_PHASE_A` … `SKIP_PHASE_H`. Default (debug/dev) skips A–E, E2, H; only runs F+G. Set `MAX_PAPERS_PER_PHASE = 0` for unlimited.
+
+## Pipeline Reset
 
 ```bash
-# Reset semantic judgments + downstream (after updating domain_description/keywords)
-python tools/reset_pipeline.py reset-semantic
-python tools/reset_pipeline.py reset-semantic --publisher aps
-
-# Retry failed publisher scrapes (Phase C)
-python tools/reset_pipeline.py reset-publisher
-python tools/reset_pipeline.py reset-publisher --publisher aps
-
-# Retry failed MinerU PDF parsing (Phase E2)
-python tools/reset_pipeline.py reset-mineru
-python tools/reset_pipeline.py reset-mineru --publisher aps
-
-# Retry failed LLM summaries (Phase F)
-python tools/reset_pipeline.py reset-summary
-python tools/reset_pipeline.py reset-summary --publisher aps
-
-# Reset report status (Phase G) — re-include papers in next report
-python tools/reset_pipeline.py reset-report
-python tools/reset_pipeline.py reset-report --publisher aps
+python tools/reset_pipeline.py reset-semantic   # Phase D + downstream (after keyword changes)
+python tools/reset_pipeline.py reset-publisher  # retry failed Phase C scrapes
+python tools/reset_pipeline.py reset-mineru     # retry failed Phase E2 PDF parsing
+python tools/reset_pipeline.py reset-summary    # retry failed Phase F summaries
+python tools/reset_pipeline.py reset-report     # re-include papers in next Phase G report
 ```
 
-Scripts prompt for confirmation before executing; prints affected row count.
+All support `--publisher aps` to filter. Each prints SQL + row count and prompts `[y/N]` before executing.
+
+Other debug tools: `tools/debug_llm_summary.py`, `tools/debug_publisher_urls.py`, `tools/reset_empty_abstract.py`.
 
 ## Architecture
 
-- **Not a package** — `src/` has no `__init__.py`. All imports resolve relative to project root at runtime. Run scripts from repo root.
-- **8-phase pipeline** in `src/main.py`: RSS → CrossRef → Publisher (cloakbrowser) → Semantic Filter (D) → LLM Relevance (E) → MinerU PDF (E2) → LLM Summary (F) → Report → Email.
-- **Phase D gates Phase E** — papers scoring below `SEMANTIC_SIMILARITY_THRESHOLD` (0.3) are marked irrelevant and skip the LLM phase entirely (saves API costs).
-- **cloakbrowser uses headful Chromium** — Cloudflare bypass requires a visible browser. cloakbrowser handles browser fingerprinting automatically. Use `xvfb-run -a` on headless servers.
-- **Publisher scrapers** (`src/sources/publisher.py`) are per-publisher classes. Each publisher gets a persistent browser context with `headless=False` and 2–30s random delays between pages.
+- **Not a package** — `src/` has **no** `__init__.py`. All imports resolve relative to project root at runtime.
+- **8 phases** in `src/main.py`: RSS → CrossRef → Publisher (cloakbrowser) → Semantic Filter → LLM Relevance → MinerU PDF → LLM Summary → Report → Email.
+- **Phase D gates Phase E** — papers below `SEMANTIC_SIMILARITY_THRESHOLD` (0.3, in `src/config.py:158`) skip LLM, saving API costs.
+- **Publisher scrapers** (`src/sources/publisher.py`): per-publisher class with persistent browser context, `headless=False`, 2–30s random page delays, 3-consecutive-failure circuit breaker.
+- **Optica** needs proxy (`http://127.0.0.1:10808`, configurable in `src/config.py:197-199`); Optica journals are also `enabled: false` by default in `configs/publishers.yaml`.
+- **Nature News** is filtered out via `SKIP_NATURE_NEWS` (looks for `/d41586-` in DOI prefix).
 
 ## Config & Secrets
 
-- API keys and tokens loaded via `python-dotenv` from `.env` file (DeepSeek, CrossRef, MinerU JWT).
-- Email credentials in `configs/email.yaml`.
-- **Do not commit credential files.** They contain real secrets.
-- Keywords: `configs/keywords.yaml` — Chinese and English terms for laser plasma physics.
+| File | Content |
+|------|---------|
+| `.env` | `CROSSREF_MAILTO`, `MINERU_TOKEN`, `DEEPSEEK_API_KEY` (gitignored) |
+| `configs/email.yaml` | SMTP creds + recipients (gitignored) |
+| `configs/keywords.yaml` | Chinese + English keywords/domain description for laser-plasma physics |
+| `configs/publishers.yaml` | Journal RSS feeds + `enabled` flags |
 
-## Dependencies / Models
+## Data Layout
 
-- `sentence-transformers` model (`all-MiniLM-L6-v2`) must be in `data/models/all-MiniLM-L6-v2/`. Loaded with `local_files_only=True`. Download manually before first run.
-- `sqlite3` database at `data/papers.db` — one table (`papers`) with per-phase status columns. All pipeline state persists here; restart is safe.
-- Report output goes to `data/reports/` (Markdown format).
+All under `data/` (gitignored; first run creates it):
+
+| Path | Usage |
+|------|-------|
+| `papers.db` | SQLite — single `papers` table with per-phase status columns |
+| `reports/` | Markdown report output |
+| `models/all-MiniLM-L6-v2/` | sentence-transformers model (must be downloaded manually first; loaded with `local_files_only=True`) |
+| `session_cached/` | Per-publisher cloakbrowser persistent browser contexts |
+| `mineru_output/` | MinerU PDF parse results (one subdir per sanitised DOI) |
 
 ## Language
 
-All comments, docstrings, prompts, and report text are in Chinese. Generated reports are in Chinese.
+All comments, docstrings, LLM prompts, and generated reports are in **Chinese**.

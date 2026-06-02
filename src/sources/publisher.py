@@ -48,8 +48,6 @@ from pathlib import Path
 from parsel import Selector
 from cloakbrowser import launch_persistent_context
 
-from typing import List
-
 from common import Paper
 
 

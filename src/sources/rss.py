@@ -94,7 +94,7 @@ class RSSProcessor:
         1. 使用 feedparser 将 XML 解析为字典结构
         2. 遍历每个 entry（每条 entry 对应一篇论文）
         3. 从 entry 中提取 DOI、标题、链接、日期
-        4. 记录抓取时间，返回结构化的字典列表
+        4. 返回 Paper 数据类列表
 
         Args:
             xml_text (str): RSS Feed 的原始 XML 文本
@@ -102,14 +102,11 @@ class RSSProcessor:
                                    可用于后续扩展（如按期刊设置不同的 DOI 提取策略）
 
         Returns:
-            list[dict]: 论文基本信息字典列表，每个字典格式为：
-                {
-                    "doi": str | None,       # 论文 DOI（可能为空）
-                    "title": str,            # 论文标题
-                    "link": str,             # 论文页面链接
-                    "updated": str | None,   # 论文发布日期（YYYY-MM-DD 格式）
-                    "rss_fetched_at": str,   # 本次 RSS 抓取的 ISO 时间戳
-                }
+            list[Paper]: Paper 对象列表，每个对象包含：
+                .doi               论文 DOI（可能为 None）
+                .title             论文标题
+                .url               论文页面链接
+                .date              发布日期（YYYY-MM-DD 格式或 None）
         """
         feed = feedparser.parse(xml_text)
         papers = []

@@ -271,6 +271,64 @@ src/common.py
 - 新增 `tools/reset_empty_abstract.py`：将已入库的空摘要论文的 Phase D/E/G 重置为 pending，保留 MinerU 和 LLM 总结
 - `call_deepseek_api()` 重试中增加 `json.JSONDecodeError` 捕获，防止 API 响应损坏时丢失重试机会
 
+## LLM JSON 调试脚本
+
+**动机**：Phase F 偶发 `Invalid \escape` 错误，正则修复未能覆盖，需定位 LLM 实际输出的内容。
+
+**解决**：新增 `tools/debug_llm_summary.py <doi>`，读取指定论文的 MinerU 全文并调用 API，在 `json.loads` 失败时打印原始字符串（含错误位置上下文）、正则修复对比、激进的二次修复尝试。
+
+## Inner JSON 验证移至 API 重试循环内
+
+**动机**：`json.loads` 验证在 `call_deepseek_api` 返回之后才执行，API 重试循环不覆盖 JSON 非法的情况，导致重试无效。
+
+**解决**：将 inner JSON 验证 + 正则修复移入 `call_deepseek_api()` 的重试循环内部：
+- API 返回内容后立即验证 inner JSON，非法时尝试正则修复
+- 修复后仍非法则抛异常，触发 API 重试
+- 第二次重试后内容仍非法则走异常处理（成功率已大幅提高）
+
+## 正则修复 `\(?` → `(?<!\\)\\(?`
+
+**动机**：正则 `r'\\(?![\\"/bfnrtu])'` 缺少负向后顾，会错误地将正确转义 `\\` 中的第二个反斜杠也匹配并加倍，产生新的非法转义。
+
+**解决**：改为 `r'(?<!\\)\\(?![\\"/bfnrtu])'`，只匹配**前面没有反斜杠**的反斜杠。
+
+## Prompt 公式格式统一 + reset-summary --all
+
+**动机**：旧 prompt 允许行内公式用 `\(` 或 `$` 二选一，导致不同总结中格式不统一，影响报告渲染。
+
+**解决**：
+- `SUMMARIES_PROMPT` 改为唯一指定：行内公式必须用 `\(...\)`，行间公式必须用 `\[...\]`
+- `tools/reset_pipeline.py` `reset-summary` 子命令加 `--all` 参数，支持重置包括 `success` 在内的全部总结
+- 所有子命令的 `-h` 详细列出受影响/不受影响的状态列
+
+**重置并重新生成所有总结**：
+```bash
+python tools/reset_pipeline.py reset-summary --all
+# 确认后，再运行主流水线（仅 Phase F 和 G 执行）
+python src/main.py
+```
+
+## PDF 转换改为 HTML + cloakbrowser（公式待修复）
+
+**动机**：pandoc → xelatex 路径对文本模式中的裸 LaTeX 命令（`\times`、`\mathrm` 等）过于脆弱，任何 `\(...\)` 范围外的 LaTeX 命令都导致编译崩溃。
+
+**解决**：`tools/convert_md_to_pdf.py` 改为：
+1. pandoc Markdown → HTML（`--mathml` 模式，MathML 由浏览器原生渲染）
+2. cloakbrowser 无头打印 HTML → PDF
+3. 不再依赖 xelatex / texlive
+
+**当前状态**：可运行生成 PDF，但公式渲染暂不支持，PDF 中公式显示为空白。保留 `--mathjax` 升级路径（需解决 `file://` 协议下 CDN 加载问题或换用本地 MathJax）。
+
+## LLM 公式格式修复
+
+**动机**：Large Model 指令遵循不到位，部分 LaTeX 命令（`\times`、`\mathrm` 等）未用 `\(` 包裹。正则方案边缘 case 过多，总有遗漏。
+
+**解决**：
+- 新增 `LLMFormulaFixer` 类（`utils/llm_summarize_deepseek.py`），用 flash 模型修复裸 LaTeX 命令的公式包裹
+- 新增 `LLMFormulaFixer` 类（`utils/llm_summarize_deepseek.py`），接收整个总结 dict 并用 json_object 模式修复
+- 新增 `SKIP_FORMULA_FIX = True` 配置开关（**实验性功能**，默认关闭，需评估 prompt 效果后再开启）
+- `phase_f_llm_summary()` 中条件初始化 + 条件调用 fixer，默认跳过
+
 # 遗留问题 / 待办
 
 - **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现

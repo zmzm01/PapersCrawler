@@ -35,7 +35,7 @@ def _fix_latex_backslashes(text: str) -> str:
     将双反斜杠 \\\\ 替换为单反斜杠 \\，恢复 LaTeX 命令。
 
     为什么需要这个函数：
-    DeepSeek API 的 JSON Output 模式下，LaTeX 命令中的反斜杠（如 \omega, \frac）会被 JSON 序列化
+    DeepSeek API 的 JSON Output 模式下，LaTeX 命令中的反斜杠（如 \\omega, \\frac）会被 JSON 序列化
     转义为双反斜杠（\\omega, \\frac）。这是因为 JSON 规范要求字符串中的反斜杠用 \\ 表示。
     在生成可读报告时，需要将这些双反斜杠还原为正常的 LaTeX 语法。
 
