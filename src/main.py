@@ -29,6 +29,7 @@ PapersCrawler 主入口 —— 8 阶段文献追踪流水线。
 
 import json
 import logging
+import re
 import os
 import random
 import shutil
@@ -789,6 +790,8 @@ def phase_e_llm_relevance(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
+                # 修复 LLM 输出的非法 JSON 转义（如 \( → \\(）
+                result_str = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 result = json.loads(result_str)
                 relevant = 1 if result.get("relevant", False) else 0
                 confidence = result.get("confidence", "low")
@@ -1043,6 +1046,8 @@ def phase_f_llm_summary(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
+                # 修复 LLM 输出的非法 JSON 转义（如 \( → \\(）
+                result_str = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 json.loads(result_str)
                 db.update_llm_summary(
                     doi, result_str, FetchStatus.SUCCESS.value, timestamp
