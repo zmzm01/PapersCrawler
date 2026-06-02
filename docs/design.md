@@ -69,6 +69,18 @@ PapersCrawler/
 │       ├── base.py              # 共享上下文 (SCRAPER_MAP, logger)
 │       ├── phase_a.py ~ phase_h.py  # 各阶段独立模块
 │       └── runner.py            # 编排器 (全跑/选择性跑)
+│   └── web/                     # Web UI (FastAPI)
+│       ├── app.py               # FastAPI 应用 + 路由
+│       ├── templates/           # Jinja2 模板 (5 页面)
+│       │   ├── base.html        #   布局模板
+│       │   ├── dashboard.html   #   状态概览
+│       │   ├── pipeline.html    #   流水线控制 + SSE 日志
+│       │   ├── report.html      #   报告生成
+│       │   ├── logs.html        #   日志查看
+│       │   └── config.html      #   配置展示
+│       └── static/
+│           ├── css/style.css
+│           └── js/app.js
 ├── tools/                       # 辅助工具
 │   ├── reset_pipeline.py        # 重置流水线状态（5 子命令 + --publisher 过滤）
 │   ├── convert_md_to_pdf.py     # Markdown → PDF (pandoc + cloakbrowser 主路径)
@@ -288,6 +300,36 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key
 ```
 
 `src/config.py` 通过 `os.getenv()` 读取，缺失时留空（对应功能跳过）。
+
+# Web UI 架构
+
+`src/web/` 模块提供基于 FastAPI 的 Web 控制面板，与流水线解耦：
+
+## 页面功能
+
+| 页面 | 路由 | 功能 |
+|------|------|------|
+| Dashboard | `GET /` | 各阶段论文数量统计（成功/失败/跳过/待处理） |
+| Pipeline | `GET /pipeline` | 9 个阶段的 Run 按钮 + SSE 实时日志流 + 子进程执行 |
+| Report | `GET /report` | 选择出版社 → 生成 Markdown 报告 |
+| Logs | `GET /logs` | 日志查看，支持按级别过滤 |
+| Config | `GET /config` | 只读展示 publishers.yaml / keywords.yaml / SKIP 配置 |
+
+## 任务执行模型
+
+- 点击 Run → `POST /pipeline/run/{phase}` → FastAPI 后台线程启动子进程 → 子进程调用 `pipeline.runner.run_phases()` → 写日志到同一文件
+- `_phase_lock`（asyncio.Lock）确保同一时间只有一个阶段在运行
+- 前端通过 SSE (`GET /pipeline/logs`) 接收实时日志推送
+
+## 启动方式
+
+```bash
+# 桌面环境
+PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
+
+# 无头服务器（Phase C 需要 Xvfb 虚拟显示）
+xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080'
+```
 
 # 阶段开关（SKIP_PHASE）
 
