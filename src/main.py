@@ -61,7 +61,7 @@ from config import (
     LLM_CONCURRENT_MAX,
 )
 
-from utils.db import DatabaseClient, FetchStatus
+from db.database import DatabaseClient, FetchStatus
 from sources.rss import RSSProcessor
 from sources.crossref import CrossrefClient, NotFoundError
 from sources.publisher import (

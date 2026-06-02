@@ -23,7 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import DB_PATH, LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT
-from utils.db import DatabaseClient
+from db.database import DatabaseClient
 from utils.llm_summarize_deepseek import DeepSeekPaperSummarizer
 from utils.paper_relevance import LLMAPICallError, LLMResponseParseError
 

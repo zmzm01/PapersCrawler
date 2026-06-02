@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from utils.db import DatabaseClient, FetchStatus, DataBaseDOINotExists
+from db.database import DatabaseClient, FetchStatus, DataBaseDOINotExists
 
 
 @pytest.fixture
