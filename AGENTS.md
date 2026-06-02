@@ -1,83 +1,33 @@
-# AGENTS.md
+# Project Rules
 
-## Setup & Run
+## 项目文档体系
 
-```bash
-pip install python-dotenv requests feedparser beautifulsoup4 parsel \
-            cloakbrowser "cloakbrowser[geoip]" pyyaml python-dateutil
-pip install sentence-transformers  # optional — only Phase D needs it
+以下三个文档构成项目的知识核心，必须在每次功能变更前后同步更新：
 
-cp .env.example .env               # fill in CROSSREF_MAILTO, MINERU_TOKEN, DEEPSEEK_API_KEY
-python src/config.py                # self-test: prints loaded journal config
+- `docs/design.md`：融合需求与架构设计，是最高指导。
+- `docs/tasks.md`：当前任务流水账（关键决策、进展、经验教训）。
+- `docs/README.md`：项目说明（面向人类和 AI 的事实澄清），包含如何运行、技术栈、特殊约定。
 
-python src/main.py                  # desktop
-xvfb-run -a python src/main.py     # headless (cloakbrowser needs headful Chromium)
-```
+> 其他文档（如方案文档、API 文档）按需创建，但这三份是必须有的。
 
-## Tests
+## 开发风格
 
-```bash
-pytest tests/ -v                          # all tests
-pytest tests/ -v -k "not pdf"             # skip PDF tests (needs pandoc + xelatex)
-pytest tests/test_db.py -v                # single module
-```
+### 代码风格
 
-Tests with `network`, `slow`, or `browser` markers are **skipped by default** (see `tests/conftest.py:13-23`). To run them, pass `-m`:
+- Python 遵循 PEP8
+- 变量名禁止拼音或单字母（循环变量 `i` 等除外）。
+- 所有公开函数和类必须写 Docstring（英文或中文均可，但要一致）。
+  - Python 使用 NumPy-style docstring 风格
 
-```bash
-pytest tests/ -m network                  # enable network-dependent tests
-```
+### Git 提交信息（Conventional Commits）
 
-No lint, formatter, or typechecker is configured.
+所有提交消息必须使用以下前缀，后接描述：
 
-## Phase Switching
+- `feat:` 新功能
+- `fix:` 修复 bug
+- `docs:` 仅文档更新
+- `refactor:` 重构（不改变外部行为）
+- `test:` 添加或修改测试
+- `chore:` 工具、构建、依赖等杂项
 
-All 8 phases can be toggled in `src/config.py:168-176` via `SKIP_PHASE_A` … `SKIP_PHASE_H`. Default (debug/dev) skips A–E, E2, H; only runs F+G. Set `MAX_PAPERS_PER_PHASE = 0` for unlimited.
-
-## Pipeline Reset
-
-```bash
-python tools/reset_pipeline.py reset-semantic   # Phase D + downstream (after keyword changes)
-python tools/reset_pipeline.py reset-publisher  # retry failed Phase C scrapes
-python tools/reset_pipeline.py reset-mineru     # retry failed Phase E2 PDF parsing
-python tools/reset_pipeline.py reset-summary    # retry failed Phase F summaries
-python tools/reset_pipeline.py reset-report     # re-include papers in next Phase G report
-```
-
-All support `--publisher aps` to filter. Each prints SQL + row count and prompts `[y/N]` before executing.
-
-Other debug tools: `tools/debug_llm_summary.py`, `tools/debug_publisher_urls.py`, `tools/reset_empty_abstract.py`.
-
-## Architecture
-
-- **Not a package** — `src/` has **no** `__init__.py`. All imports resolve relative to project root at runtime.
-- **8 phases** in `src/main.py`: RSS → CrossRef → Publisher (cloakbrowser) → Semantic Filter → LLM Relevance → MinerU PDF → LLM Summary → Report → Email.
-- **Phase D gates Phase E** — papers below `SEMANTIC_SIMILARITY_THRESHOLD` (0.3, in `src/config.py:158`) skip LLM, saving API costs.
-- **Publisher scrapers** (`src/sources/publisher.py`): per-publisher class with persistent browser context, `headless=False`, 2–30s random page delays, 3-consecutive-failure circuit breaker.
-- **Optica** needs proxy (`http://127.0.0.1:10808`, configurable in `src/config.py:197-199`); Optica journals are also `enabled: false` by default in `configs/publishers.yaml`.
-- **Nature News** is filtered out via `SKIP_NATURE_NEWS` (looks for `/d41586-` in DOI prefix).
-
-## Config & Secrets
-
-| File | Content |
-|------|---------|
-| `.env` | `CROSSREF_MAILTO`, `MINERU_TOKEN`, `DEEPSEEK_API_KEY` (gitignored) |
-| `configs/email.yaml` | SMTP creds + recipients (gitignored) |
-| `configs/keywords.yaml` | Chinese + English keywords/domain description for laser-plasma physics |
-| `configs/publishers.yaml` | Journal RSS feeds + `enabled` flags |
-
-## Data Layout
-
-All under `data/` (gitignored; first run creates it):
-
-| Path | Usage |
-|------|-------|
-| `papers.db` | SQLite — single `papers` table with per-phase status columns |
-| `reports/` | Markdown report output |
-| `models/all-MiniLM-L6-v2/` | sentence-transformers model (must be downloaded manually first; loaded with `local_files_only=True`) |
-| `session_cached/` | Per-publisher cloakbrowser persistent browser contexts |
-| `mineru_output/` | MinerU PDF parse results (one subdir per sanitised DOI) |
-
-## Language
-
-All comments, docstrings, LLM prompts, and generated reports are in **Chinese**.
+提交粒度：每个逻辑独立改动单独提交。
