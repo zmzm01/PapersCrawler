@@ -74,10 +74,22 @@ xvfb-run -a python src/main.py
 
 ### 4. 运行测试
 
+**T1/T2 自动化测试（纯离线，零跳过）：**
 ```bash
-pytest tests/ -v                    # 全部离线测试
-pytest tests/ -v -k "not pdf"       # 跳过 PDF 测试（需 pandoc）
+pytest tests/ -v                    # 83 个测试全部通过
+pytest tests/ -v -k "not pdf"       # 跳过 PDF 测试（需 pandoc 系统依赖）
 pytest tests/test_db.py -v          # 单模块
+```
+
+**T3 真实集成测试（需配置 .env）：**
+```bash
+# 一键运行全部真实测试（CrossRef API / DeepSeek API / SMTP 邮件）
+bash tests/real/run_all.sh
+
+# 或逐个运行：
+python tests/real/real_crossref.py   # CrossRef API 连通性
+python tests/real/real_llm_api.py    # DeepSeek API 连通性 + 抓取 fixture
+python tests/real/real_email.py      # SMTP 邮件发送测试
 ```
 
 ### 5. 重置流水线状态
