@@ -2,4 +2,4 @@ data
 slides
 __pycache__
 .env
-configs/email.yaml
+configs/email.yaml*.swp
