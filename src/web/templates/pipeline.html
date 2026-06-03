@@ -22,7 +22,9 @@
       <td><span class="badge badge-pending" id="badge-{{ phase.key }}">-</span></td>
       <td class="phase-actions">
         <button class="btn btn-sm btn-primary" onclick="runPhase('{{ phase.key }}')" id="run-{{ phase.key }}">Run</button>
+        {% if phase.key != 'A' and phase.key != 'H' %}
         <button class="btn btn-sm btn-secondary" onclick="confirmReset('{{ phase.key }}')" id="reset-{{ phase.key }}">Reset</button>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -66,6 +68,15 @@ function applyPipelineLogFilter() {
 
 function filterPipelineLog() { applyPipelineLogFilter(); }
 
+const CHART_LABELS = {
+  cr_metadata_fetched: 'CrossRef',
+  publisher_page: 'Publisher',
+  semantic_filter: 'Semantic',
+  llm_relevance: 'Relevance',
+  mineru_parse: 'MinerU',
+  llm_summary: 'Summary',
+};
+
 async function refreshCharts() {
   const r = await fetch('/pipeline/status');
   const data = await r.json();
@@ -74,10 +85,11 @@ async function refreshCharts() {
   for (const [key, counts] of Object.entries(data.phases)) {
     const total = counts.success + counts.failed + counts.skipped + counts.pending || 1;
     const pct = n => ((n / total) * 100).toFixed(1);
+    const label = CHART_LABELS[key] || key;
     const div = document.createElement('div');
     div.className = 'chart-row';
     div.innerHTML = `
-      <div class="chart-label">${key}</div>
+      <div class="chart-label">${label}</div>
       <div class="chart-bars">
         <div class="chart-bar success" style="width:${pct(counts.success)}%" title="success: ${counts.success}"></div>
         <div class="chart-bar failed" style="width:${pct(counts.failed)}%" title="failed: ${counts.failed}"></div>
@@ -91,14 +103,17 @@ async function refreshCharts() {
         <span class="c-pending">${counts.pending}</span>
       </div>`;
     container.appendChild(div);
-    // Update badge
     const badge = document.getElementById('badge-' + key);
     if (badge) {
-      const total = counts.success + counts.failed + counts.skipped + counts.pending;
       badge.textContent = total + ' papers';
       badge.className = 'badge badge-pending';
     }
   }
+  // Legend
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  legend.innerHTML = '<span class="c-success">■ Success</span> <span class="c-failed">■ Failed</span> <span class="c-skipped">■ Skipped</span> <span class="c-pending">■ Pending</span>';
+  container.appendChild(legend);
 }
 refreshCharts();
 setInterval(refreshCharts, 10000);

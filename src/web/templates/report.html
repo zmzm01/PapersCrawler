@@ -37,8 +37,9 @@
 
 <div id="report-preview" class="report-preview" style="display:none;">
   <h3>Report Preview</h3>
+  <p id="report-filename" class="text-muted"></p>
   <pre class="config-pre" id="preview-content"></pre>
-  <a id="download-link" class="btn btn-sm btn-primary" target="_blank">Download</a>
+  <a id="download-link" class="btn btn-sm btn-primary" target="_blank" style="display:inline-block;">Download</a>
 </div>
 
 <script>
@@ -59,17 +60,26 @@ async function generateReport() {
   if (!dois.length) { alert('Select at least one paper.'); return; }
   const btn = document.getElementById('generate-btn');
   btn.disabled = true; btn.textContent = 'Generating...';
-  const r = await fetch('/report/generate', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({dois: dois}),
-  });
-  const data = await r.json();
-  btn.disabled = false; btn.textContent = 'Generate Report';
-  if (data.ok) {
+  try {
+    const r = await fetch('/report/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({dois: dois}),
+    });
+    const data = await r.json();
+    if (!data.ok) {
+      alert('Report generation failed: ' + (data.error || 'unknown error'));
+      return;
+    }
     document.getElementById('report-preview').style.display = 'block';
-    document.getElementById('preview-content').textContent = data.preview;
+    document.getElementById('preview-content').textContent = data.preview || '(empty report)';
     document.getElementById('download-link').href = '/report/download/' + data.filename;
+    document.getElementById('download-link').style.display = 'inline-block';
+    document.getElementById('report-filename').textContent = 'Generated: ' + data.filename;
+  } catch (err) {
+    alert('Network error: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate Report';
   }
 }
 </script>

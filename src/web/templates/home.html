@@ -37,5 +37,40 @@
       <div class="stat-label">Pipeline Phases</div>
     </div>
   </div>
+
+  <h2>Quick Guide</h2>
+  <table class="config-table">
+    <thead><tr><th>Page</th><th>What you can do</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><a href="/pipeline">Pipeline</a></td>
+        <td>Run individual phases, watch live logs with level filter, reset phase states, view progress charts</td>
+        <td>Buttons always run phases regardless of <code>SKIP_PHASE</code> config. Reset shows confirmation with impact details.</td>
+      </tr>
+      <tr>
+        <td><a href="/papers">Papers</a></td>
+        <td>Browse papers sorted by semantic similarity to your research domain</td>
+        <td>Only shows papers that have been processed by Phase D (Semantic Filter).</td>
+      </tr>
+      <tr>
+        <td><a href="/report">Report</a></td>
+        <td>Select papers with LLM summaries, generate Markdown reports, preview in-browser and download</td>
+        <td>Only papers with <code>llm_summary_status = success</code> appear in the list. Use checkboxes to select specific papers.</td>
+      </tr>
+      <tr>
+        <td><a href="/logs">Logs</a></td>
+        <td>View the pipeline log file (<code>data/PaperCrawler.log</code>), filter by severity level</td>
+        <td>Shows the most recent ~200 KB. New log lines arrive in real time via SSE.</td>
+      </tr>
+      <tr>
+        <td><a href="/config">Config</a></td>
+        <td>Toggle SKIP switches (persisted to <code>data/skip_overrides.json</code>), edit publishers.yaml and keywords.yaml</td>
+        <td>
+          <strong>SKIP toggles</strong> affect CLI behavior; Web UI ignores them (click Run to execute).<br>
+          <strong>YAML editors</strong> validate syntax on save and require a second confirmation.
+        </td>
+      </tr>
+    </tbody>
+  </table>
 </div>
 {% endblock %}
