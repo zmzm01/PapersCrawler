@@ -5,49 +5,81 @@
 
 <h3>Phase Switches</h3>
 <table class="config-table">
-  <thead>
-    <tr><th>Phase</th><th>Status</th></tr>
-  </thead>
+  <thead><tr><th>Phase</th><th>Default</th><th>Override</th><th>Action</th></tr></thead>
   <tbody>
-    {% for key, skipped in skip_config.items() %}
+    {% for key in ['A','B','C','D','E','E2','F','G','H'] %}
     <tr>
       <td>Phase {{ key }}</td>
-      <td>
-        <span class="badge badge-{{ 'skipped' if skipped else 'pending' }}">
-          {{ 'Skipped' if skipped else 'Enabled' }}
-        </span>
-      </td>
+      <td><span class="badge badge-{{ 'skipped' if skip_config[key] else 'pending' }}">{{ 'Skip' if skip_config[key] else 'Run' }}</span></td>
+      <td><span class="badge badge-{{ 'skipped' if skip_config[key] else 'pending' }}" id="override-{{ key }}">{{ 'Skip' if skip_config[key] else 'Run' }}</span></td>
+      <td><button class="btn btn-sm btn-secondary" onclick="toggleSkip('{{ key }}')">Toggle</button></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-
-<h3>Publishers ({{ publishers|length }})</h3>
-<table class="config-table">
-  <thead>
-    <tr><th>ID</th><th>Name</th><th>Publisher</th><th>Enabled</th></tr>
-  </thead>
-  <tbody>
-    {% for p in publishers %}
-    <tr>
-      <td>{{ p.id }}</td>
-      <td>{{ p.name }}</td>
-      <td>{{ p.publisher }}</td>
-      <td>{{ 'Yes' if p.get('enabled', True) else 'No' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-<h3>Keywords</h3>
-<p><strong>Domain description:</strong></p>
-<pre class="config-pre">{{ keywords.domain_description }}</pre>
-<p><strong>Keywords ({{ keywords.keywords|length }}):</strong></p>
-<pre class="config-pre">{{ keywords.keywords | join('\n') }}</pre>
 
 <h3>publishers.yaml</h3>
-<pre class="config-pre">{{ publishers_raw }}</pre>
+<textarea class="yaml-editor" id="publishers-editor">{{ publishers_raw }}</textarea>
+<div class="editor-actions">
+  <button class="btn btn-sm btn-primary" onclick="saveYaml('publishers')">Save</button>
+  <span id="publishers-status" class="save-status"></span>
+</div>
 
 <h3>keywords.yaml</h3>
-<pre class="config-pre">{{ keywords_raw }}</pre>
+<textarea class="yaml-editor" id="keywords-editor" rows="15">{{ keywords_raw }}</textarea>
+<div class="editor-actions">
+  <button class="btn btn-sm btn-primary" onclick="saveYaml('keywords')">Save</button>
+  <span id="keywords-status" class="save-status"></span>
+</div>
+
+<script>
+async function toggleSkip(phase) {
+  const r = await fetch('/config/skip-toggle/' + phase, { method: 'POST' });
+  const data = await r.json();
+  if (data.ok) {
+    const badge = document.getElementById('override-' + phase);
+    const skipped = data.skipped;
+    badge.textContent = skipped ? 'Skip' : 'Run';
+    badge.className = 'badge badge-' + (skipped ? 'skipped' : 'pending');
+  }
+}
+
+async function saveYaml(name) {
+  const editorId = name + '-editor';
+  const statusId = name + '-status';
+  const content = document.getElementById(editorId).value;
+  const status = document.getElementById(statusId);
+
+  // First: validate
+  const validateR = await fetch('/config/save-' + name, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content: content}),
+  });
+  const validateData = await validateR.json();
+  if (validateData.error) {
+    status.textContent = 'Error: ' + validateData.error;
+    status.className = 'save-status error';
+    return;
+  }
+
+  // Confirm
+  if (!confirm('Save changes to ' + name + '.yaml? This will overwrite the file.')) return;
+
+  // Save
+  const r = await fetch('/config/save-' + name, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content: content}),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = 'Saved to ' + data.path;
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = 'Error: ' + data.error;
+    status.className = 'save-status error';
+  }
+}
+</script>
 {% endblock %}

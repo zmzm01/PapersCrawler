@@ -12,7 +12,7 @@ from pipeline.base import logger
 from processors.paper_report_generator import generate_report
 
 
-def phase_g_report(db, report_dir):
+def phase_g_report(db, report_dir, doi_list=None):
     """Generate Markdown report from summarized papers.
 
     Parameters
@@ -20,13 +20,25 @@ def phase_g_report(db, report_dir):
     db : DatabaseClient
     report_dir : Path
         Output directory for reports.
+    doi_list : list of str, optional
+        If provided, only generate report for these DOIs.
+        If None, use all unreported papers with summaries.
     """
     if SKIP_PHASE_G:
         logger.info("Phase G: SKIP_PHASE_G=True, skipping")
         return
     logger.info("--- Phase G: Report generation ---")
 
-    papers = db.get_papers_for_report()
+    if doi_list:
+        placeholders = ",".join("?" for _ in doi_list)
+        cur = db.conn.execute(
+            f"SELECT * FROM papers WHERE llm_summary_status = 'success' AND doi IN ({placeholders})",
+            doi_list,
+        )
+        papers = cur.fetchall()
+    else:
+        papers = db.get_papers_for_report()
+
     if not papers:
         logger.info("Phase G: no new summarized papers")
         return

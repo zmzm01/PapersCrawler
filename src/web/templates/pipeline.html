@@ -3,37 +3,26 @@
 {% block content %}
 <h2>Pipeline Control</h2>
 
-<div class="pipeline-control">
+<div class="pipeline-toolbar">
   <button class="btn btn-primary" onclick="runAll()" id="run-all-btn">Run All Phases</button>
   <span id="running-status" class="running-indicator"></span>
 </div>
 
-<table class="phase-table">
+<div id="phase-charts" class="chart-grid"></div>
+
+<table class="phase-table" id="phase-table">
   <thead>
-    <tr>
-      <th>Phase</th>
-      <th>Label</th>
-      <th>Skip</th>
-      <th>Action</th>
-    </tr>
+    <tr><th>Phase</th><th>Label</th><th>Status</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {% for phase in phases %}
     <tr>
       <td><strong>{{ phase.key }}</strong></td>
       <td>{{ phase.label }}</td>
-      <td>
-        <span class="badge badge-{{ 'skipped' if phase.skipped else 'pending' }}">
-          {{ 'Skipped' if phase.skipped else 'Enabled' }}
-        </span>
-      </td>
-      <td>
-        <button
-          class="btn btn-sm btn-secondary"
-          onclick="runPhase('{{ phase.key }}')"
-          id="run-{{ phase.key }}">
-          Run
-        </button>
+      <td><span class="badge badge-pending" id="badge-{{ phase.key }}">-</span></td>
+      <td class="phase-actions">
+        <button class="btn btn-sm btn-primary" onclick="runPhase('{{ phase.key }}')" id="run-{{ phase.key }}">Run</button>
+        <button class="btn btn-sm btn-secondary" onclick="confirmReset('{{ phase.key }}')" id="reset-{{ phase.key }}">Reset</button>
       </td>
     </tr>
     {% endfor %}
@@ -41,19 +30,81 @@
 </table>
 
 <h3>Live Log</h3>
+<div class="log-controls">
+  <label>Filter:
+    <select id="log-filter" onchange="filterPipelineLog()">
+      <option value="ALL">ALL</option>
+      <option value="ERROR">ERROR</option>
+      <option value="WARNING">WARNING</option>
+      <option value="INFO">INFO</option>
+      <option value="DEBUG">DEBUG</option>
+    </select>
+  </label>
+</div>
 <pre id="log-viewer" class="log-viewer"><code>Waiting for log output...</code></pre>
 
 <script>
 const logViewer = document.getElementById('log-viewer');
+let rawLogText = logViewer.textContent;
 const evtSource = new EventSource('/pipeline/logs');
 evtSource.onmessage = function(e) {
   const data = JSON.parse(e.data);
-  logViewer.innerHTML += data.text;
-  logViewer.scrollTop = logViewer.scrollHeight;
+  rawLogText += data.text;
+  applyPipelineLogFilter();
 };
 
+function applyPipelineLogFilter() {
+  const level = document.getElementById('log-filter').value;
+  const lines = rawLogText.split('\n');
+  if (level === 'ALL') {
+    logViewer.innerHTML = lines.join('\n');
+  } else {
+    logViewer.innerHTML = lines.filter(l => l.includes('[' + level + ']')).join('\n');
+  }
+  logViewer.scrollTop = logViewer.scrollHeight;
+}
+
+function filterPipelineLog() { applyPipelineLogFilter(); }
+
+async function refreshCharts() {
+  const r = await fetch('/pipeline/status');
+  const data = await r.json();
+  const container = document.getElementById('phase-charts');
+  container.innerHTML = '';
+  for (const [key, counts] of Object.entries(data.phases)) {
+    const total = counts.success + counts.failed + counts.skipped + counts.pending || 1;
+    const pct = n => ((n / total) * 100).toFixed(1);
+    const div = document.createElement('div');
+    div.className = 'chart-row';
+    div.innerHTML = `
+      <div class="chart-label">${key}</div>
+      <div class="chart-bars">
+        <div class="chart-bar success" style="width:${pct(counts.success)}%" title="success: ${counts.success}"></div>
+        <div class="chart-bar failed" style="width:${pct(counts.failed)}%" title="failed: ${counts.failed}"></div>
+        <div class="chart-bar skipped" style="width:${pct(counts.skipped)}%" title="skipped: ${counts.skipped}"></div>
+        <div class="chart-bar pending" style="width:${pct(counts.pending)}%" title="pending: ${counts.pending}"></div>
+      </div>
+      <div class="chart-counts">
+        <span class="c-success">${counts.success}</span>
+        <span class="c-failed">${counts.failed}</span>
+        <span class="c-skipped">${counts.skipped}</span>
+        <span class="c-pending">${counts.pending}</span>
+      </div>`;
+    container.appendChild(div);
+    // Update badge
+    const badge = document.getElementById('badge-' + key);
+    if (badge) {
+      const total = counts.success + counts.failed + counts.skipped + counts.pending;
+      badge.textContent = total + ' papers';
+      badge.className = 'badge badge-pending';
+    }
+  }
+}
+refreshCharts();
+setInterval(refreshCharts, 10000);
+
 function setRunning(phase) {
-  document.getElementById('running-status').textContent = 'Running: ' + (phase || '');
+  document.getElementById('running-status').textContent = phase ? 'Running: ' + phase : '';
 }
 
 async function runPhase(phase) {
@@ -62,20 +113,8 @@ async function runPhase(phase) {
   btn.disabled = true;
   const r = await fetch('/pipeline/run/' + phase, { method: 'POST' });
   const data = await r.json();
-  if (data.error) {
-    alert(data.error);
-    setRunning('');
-    btn.disabled = false;
-  }
-  // Re-enable after a delay (poll for completion)
-  const check = setInterval(async () => {
-    const sr = await fetch('/pipeline/status');
-    const sd = await sr.json();
-    // Simple heuristic: check if running phase changed
-    btn.disabled = false;
-    setRunning('');
-    clearInterval(check);
-  }, 5000);
+  if (data.error) { alert(data.error); setRunning(''); btn.disabled = false; }
+  setTimeout(() => { btn.disabled = false; setRunning(''); }, 5000);
 }
 
 async function runAll() {
@@ -83,16 +122,25 @@ async function runAll() {
   document.getElementById('run-all-btn').disabled = true;
   const r = await fetch('/pipeline/run-all', { method: 'POST' });
   const data = await r.json();
-  if (data.error) {
-    alert(data.error);
-    setRunning('');
-    document.getElementById('run-all-btn').disabled = false;
+  if (data.error) { alert(data.error); setRunning(''); document.getElementById('run-all-btn').disabled = false; }
+  setTimeout(() => { document.getElementById('run-all-btn').disabled = false; setRunning(''); }, 10000);
+}
+
+async function confirmReset(phase) {
+  const r = await fetch('/pipeline/reset/' + phase, { method: 'POST' });
+  const data = await r.json();
+  if (data.error) { alert(data.error); return; }
+  let msg = 'Phase ' + phase + ' will be reset.\n\nAffected columns:\n';
+  for (const [col, count] of Object.entries(data.impact)) {
+    if (count > 0) msg += '  - ' + col + ': ' + count + ' papers\n';
   }
-  const check = setInterval(async () => {
-    document.getElementById('run-all-btn').disabled = false;
-    setRunning('');
-    clearInterval(check);
-  }, 10000);
+  msg += '\nConfirm reset?';
+  if (confirm(msg)) {
+    // Re-execute the reset
+    const r2 = await fetch('/pipeline/reset/' + phase, { method: 'POST' });
+    const d2 = await r2.json();
+    if (d2.ok) { alert('Reset complete.'); refreshCharts(); }
+  }
 }
 </script>
 {% endblock %}
