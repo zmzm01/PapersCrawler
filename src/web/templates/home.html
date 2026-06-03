@@ -3,71 +3,75 @@
 {% block content %}
 <div class="hero">
   <h2>PapersCrawler</h2>
-  <p class="hero-subtitle">Academic paper auto‑tracking &amp; push system</p>
+  <p class="hero-subtitle" data-i18n="home.subtitle">Academic paper auto‑tracking &amp; push system</p>
 
   <div class="hero-cards">
     <div class="hero-card">
-      <h3>Pipeline</h3>
-      <p>Control each phase independently — run, reset, watch live logs.</p>
-      <a href="/pipeline" class="btn btn-primary">Go to Pipeline &rarr;</a>
+      <h3 data-i18n="nav.pipeline">Pipeline</h3>
+      <p data-i18n="home.pipeline_desc">Control each phase independently — run, reset, watch live logs.</p>
+      <a href="/pipeline" class="btn btn-primary"><span data-i18n="home.visit">Go to</span> Pipeline &rarr;</a>
     </div>
     <div class="hero-card">
-      <h3>Papers</h3>
-      <p>Browse papers sorted by semantic similarity to your research domain.</p>
-      <a href="/papers" class="btn btn-primary">Browse Papers &rarr;</a>
+      <h3 data-i18n="nav.papers">Papers</h3>
+      <p data-i18n="home.papers_desc">Browse papers sorted by semantic similarity to your research domain.</p>
+      <a href="/papers" class="btn btn-primary"><span data-i18n="home.visit">Go to</span> Papers &rarr;</a>
     </div>
     <div class="hero-card">
-      <h3>Report</h3>
-      <p>Select papers with summaries, generate Markdown reports, preview &amp; download.</p>
-      <a href="/report" class="btn btn-primary">Generate Report &rarr;</a>
+      <h3 data-i18n="nav.report">Report</h3>
+      <p data-i18n="home.report_desc">Select papers with summaries, generate Markdown reports, preview &amp; download.</p>
+      <a href="/report" class="btn btn-primary"><span data-i18n="home.visit">Go to</span> Report &rarr;</a>
     </div>
   </div>
 
   <div class="hero-stats">
     <div class="stat-card">
       <div class="stat-value">{{ publisher_count }}</div>
-      <div class="stat-label">Publishers</div>
+      <div class="stat-label" data-i18n="home.publishers">Publishers</div>
     </div>
     <div class="stat-card">
       <div class="stat-value">{{ paper_count }}</div>
-      <div class="stat-label">Papers in DB</div>
+      <div class="stat-label" data-i18n="home.papers_count">Papers in DB</div>
     </div>
     <div class="stat-card">
       <div class="stat-value">9</div>
-      <div class="stat-label">Pipeline Phases</div>
+      <div class="stat-label" data-i18n="home.phases_count">Pipeline Phases</div>
     </div>
   </div>
 
-  <h2>Quick Guide</h2>
+  <h2 data-i18n="home.guide">Quick Guide</h2>
   <table class="config-table">
-    <thead><tr><th>Page</th><th>What you can do</th><th>Notes</th></tr></thead>
+    <thead><tr>
+      <th data-i18n="home.guide_page">Page</th>
+      <th data-i18n="home.guide_what">What you can do</th>
+      <th data-i18n="home.guide_notes">Notes</th>
+    </tr></thead>
     <tbody>
       <tr>
-        <td><a href="/pipeline">Pipeline</a></td>
-        <td>Run individual phases, watch live logs with level filter, reset phase states, view progress charts</td>
-        <td>Buttons always run phases regardless of <code>SKIP_PHASE</code> config. Reset shows confirmation with impact details.</td>
+        <td><a href="/pipeline"><span data-i18n="nav.pipeline">Pipeline</span></a></td>
+        <td data-i18n="home.pipeline_desc">Run individual phases, watch live logs with level filter, reset phase states, view progress charts</td>
+        <td data-i18n="home.pipeline_notes">Buttons always run phases regardless of <code>SKIP_PHASE</code> config. Reset shows confirmation with impact details.</td>
       </tr>
       <tr>
-        <td><a href="/papers">Papers</a></td>
-        <td>Browse papers sorted by semantic similarity to your research domain</td>
-        <td>Only shows papers that have been processed by Phase D (Semantic Filter).</td>
+        <td><a href="/papers"><span data-i18n="nav.papers">Papers</span></a></td>
+        <td data-i18n="home.papers_desc">Browse papers sorted by semantic similarity to your research domain</td>
+        <td data-i18n="home.papers_notes">Only shows papers that have been processed by Phase D (Semantic Filter).</td>
       </tr>
       <tr>
-        <td><a href="/report">Report</a></td>
-        <td>Select papers with LLM summaries, generate Markdown reports, preview in-browser and download</td>
-        <td>Only papers with <code>llm_summary_status = success</code> appear in the list. Use checkboxes to select specific papers.</td>
+        <td><a href="/report"><span data-i18n="nav.report">Report</span></a></td>
+        <td data-i18n="home.report_desc">Select papers with LLM summaries, generate Markdown reports, preview in-browser and download</td>
+        <td data-i18n="home.report_notes">Only papers with <code>llm_summary_status = success</code> appear in the list. Use checkboxes to select specific papers.</td>
       </tr>
       <tr>
-        <td><a href="/logs">Logs</a></td>
-        <td>View the pipeline log file (<code>data/PaperCrawler.log</code>), filter by severity level</td>
-        <td>Shows the most recent ~200 KB. New log lines arrive in real time via SSE.</td>
+        <td><a href="/logs"><span data-i18n="nav.logs">Logs</span></a></td>
+        <td data-i18n="home.logs_desc">View the pipeline log file (<code>data/PaperCrawler.log</code>), filter by severity level</td>
+        <td data-i18n="home.logs_notes">Shows the most recent ~200 KB. New log lines arrive in real time via SSE.</td>
       </tr>
       <tr>
-        <td><a href="/config">Config</a></td>
-        <td>Toggle SKIP switches (persisted to <code>data/skip_overrides.json</code>), edit publishers.yaml and keywords.yaml</td>
+        <td><a href="/config"><span data-i18n="nav.config">Config</span></a></td>
+        <td data-i18n="home.config_desc">Toggle SKIP switches (persisted to <code>data/skip_overrides.json</code>), edit publishers.yaml and keywords.yaml</td>
         <td>
-          <strong>SKIP toggles</strong> affect CLI behavior; Web UI ignores them (click Run to execute).<br>
-          <strong>YAML editors</strong> validate syntax on save and require a second confirmation.
+          <span data-i18n="home.config_notes_skip"><strong>SKIP toggles</strong> affect CLI behavior; Web UI ignores them (click Run to execute).</span><br>
+          <span data-i18n="home.config_notes_yaml"><strong>YAML editors</strong> validate syntax on save and require a second confirmation.</span>
         </td>
       </tr>
     </tbody>
