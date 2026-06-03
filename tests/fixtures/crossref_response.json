@@ -1,0 +1,19 @@
+{
+  "DOI": "10.1364/oe.582177",
+  "title": "Wave–particle duality of unpolarized photons",
+  "author": [
+    {
+      "name": "Naofumi Abe",
+      "orcid": "https://orcid.org/0009-0009-7458-1622"
+    },
+    {
+      "name": "Keiichi Edamatsu",
+      "orcid": "https://orcid.org/0000-0002-2941-7956"
+    }
+  ],
+  "published": "2026-05-14",
+  "abstract": "Photons in a two-path interferometer best embody wave–particle duality (WPD), which is a core concept of quantum theory. So far, the WPD relation is commonly written as V 2 + D 2 ≤ 1, where V is the interference fringe visibility, and D is path distinguishability, i.e., the distinguishability of which path a photon passed. This inequality is saturated only when the which-way marker (WWM), which embodies which-path information (WPI) via an internal degree of freedom of photons, such as polarization, is in a pure state. For mixed-state WWM, conventionally defined distinguishability underestimates the amount of WPI and thus does not saturate the WPD relation. Here, we introduce a generalized measure of distinguishability D that properly quantifies the WPI and saturates the WPD relation for all pure- and mixed-state WWM within a purification-based framework. To this end, mixed-state WWM is treated as a result of entanglement formation between the WWM and an external degree of freedom, e.g., environment, and D is defined so that it incorporates the total WPI shared between the WWM and the environment. We show that D thus defined is experimentally quantifiable, independently of V , without access to the environment. We experimentally evaluate V and D using true single photons generated in the completely mixed (unpolarized) state, and thus verify the saturated WPD relation.",
+  "journal": "Optics Express",
+  "publisher": "Optica Publishing Group",
+  "URL": "https://doi.org/10.1364/oe.582177"
+}

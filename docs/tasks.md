@@ -452,15 +452,20 @@ python src/main.py
 - `mark_papers_reported()` 保持不变，仍同时写入 `report_status` 和 `report_date`
 - `report_status` 保留为辅助标记，不影响报告汇入逻辑
 
-### `reset-report` 新增 `--days` 参数
+### `reset-report` 新增 `--today` 和 `--days` 参数
 
 ```bash
-python tools/reset_pipeline.py reset-report --days 1
+# 重置今天（当前自然日）被报告的论文（无滑动窗口歧义）
+python tools/reset_pipeline.py reset-report --today
+
+# 重置最近 N 个自然日被报告的论文
+python tools/reset_pipeline.py reset-report --days 3
 ```
 
-- `--days 1`：仅重置最近 1 天（今天）被报告的论文，设置 `report_date = NULL`
-- 不传 `--days` 时保持原有行为（重置全部已报告论文）
-- 按日期范围重置的查询条件：`report_date >= datetime('now', '-N days', 'localtime')`
+- `--today`：仅重置今天（当前自然日）被报告的论文，查询条件：`date(report_date) = date('now', 'localtime')`
+- `--days N`：按日历日重置最近 N 天的报告，查询条件：`date(report_date) >= date('now', '-N days', 'localtime')`
+- `--today` 与 `--days` 互斥，同时指定时 `--today` 优先
+- 不传 `--today` / `--days` 时保持原有行为（重置全部已报告论文）
 
 ### 同一天重试工作流
 
@@ -469,7 +474,7 @@ python tools/reset_pipeline.py reset-report --days 1
 python src/main.py
 
 # 修复问题后，重置今天被报告的论文
-python tools/reset_pipeline.py reset-report --days 1
+python tools/reset_pipeline.py reset-report --today
 
 # 重新运行 Phase F→G，生成合并后的完整今日报告
 python src/main.py
@@ -504,4 +509,15 @@ use_tls: true    →   false
 ### 测试适配 — `tests/test_email.py`
 
 TLS 模式 mock 断言增加 `mock_instance.ehlo.assert_called_once()`，验证 STARTTLS 后正确调用 EHLO。
+
+# 2026-06-03 — CF 检测移至 parse_page 之前
+
+**问题**：`phase_c.py` 中 CF 检测在 `parse_page()` 之后执行。当 Cloudflare 拦截 Nature 页面时，
+`parse_page()` 找不到 `dc.type` meta 标签，抛出 "No dc.type in Nature page, maybe the page structure has changed"，
+掩盖了真正的 CF 拦截问题。
+
+**变更**（`pipeline/phase_c.py`）：
+- CF 检测移至 `fetch_page()` 和 `parse_page()` 之间
+- CF 拦截时显示 "Cloudflare detected (attempt X/3)" 并走重试逻辑
+- 只有非 CF 页面才进入 `parse_page()`，避免误报页面结构变化
 
