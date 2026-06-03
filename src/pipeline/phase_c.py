@@ -102,7 +102,6 @@ def phase_c_publisher(db):
                             logger.debug(f"Cooling {cooloff:.0f}s before retry 3 [{paperDOI}]")
                             time.sleep(cooloff)
                         scraper.fetch_page(page_url, timeout=timeout)
-                        paperPage = scraper.parse_page()
 
                         cf_blocked = (
                             "challenge-platform" in scraper.html
@@ -116,6 +115,9 @@ def phase_c_publisher(db):
                             raise PageParseError(
                                 "Title, DOI and Abstract all empty (possible CF block)"
                             )
+
+                        paperPage = scraper.parse_page()
+
                         if not paperPage.title and not paperPage.doi and not paperPage.abstract:
                             if attempt < 2:
                                 continue
