@@ -11,14 +11,15 @@
     <nav class="sidebar">
       <div class="sidebar-header">
         <h1>PapersCrawler</h1>
+        <button id="lang-toggle" class="lang-toggle" onclick="switchLanguage(currentLang === 'zh' ? 'en' : 'zh')">EN</button>
       </div>
       <ul class="sidebar-nav">
-        <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Home</a></li>
-        <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}">Pipeline</a></li>
-        <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}">Papers</a></li>
-        <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}">Report</a></li>
-        <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}">Logs</a></li>
-        <li><a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}">Config</a></li>
+        <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><span data-i18n="nav.home">Home</span></a></li>
+        <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}"><span data-i18n="nav.pipeline">Pipeline</span></a></li>
+        <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><span data-i18n="nav.papers">Papers</span></a></li>
+        <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><span data-i18n="nav.report">Report</span></a></li>
+        <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}"><span data-i18n="nav.logs">Logs</span></a></li>
+        <li><a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}"><span data-i18n="nav.config">Config</span></a></li>
       </ul>
     </nav>
     <main class="content">
