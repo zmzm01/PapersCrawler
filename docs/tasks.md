@@ -510,6 +510,50 @@ use_tls: true    →   false
 
 TLS 模式 mock 断言增加 `mock_instance.ehlo.assert_called_once()`，验证 STARTTLS 后正确调用 EHLO。
 
+# 2026-06-03 — Web UI 完善：可编辑 Config、Reset、Papers 页、报告勾选 + 预览
+
+**背景**：用户反馈多个 UI 改进需求：
+1. Config 页应为可编辑（SKIP 开关切换 + YAML 编辑器 + 二次确认）
+2. Logs 页 Filter 有 bug（innerHTML 分割导致过滤后日志消失）
+3. Report 应有论文勾选 + 预览 + 下载（而非简单的 publisher 下拉）
+4. Pipeline 页需状态图表和 Reset 按钮
+5. Dashboard 改为 Home 介绍页，新增 Papers 页面
+6. Log filter bug 修复：改用 textContent 而非 innerHTML
+7. Reset 时 E2/F/G 不应受 E 级联影响
+
+**变更**：
+
+### `src/web/app.py` — 新增 8 个端点
+| 端点 | 功能 |
+|------|------|
+| `GET /` | Home 介绍页 |
+| `GET /papers` | 按语义相似度排序的论文列表 |
+| `POST /pipeline/reset/{phase}` | 批量重置阶段状态 + 返回影响统计 |
+| `POST /config/skip-toggle/{phase}` | 切换 SKIP 覆盖（写入 data/skip_overrides.json）|
+| `POST /config/save-publishers` | 语法校验 + 保存 publishers.yaml |
+| `POST /config/save-keywords` | 语法校验 + 保存 keywords.yaml |
+| `POST /report/generate` | 接受 DOI 列表，只生成选中论文的报告，返回预览 |
+| `GET /report/download/{filename}` | 报告文件下载 |
+
+### 前端 — 7 个模板重写
+- `home.html` — 项目介绍 + 快速入口卡片 + 统计数字
+- `pipeline.html` — CSS 柱状图、Reset 按钮（带确认对话框）、Live Log 级别过滤
+- `papers.html` — 语义相似度排序列表（含可视化分数条）
+- `report.html` — 论文勾选表格（Publisher 筛选、全选/取消）、生成后预览 + 下载链接
+- `logs.html` — 修复 filter bug，改用 `textContent` + 原始文本分离
+- `config.html` — 可点击 SKIP 开关、YAML 文本编辑器（语法校验 + 二次确认保存）
+- `base.html` — 侧边栏更新为 Home/Pipeline/Papers/Report/Logs/Config
+
+### 后端基础设施
+- `src/db/database.py` — 新增 `get_papers_with_summaries()`、`get_papers_sorted_by_semantic()`、`count_reset_impact()`、`batch_reset_status()`
+- `src/pipeline/runner.py` — `run_phases()` 读取 `data/skip_overrides.json` 叠加到 SKIP 配置
+- `src/pipeline/phase_g.py` — 新增可选 `doi_list` 参数，支持只生成选中论文的报告
+
+### 级联逻辑修正
+- E 重置不再级联 E2/F/G（重新判定相关性不影响已有 PDF 全文和总结）
+- E2 重置级联 F/G（重新解析 PDF 后旧总结可能失效）
+- F 重置级联 G（重新总结后报告应更新）
+
 # 2026-06-03 — CF 检测移至 parse_page 之前
 
 **问题**：`phase_c.py` 中 CF 检测在 `parse_page()` 之后执行。当 Cloudflare 拦截 Nature 页面时，

@@ -4,8 +4,7 @@
 <h2>Pipeline Logs</h2>
 
 <div class="log-controls">
-  <label>
-    Filter:
+  <label>Filter:
     <select id="log-filter" onchange="filterLogs()">
       <option value="ALL">ALL</option>
       <option value="ERROR">ERROR</option>
@@ -14,33 +13,30 @@
       <option value="DEBUG">DEBUG</option>
     </select>
   </label>
-  <button class="btn btn-sm btn-secondary" onclick="clearFilter()">Clear Filter</button>
 </div>
 
 <pre id="log-viewer" class="log-viewer"><code>{{ log_content }}</code></pre>
 
 <script>
 const logViewer = document.getElementById('log-viewer');
+let rawLogText = logViewer.textContent;
+
 const evtSource = new EventSource('/pipeline/logs');
 evtSource.onmessage = function(e) {
   const data = JSON.parse(e.data);
-  logViewer.innerHTML += data.text;
-  logViewer.scrollTop = logViewer.scrollHeight;
+  rawLogText += data.text;
+  filterLogs();
 };
 
 function filterLogs() {
   const level = document.getElementById('log-filter').value;
-  const lines = logViewer.innerHTML.split('\n');
-  const filtered = lines.filter(line => {
-    if (level === 'ALL') return true;
-    return line.includes('[' + level + ']');
-  });
-  logViewer.innerHTML = filtered.join('\n');
-}
-
-function clearFilter() {
-  document.getElementById('log-filter').value = 'ALL';
-  filterLogs();
+  const lines = rawLogText.split('\n');
+  if (level === 'ALL') {
+    logViewer.innerHTML = lines.join('\n');
+  } else {
+    logViewer.innerHTML = lines.filter(l => l.includes('[' + level + ']')).join('\n');
+  }
+  logViewer.scrollTop = logViewer.scrollHeight;
 }
 </script>
 {% endblock %}

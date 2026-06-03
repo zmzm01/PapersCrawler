@@ -312,11 +312,12 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| Dashboard | `GET /` | 各阶段论文数量统计（成功/失败/跳过/待处理） |
-| Pipeline | `GET /pipeline` | 9 个阶段的 Run 按钮 + SSE 实时日志流 + 子进程执行 |
-| Report | `GET /report` | 选择出版社 → 生成 Markdown 报告 |
-| Logs | `GET /logs` | 日志查看，支持按级别过滤 |
-| Config | `GET /config` | 只读展示 publishers.yaml / keywords.yaml / SKIP 配置 |
+| Home | `GET /` | 项目介绍、论文/出版社统计、快速入口 |
+| Pipeline | `GET /pipeline` | 9 阶段 Run/Reset 按钮 + 状态图表（CSS 柱状图）+ SSE 实时日志（支持级别过滤）+ 子进程执行 |
+| Papers | `GET /papers` | 按语义相似度降序排列的论文列表（Top 100） |
+| Report | `GET /report` | 勾选有 LLM 总结的论文 → 生成 Markdown 报告 → 浏览器预览 + 下载 |
+| Logs | `GET /logs` | 日志查看（支持级别过滤，修复 innerHTML bug） |
+| Config | `GET /config` | 可编辑 SKIP 开关（点击切换，持久化到 data/skip_overrides.json）+ YAML 编辑器（语法校验 + 二次确认） |
 
 ## 任务执行模型
 
@@ -324,6 +325,18 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key
 - `force=True` 使得 **Web UI 不受 `SKIP_PHASE_*` 配置约束**——UI 按钮自行决定执行哪个阶段
 - `_phase_lock`（asyncio.Lock）确保同一时间只有一个阶段在运行
 - 前端通过 SSE (`GET /pipeline/logs`) 接收实时日志推送
+
+## Reset 级联逻辑
+
+| 阶段 | 重置列 | 级联 | 条件 |
+|------|--------|------|------|
+| B | cr_metadata_fetched | — | 所有非 pending |
+| C | publisher_page_fetched | — | 非 pending 且非 NonResearchPageError |
+| D | semantic_filter + llm_relevance | — | 所有非 pending |
+| E | llm_relevance | — | 所有非 pending |
+| E2 | mineru_parse + llm_summary + report | llm_summary, report | 所有非 pending |
+| F | llm_summary + report | report | 所有非 pending |
+| G | report_status + report_date | — | reported |
 
 ## 启动方式
 
@@ -345,7 +358,16 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 
 **适用范围：仅限 CLI（`python src/main.py`）。** CLI 默认只跑未跳过的阶段。
 
-**Web UI 不受 `SKIP_PHASE_*` 影响。** UI 按钮通过 `run_phases(force=True)` 调用阶段，无论 SKIP 配置如何都能执行。这样设计是因为 UI 本身就已经提供了"跳过"的手段（不点击按钮即可），不需要配置层再做一层过滤。
+**Web UI Config 页面可覆盖 SKIP 配置。** 点击 Phase 旁的 Toggle 按钮，将写入 `data/skip_overrides.json`，`runner.py` 启动时读取此文件叠加到 config.py 默认值之上。CLI 同样受此覆盖影响。
+
+**Web UI Pipeline 页面使用 `force=True`**，完全不受 `SKIP_PHASE_*` 影响。UI 按钮自行决定执行哪个阶段。
+
+## 配置覆盖文件
+
+`data/skip_overrides.json` 存储通过 Web UI Config 页面设置的 SKIP 覆盖：
+- 格式：`{"A": true, "B": false, ...}`（true = 跳过，false = 运行）
+- 缺失的 key 回退到 `config.py` 默认值
+- CLI 和 Web UI 均读取此文件（Web UI 的 Pipeline 页面由于 `force=True` 不受影响）
 
 配套 `MAX_PAPERS_PER_PHASE` 控制每阶段处理上限（0 = 不限制），该限制对 CLI 和 Web UI 均生效。
 

@@ -1,32 +1,22 @@
 // PapersCrawler Web UI JavaScript
 
-// Auto-refresh dashboard stats every 10 seconds
-document.addEventListener('DOMContentLoaded', function() {
-  const labels = document.querySelectorAll('[data-auto-refresh]');
-  if (labels.length) {
-    setInterval(() => {
-      labels.forEach(el => {
-        const url = el.dataset.url || '/pipeline/status';
-        fetch(url).then(r => r.json()).then(data => {
-          // Update elements as needed
-        }).catch(() => {});
-      });
-    }, 10000);
-  }
-});
+// Modal helpers
+let modalCallback = null;
 
-// SSE log streaming helper
-function connectLogStream(containerId) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  const evtSource = new EventSource('/pipeline/logs');
-  evtSource.onmessage = function(e) {
-    const data = JSON.parse(e.data);
-    container.innerHTML += data.text;
-    container.scrollTop = container.scrollHeight;
-  };
-  evtSource.onerror = function() {
-    // Reconnect after 3s
-    setTimeout(() => connectLogStream(containerId), 3000);
-  };
+function showModal(title, bodyHTML, confirmText, callback) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = bodyHTML;
+  document.getElementById('modal-confirm').textContent = confirmText || 'Confirm';
+  document.getElementById('modal-overlay').style.display = 'flex';
+  modalCallback = callback;
 }
+
+function closeModal() {
+  document.getElementById('modal-overlay').style.display = 'none';
+  modalCallback = null;
+}
+
+document.getElementById('modal-confirm').addEventListener('click', function() {
+  if (modalCallback) modalCallback();
+  closeModal();
+});

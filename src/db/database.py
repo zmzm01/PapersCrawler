@@ -729,6 +729,88 @@ class DatabaseClient:
             )
         self.conn.commit()
 
+    def get_papers_with_summaries(self):
+        """
+        获取所有有 LLM 总结的论文（含总结日期）。
+
+        用于 Web UI 报告页面展示可选论文列表。
+
+        Returns:
+            list[sqlite3.Row]
+        """
+        cur = self.conn.execute("""
+        SELECT doi, title, abstract, journal, publisher,
+               paperdate_rss, llm_summary_date,
+               llm_summary_result, authors_json,
+               page_url, pdf_url
+        FROM papers
+        WHERE llm_summary_status = 'success'
+        ORDER BY paperdate_rss DESC
+        """)
+        return cur.fetchall()
+
+    def get_papers_sorted_by_semantic(self, limit=50):
+        """
+        按语义相似度得分降序返回论文。
+
+        用于 Web UI Papers 页面展示。
+
+        Args:
+            limit: 返回最大行数
+
+        Returns:
+            list[sqlite3.Row]
+        """
+        cur = self.conn.execute("""
+        SELECT doi, title, abstract, journal, publisher,
+               paperdate_rss, semantic_similarity_score,
+               llm_relevance_result, llm_relevance_status
+        FROM papers
+        WHERE semantic_similarity_score IS NOT NULL
+        ORDER BY semantic_similarity_score DESC
+        LIMIT ?
+        """, (limit,))
+        return cur.fetchall()
+
+    def count_reset_impact(self, columns_where):
+        """
+        统计重置操作将影响哪些列及各自的行数。
+
+        columns_where 格式: [(col1, cond1), (col2, cond2), ...]
+        其中 cond 是 SQL WHERE 子句片段（不含 WHERE 关键字），
+        或 None 表示该列全部重置。
+
+        Returns:
+            dict[str, int]: {列名: 影响行数}
+        """
+        result = {}
+        for col, cond in columns_where:
+            sql = f"SELECT COUNT(*) FROM papers WHERE {cond}" if cond else f"SELECT COUNT(*) FROM papers"
+            cur = self.conn.execute(sql)
+            result[col] = cur.fetchone()[0]
+        return result
+
+    def batch_reset_status(self, updates, conditions):
+        """
+        批量重置指定列的状态。
+
+        Args:
+            updates: [(列名, 新值), ...] 如 [("llm_relevance_status", "pending")]
+            conditions: SQL WHERE 子句片段（不含 WHERE），如 "doi IN (?,?,?)"
+                        或 None 表示全部
+
+        Returns:
+            int: 受影响行数
+        """
+        set_clause = ", ".join(f"{col} = ?" for col, _ in updates)
+        values = [val for _, val in updates]
+        sql = f"UPDATE papers SET {set_clause}"
+        if conditions:
+            sql += f" WHERE {conditions}"
+        cur = self.conn.execute(sql, values)
+        self.conn.commit()
+        return cur.rowcount
+
     def get_all_papers(self):
         """
         获取数据库中所有论文记录。
