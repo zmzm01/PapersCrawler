@@ -33,6 +33,7 @@
 | **调试工具** | 新增 `tools/debug_publisher_urls.py`  Publisher URL 诊断脚本 | 06-01 |
 | **异常重命名** | `NaturePageNotPaper` → `NonResearchPageError`；修复 reset-publisher 误重试非论文页面 | 06-01 |
 | **报告日期过滤** | `get_papers_for_report()` 改用 `report_date IS NULL` 替代 `report_status = 'pending'`；`reset-report` 新增 `--days` 参数支持按日期范围重置 | 06-03 |
+| **SMTP 加固** | `email_sender.py`: 连接移入 try/except + 1 次重试 + STARTTLS 后 ehlo() + quit 保护网易邮箱 SSL 端口配置修正 | 06-03 |
 
 # 2026-05-23 — Pipeline 全面修复与增强
 
@@ -473,4 +474,34 @@ python tools/reset_pipeline.py reset-report --days 1
 # 重新运行 Phase F→G，生成合并后的完整今日报告
 python src/main.py
 ```
+
+# 2026-06-03 — SMTP 连接加固与网易邮箱 SSL 端口修正
+
+**动机**：运行实时 SMTP 测试时 `SMTPServerDisconnected: Connection unexpectedly closed` 崩溃。两个根因叠加：
+1. **配置错误**：网易邮箱 163.com 实际使用 SSL 465 端口，但 `configs/email.yaml` 配置为 TLS 587
+2. **代码脆弱**：SMTP 连接代码在 `try` 块之外，连接异常直接穿透到调用方
+
+**解决**：
+
+### 配置修正 — `configs/email.yaml`
+
+```
+smtp_port: 587   →   465
+use_tls: true    →   false
+```
+
+`use_tls=false` 时 `EmailSender` 使用 `smtplib.SMTP_SSL` 直连加密端口，不再走 STARTTLS 路径。
+
+### 代码加固 — `src/processors/email_sender.py`
+
+| # | 问题 | 现状 | 修复 |
+|---|------|------|------|
+| ① | 连接代码在 try 外 | `smtplib.SMTP(...)` 在 try 块之前，异常不捕获 | 整个连接 + 登录 + 发送并入单一 `try/except/finally` |
+| ② | 缺少 ehlo() | STARTTLS 后未重新 EHLO（RFC 3207 要求），部分国内 SMTP 服务器握手异常 | `starttls()` 后加 `server.ehlo()` 显式重协商 |
+| ③ | 无重试 | 瞬态 SMTP 失败直接崩溃 | 加 1 次重试（共 2 次），间隔 2s |
+| ④ | finally 中的 server 未保护 | `server.quit()` 假设 server 已绑定 | `if server is not None: server.quit()` 加 try/except |
+
+### 测试适配 — `tests/test_email.py`
+
+TLS 模式 mock 断言增加 `mock_instance.ehlo.assert_called_once()`，验证 STARTTLS 后正确调用 EHLO。
 
