@@ -176,8 +176,9 @@ SKIP_PHASE_G = False
 SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 
 # LLM 公式修复开关（实验性功能，默认关闭）
-# 使用 LLM 对总结 JSON 做二次公式包裹修正，代价是每篇多一次 flash API 调用。
-# True = 跳过，False = 启用（需评估 prompt 效果后再开启）
+# 对 json.loads 后的纯文本字段做二次公式包裹修正。
+# 先通过 needs_fix() regex 检测，仅命中时调 flash API（纯文本进/纯文本出）。
+# True = 跳过，False = 启用
 SKIP_FORMULA_FIX = True
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
