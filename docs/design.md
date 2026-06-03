@@ -206,6 +206,9 @@ Phase H: 邮件推送
 - `llm_summary_result` (JSON 字符串)
 
 **报告状态** (Phase G) — 两列：`report_status` / `report_date`
+- `report_date` 是主要过滤条件：`get_papers_for_report()` 使用 `report_date IS NULL` 查询未报告论文
+- `report_status` 保留为辅助标记，`mark_papers_reported()` 同时写入两者
+- 支持 `reset-report --days N` 按日期范围重置，方便同一天重试
 
 **时间戳** (全局)
 - `created_date`, `updated_date`
@@ -317,7 +320,8 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key
 
 ## 任务执行模型
 
-- 点击 Run → `POST /pipeline/run/{phase}` → FastAPI 后台线程启动子进程 → 子进程调用 `pipeline.runner.run_phases()` → 写日志到同一文件
+- 点击 Run → `POST /pipeline/run/{phase}` → FastAPI 后台线程启动子进程 → 子进程调用 `pipeline.runner.run_phases(force=True)` → 写日志到同一文件
+- `force=True` 使得 **Web UI 不受 `SKIP_PHASE_*` 配置约束**——UI 按钮自行决定执行哪个阶段
 - `_phase_lock`（asyncio.Lock）确保同一时间只有一个阶段在运行
 - 前端通过 SSE (`GET /pipeline/logs`) 接收实时日志推送
 
@@ -336,18 +340,14 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 所有 9 个阶段可通过 `src/config.py` 中的 `SKIP_PHASE_A` ~ `SKIP_PHASE_H` 独立开关：
 
 ```python
-SKIP_PHASE_A = True   # RSS 抓取
-SKIP_PHASE_B = True   # CrossRef 元数据
-SKIP_PHASE_C = True   # Publisher 页面
-SKIP_PHASE_D = True   # 语义相似度
-SKIP_PHASE_E = True   # LLM 相关性
-SKIP_PHASE_E2 = True  # MinerU PDF 解析
-SKIP_PHASE_F = False  # LLM 总结
-SKIP_PHASE_G = False  # 报告生成
-SKIP_PHASE_H = True   # 邮件推送
+...
 ```
 
-默认配置仅运行 Phase F + G（调试/开发模式），全量运行时全部设为 `False`。配套 `MAX_PAPERS_PER_PHASE` 控制每阶段处理上限（0 = 不限制）。
+**适用范围：仅限 CLI（`python src/main.py`）。** CLI 默认只跑未跳过的阶段。
+
+**Web UI 不受 `SKIP_PHASE_*` 影响。** UI 按钮通过 `run_phases(force=True)` 调用阶段，无论 SKIP 配置如何都能执行。这样设计是因为 UI 本身就已经提供了"跳过"的手段（不点击按钮即可），不需要配置层再做一层过滤。
+
+配套 `MAX_PAPERS_PER_PHASE` 控制每阶段处理上限（0 = 不限制），该限制对 CLI 和 Web UI 均生效。
 
 # 错误处理与韧性策略
 

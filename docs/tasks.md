@@ -32,6 +32,7 @@
 | **PDF 转换** | 新增 `tools/convert_md_to_pdf.py` 手动转换脚本 | 06-01 |
 | **调试工具** | 新增 `tools/debug_publisher_urls.py`  Publisher URL 诊断脚本 | 06-01 |
 | **异常重命名** | `NaturePageNotPaper` → `NonResearchPageError`；修复 reset-publisher 误重试非论文页面 | 06-01 |
+| **报告日期过滤** | `get_papers_for_report()` 改用 `report_date IS NULL` 替代 `report_status = 'pending'`；`reset-report` 新增 `--days` 参数支持按日期范围重置 | 06-03 |
 
 # 2026-05-23 — Pipeline 全面修复与增强
 
@@ -437,4 +438,39 @@ python src/main.py
    - 新增「6. 非论文页面检测（NonResearchPageError）」节
    - 详述两级检测策略（Scraper 元数据 + 关键词兜底）
    - 非论文页 / 合法空摘要 / 全空页 三种情况的对比表
+
+# 2026-06-03 — Report 日期过滤与按日期重置
+
+**动机**：原有 `report_status` 是二进制状态（`pending` → `reported`），一旦标记就永久排除。同一天需要重试时，已报告论文锁定在旧报告中，重试成功的论文生成新报告，导致报告碎片化。
+
+**解决**：`get_papers_for_report()` 改用 `report_date` 作为主要过滤条件，`reset-report` 新增 `--days` 参数支持按日期范围重置。
+
+### Phase G — `get_papers_for_report()` 查询条件变更
+
+- `report_status = 'pending'` → `report_date IS NULL`
+- `mark_papers_reported()` 保持不变，仍同时写入 `report_status` 和 `report_date`
+- `report_status` 保留为辅助标记，不影响报告汇入逻辑
+
+### `reset-report` 新增 `--days` 参数
+
+```bash
+python tools/reset_pipeline.py reset-report --days 1
+```
+
+- `--days 1`：仅重置最近 1 天（今天）被报告的论文，设置 `report_date = NULL`
+- 不传 `--days` 时保持原有行为（重置全部已报告论文）
+- 按日期范围重置的查询条件：`report_date >= datetime('now', '-N days', 'localtime')`
+
+### 同一天重试工作流
+
+```bash
+# 第 1 次运行，部分论文成功报告
+python src/main.py
+
+# 修复问题后，重置今天被报告的论文
+python tools/reset_pipeline.py reset-report --days 1
+
+# 重新运行 Phase F→G，生成合并后的完整今日报告
+python src/main.py
+```
 

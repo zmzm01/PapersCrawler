@@ -146,7 +146,7 @@ async def run_phase(phase: str):
                 [sys.executable, "-c",
                  f"import sys; sys.path.insert(0, '{src_dir}'); "
                  f"from pipeline.runner import run_phases; "
-                 f"run_phases({[phase]!r})"],
+                 f"run_phases({[phase]!r}, force=True)"],
                 cwd=project_root,
                 capture_output=True,
                 timeout=3600,
@@ -178,7 +178,10 @@ async def run_all():
         global _running_phase
         try:
             subprocess.run(
-                [sys.executable, str(src_dir / "main.py")],
+                [sys.executable, "-c",
+                 f"import sys; sys.path.insert(0, '{src_dir}'); "
+                 f"from pipeline.runner import run_pipeline; "
+                 f"run_pipeline(force=True)"],
                 cwd=project_root,
                 capture_output=True,
                 timeout=14400,

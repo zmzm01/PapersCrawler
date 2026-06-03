@@ -24,7 +24,7 @@ from pipeline.phase_g import phase_g_report
 from pipeline.phase_h import phase_h_email
 
 
-def run_phases(phase_list=None):
+def run_phases(phase_list=None, force=False):
     """Run selected phases of the pipeline.
 
     Parameters
@@ -32,6 +32,9 @@ def run_phases(phase_list=None):
     phase_list : list of str, optional
         Phase names to run (e.g. ["A", "C", "F"]).
         If None, runs all non-skipped phases.
+    force : bool, optional
+        If True, ignore SKIP_PHASE_* config and run requested phases.
+        Used by Web UI where buttons control execution explicitly.
     """
     publishers = load_publishers()
     keywords = load_keywords()
@@ -58,11 +61,14 @@ def run_phases(phase_list=None):
     }
 
     if phase_list is None:
-        phase_list = [k for k, (_, _, enabled) in phase_map.items() if enabled]
+        if force:
+            phase_list = list(phase_map.keys())
+        else:
+            phase_list = [k for k, (_, _, enabled) in phase_map.items() if enabled]
 
     for key in phase_list:
         func, args, enabled = phase_map[key]
-        if not enabled:
+        if not force and not enabled:
             logger.info(f"Phase {key}: SKIP_PHASE_{key}=True, skipping")
             continue
         func(*args)
@@ -70,9 +76,15 @@ def run_phases(phase_list=None):
     logger.info("Pipeline finished")
 
 
-def run_pipeline():
-    """Run the full pipeline (equivalent to old main())."""
-    run_phases()
+def run_pipeline(force=False):
+    """Run the full pipeline (equivalent to old main()).
+
+    Parameters
+    ----------
+    force : bool, optional
+        If True, run ALL phases regardless of SKIP_PHASE_* config.
+    """
+    run_phases(force=force)
 
 
 if __name__ == "__main__":
