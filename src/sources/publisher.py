@@ -133,8 +133,14 @@ class BasePublisherScraper:
             PageParseError: 如果提供了 html_path 但文件不存在。
         """
         if url:
-            self.page.goto(url, wait_until="domcontentloaded", timeout=120000)
-            # 等待 5s，给 Cloudflare Challenge 足够时间自动通过
+            try:
+                self.page.goto(url, wait_until="domcontentloaded", timeout=120000)
+            except Exception:
+                # Navigation may be interrupted by fast 302 redirect (e.g. APS
+                # link.aps.org → journals.aps.org).  Retry with final URL.
+                self.page.wait_for_timeout(3000)
+                self.page.goto(self.page.url, wait_until="domcontentloaded", timeout=120000)
+            # 等待 timeout ms，给 Cloudflare Challenge 足够时间自动通过
             self.page.wait_for_timeout(timeout)
             self.html = self.page.content()
         elif html_path:

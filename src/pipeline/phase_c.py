@@ -17,6 +17,9 @@ from db.database import DatabaseClient, FetchStatus
 from pipeline.base import logger, create_scraper
 from sources.publisher import NonResearchPageError, PageParseError
 
+# Keywords to detect non-research articles (Erratum, etc.)
+_NON_RESEARCH_KEYWORDS = ["erratum", "comment on", "response to", "publisher's note"]
+
 
 def phase_c_publisher(db):
     """Scrape publisher pages for abstracts and PDF links.
@@ -107,16 +110,25 @@ def phase_c_publisher(db):
                             or "cf-browser-verification" in scraper.html
                         )
                         if cf_blocked:
-                            logger.warning(f"Cloudflare detected [{paperDOI}]")
-                            if attempt == 0:
+                            logger.warning(f"Cloudflare detected (attempt {attempt+1}/3) [{paperDOI}]")
+                            if attempt < 2:
                                 continue
                             raise PageParseError(
                                 "Title, DOI and Abstract all empty (possible CF block)"
                             )
                         if not paperPage.title and not paperPage.doi and not paperPage.abstract:
-                            if attempt == 0:
+                            if attempt < 2:
                                 continue
                             raise PageParseError("Title, DOI and Abstract all empty")
+
+                        title_lower = (paperPage.title or "").lower()
+                        abstract_text = (paperPage.abstract or "").strip()
+                        if not abstract_text and any(
+                            kw in title_lower for kw in _NON_RESEARCH_KEYWORDS
+                        ):
+                            raise NonResearchPageError(
+                                f"Non-research page (keyword: {paperPage.title})"
+                            )
 
                         consecutive_failures = 0
                         authors_json = (
@@ -130,6 +142,7 @@ def phase_c_publisher(db):
                             FetchStatus.SUCCESS.value, timestamp,
                         )
                         paper_succeeded = True
+                        logger.info(f"Publisher page OK: {paperDOI}")
                         break
 
                     except NonResearchPageError:
@@ -142,7 +155,18 @@ def phase_c_publisher(db):
                             "NonResearchPageError: not a research article",
                             "publisher_page_fetched_date", timestamp,
                         )
+                        db.update_process_status(
+                            paperDOI, "semantic_filter_status",
+                            FetchStatus.SKIPPED.value,
+                            "semantic_filter_date", timestamp,
+                        )
+                        db.update_process_status(
+                            paperDOI, "llm_relevance_status",
+                            FetchStatus.SKIPPED.value,
+                            "llm_relevance_date", timestamp,
+                        )
                         paper_skipped = True
+                        logger.info(f"Non-research page, downstream phases cascaded: {paperDOI}")
                         break
 
                     except Exception as e:
@@ -154,9 +178,9 @@ def phase_c_publisher(db):
                 if not paper_succeeded and not paper_skipped:
                     error_msg = str(last_error) if last_error else "Unknown error"
                     if isinstance(last_error, PageParseError):
-                        logger.warning(f"Page parse error [{paperDOI}]: {error_msg}")
+                        logger.warning(f"Phase C page parse error [{paperDOI}]: {error_msg}")
                     else:
-                        logger.error(f"Publisher scrape failed [{paperDOI}]: {error_msg}")
+                        logger.warning(f"Phase C scrape failed after 3 attempts [{paperDOI}]: {error_msg}")
                     db.update_error_message(
                         paperDOI, "publisher_page_fetched_status",
                         FetchStatus.FAILED.value,
