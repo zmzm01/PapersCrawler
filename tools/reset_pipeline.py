@@ -258,7 +258,7 @@ REPORT_RESET = [
 ]
 
 
-def cmd_reset_report(publisher=None, days=None):
+def cmd_reset_report(publisher=None, days=None, today=False):
     """重置报告状态，使已报告论文重新出现在下次报告中。
 
     Parameters
@@ -266,17 +266,29 @@ def cmd_reset_report(publisher=None, days=None):
     publisher : str, optional
         仅重置指定出版社。
     days : int, optional
-        仅重置最近 N 天内被报告的论文。未指定时重置全部已报告论文。
+        按日历日重置最近 N 天的报告（含今天）。
+    today : bool
+        仅重置今天（当前自然日）的报告。与 --days 互斥，同时指定时 --today 优先。
     """
-    if days is not None:
+    if today:
         if publisher:
             where = ("WHERE report_date IS NOT NULL"
-                     " AND report_date >= datetime('now', '-{} days', 'localtime')"
+                     " AND date(report_date) = date('now', 'localtime')"
+                     " AND publisher = ?")
+            params = (publisher,)
+        else:
+            where = ("WHERE report_date IS NOT NULL"
+                     " AND date(report_date) = date('now', 'localtime')")
+            params = ()
+    elif days is not None:
+        if publisher:
+            where = ("WHERE report_date IS NOT NULL"
+                     " AND date(report_date) >= date('now', '-{} days', 'localtime')"
                      " AND publisher = ?").format(days)
             params = (publisher,)
         else:
             where = ("WHERE report_date IS NOT NULL"
-                     " AND report_date >= datetime('now', '-{} days', 'localtime')").format(days)
+                     " AND date(report_date) >= date('now', '-{} days', 'localtime')").format(days)
             params = ()
     else:
         if publisher:
@@ -298,7 +310,12 @@ def cmd_reset_report(publisher=None, days=None):
     set_clause = ",\n            ".join(REPORT_RESET)
     sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
 
-    scope = f"最近 {days} 天内的" if days is not None else ""
+    if today:
+        scope = "今天（当前自然日）的"
+    elif days is not None:
+        scope = f"最近 {days} 个日历日内的"
+    else:
+        scope = ""
     print(f"\n将重置 {count} 篇论文的{scope}报告状态（publisher={publisher or '全部'}）")
     if not _confirm(count, "报告状态"):
         print("已取消")
@@ -389,7 +406,7 @@ if __name__ == "__main__":
         description=(
             "将 report_date 不为空的论文重置为 NULL，"
             "使其重新汇入下次生成的报告。"
-            "支持 --days 参数按日期范围重置，适用于同一天重试的场景。"
+            "支持 --today 和 --days 参数按日历日期重置，适用于同一天重试的场景。"
             "\n\n受影响的状态列:"
             "\n  report_status   → pending"
             "\n  report_date     → NULL"
@@ -397,14 +414,20 @@ if __name__ == "__main__":
             "\n\n示例:"
             "\n  python tools/reset_pipeline.py reset-report"
             "\n    → 重置全部已报告论文"
-            "\n  python tools/reset_pipeline.py reset-report --days 1"
-            "\n    → 仅重置最近 1 天（今天）被报告的论文"
+            "\n  python tools/reset_pipeline.py reset-report --today"
+            "\n    → 仅重置今天（当前自然日）被报告的论文"
+            "\n  python tools/reset_pipeline.py reset-report --days 3"
+            "\n    → 仅重置最近 3 个自然日内被报告的论文"
+            "\n  python tools/reset_pipeline.py reset-report --today --publisher aps"
+            "\n    → 仅重置今天 APS 出版社的被报告论文"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_rpt.add_argument("--publisher", help="仅重置指定出版社")
+    p_rpt.add_argument("--today", action="store_true",
+        help="仅重置今天（当前自然日）被报告的论文")
     p_rpt.add_argument("--days", type=int,
-        help="仅重置最近 N 天内被报告的论文（如 --days 1 表示今天报告的论文）")
+        help="按日历日重置最近 N 天被报告的论文（如 --days 3 表示最近 3 个自然日）")
 
     args = parser.parse_args()
 
@@ -422,4 +445,4 @@ if __name__ == "__main__":
     elif args.command == "reset-summary":
         cmd_reset_summary(args.publisher, reset_all=args.all)
     elif args.command == "reset-report":
-        cmd_reset_report(args.publisher, days=args.days)
+        cmd_reset_report(args.publisher, days=args.days, today=args.today)
