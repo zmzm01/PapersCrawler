@@ -401,6 +401,44 @@ abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
 
 配套工具 `tools/reset_empty_abstract.py` 可将已入库空摘要论文的 Phase D/E/G 重置为 pending，触发重新评估。
 
+## 6. 非论文页面检测（NonResearchPageError）
+
+某些 RSS 抓取的条目不是研究论文（Erratum、Publisher's Note、Comment on、Response to 等），
+这类页面在 Publisher 抓取阶段（Phase C）能正常加载，但缺少有效摘要。
+
+### 检测策略
+
+Phase C 采用两级检测：
+
+**一级 — Scraper 元数据检测**（精确，依赖 publisher HTML 结构）：
+| Scraper | 检测依据 | 匹配值 |
+|---------|---------|--------|
+| NatureScraper | `<meta name="dc.type">` | `!= "OriginalPaper"` |
+| ScienceScraper | `<meta name="dc.Type">` | `!= "research-article"` |
+
+**二级 — 关键词 + 空摘要检测**（通用兜底，对所有 publisher 生效）：
+- 条件：`abstract` 为空 `AND` 标题包含以下关键词之一
+- 关键词表：`Erratum`, `Comment on`, `Response to`, `Publisher's Note`
+- 实现位置：`pipeline/phase_c.py` 的 retry 循环内，`parse_page()` 成功后检查
+
+### 触发后的行为
+
+NonResearchPageError 触发后，Phase C 会：
+1. 当前论文标记 `publisher_page_fetched_status = 'skipped'`（不重试，重试无意义）
+2. 级联标记 `semantic_filter_status = 'skipped'`（跳过语义相似度计算）
+3. 级联标记 `llm_relevance_status = 'skipped'`（跳过 LLM 相关性判断）
+4. 后续阶段（Phase E2/F/G/H）自然跳过（以上游状态为 pending 的判断条件不满足）
+
+### 与空摘要论文的区别
+
+| 类型 | Phase C 行为 | Phase D 行为 | Phase E 行为 |
+|------|-------------|-------------|-------------|
+| **非论文页**（Erratum 等） | 标记 `skipped` + 级联跳过下游 | 跳过（已 skipped） | 跳过（已 skipped） |
+| **合法空摘要论文**（短通讯、无摘要 OA） | 标记 `success`（abstract 为空） | 正常计算相似度 | `abstract` 为空时标记 `skipped` |
+| **全空页**（CF 拦截、页面错误） | 标记 `failed`（retry 后仍失败） | 跳过（上游 failed 不影响，仅查自己状态） | 同上 |
+
+合法空摘要论文与全空页的区别：前者有 title + doi，后者三项全空。
+
 # 流水线子阶段详解
 
 ## Phase C — Publisher 页面抓取

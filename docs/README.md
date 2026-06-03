@@ -182,5 +182,7 @@ Publisher Page → abstract (补充非 OA 论文摘要)
 
 ## 待办事项
 
-- [ ] 热点/趋势分析
-- [ ] 并发升级 + 数据库同步升级
+- [ ] **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
+- [ ] **并发升级** — 当前 Phase E/F 使用 ThreadPoolExecutor，但 DB 写入仍是串行瓶颈。考虑异步架构（asyncio + aiosqlite）
+- [ ] **无摘要兜底** — Phase E 对无摘要论文标记 skipped，将来可尝试用 OCR/title-only 轻度判断
+- [ ] **配置热加载** — 目前配置在 `main()` 入口一次性加载，修改后需重启

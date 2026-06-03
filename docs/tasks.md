@@ -398,14 +398,43 @@ python src/main.py
 - `src/web/templates/{base,dashboard,pipeline,report,logs,config}.html`
 - `src/web/static/css/style.css`, `src/web/static/js/app.js`
 
-# 遗留问题 / 待办
+# 2026-06-03 — Phase C 加固：非论文检测 + 日志补齐 + CF 满3次重试 + APS 302兜底
 
-- **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
-- **并发升级** — 当前 Phase E/F 使用 ThreadPoolExecutor，但 DB 写入仍是串行瓶颈。考虑异步架构（asyncio + aiosqlite）
-- **无摘要兜底** — Phase E 对无摘要论文标记 skipped，将来可尝试用 OCR/title-only 轻度判断
-- **配置热加载** — 目前配置在 `main()` 入口一次性加载，修改后需重启
+**背景**：
+1. Phase C 抓取 Erratum / Publisher's Note / Response to / Comment on 类非论文页面时，
+   没有检测逻辑，标记为 success 并携带空 abstract 流入下游阶段。
+2. Phase C 在成功/跳过/失败三个出口均无汇总日志，用户无法判断处理结果。
+3. Cloudflare 拦截只尝试 2 次（第 0 次 continue → 第 1 次 raise），第 3 次（45s + 冷却 2min）从未到达。
+4. APS `link.aps.org` 302 跳转到 `journals.aps.org` 时偶发 Playwright
+   "navigation interrupted" 错误。
 
-- **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
-- **并发升级** — 当前 Phase E/F 使用 ThreadPoolExecutor，但 DB 写入仍是串行瓶颈。考虑异步架构（asyncio + aiosqlite）
-- **无摘要兜底** — Phase E 对无摘要论文标记 skipped，将来可尝试用 OCR/title-only 轻度判断
-- **配置热加载** — 目前配置在 `main()` 入口一次性加载，修改后需重启
+**变更**：
+
+1. **非论文页面检测**（`pipeline/phase_c.py`）
+   - 新增关键词表：`Erratum`, `Comment on`, `Response to`, `Publisher's Note`
+   - 条件：`abstract` 为空 `AND` 标题含关键词 → 抛出 `NonResearchPageError`
+   - 与 Nature/Science 的 `dc.type` 元数据检测互补，覆盖所有 publisher
+
+2. **下游级联跳过**（`pipeline/phase_c.py`）
+   - NonResearchPageError 被捕获后，除了设 `publisher_page_fetched_status = skipped`
+   - 额外设 `semantic_filter_status = skipped` + `llm_relevance_status = skipped`
+   - 防止 Phase D/E 继续处理非论文页面
+
+3. **日志补齐**（`pipeline/phase_c.py`）
+   - 成功出口：`logger.info("Publisher page OK: {doi}")`
+   - 失败出口：`logger.warning("Phase C scrape failed after 3 attempts [{doi}]")`
+   - CF 拦截日志增加 attempt 计数：`"Cloudflare detected (attempt 2/3)"`
+
+4. **CF 重试机制**（`pipeline/phase_c.py`）
+   - `if attempt == 0: continue` → `if attempt < 2: continue`
+   - Cloudflare 拦截和全空页面现在都会跑满 3 次尝试（含 45s timeout + 2min 冷却）
+
+5. **APS 302 导航兜底**（`sources/publisher.py`）
+   - `fetch_page()` 中 `page.goto()` 包裹 try/except
+   - 捕获 "navigation interrupted" 错误后，等待 3s，用跳转后的 URL 重试
+
+6. **文档更新**（`docs/design.md`）
+   - 新增「6. 非论文页面检测（NonResearchPageError）」节
+   - 详述两级检测策略（Scraper 元数据 + 关键词兜底）
+   - 非论文页 / 合法空摘要 / 全空页 三种情况的对比表
+
