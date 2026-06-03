@@ -204,29 +204,52 @@ async def run_all():
     return JSONResponse({"ok": True, "phase": "ALL"})
 
 
-@app.post("/pipeline/reset/{phase}")
-async def reset_phase(phase: str):
-    if phase not in RESET_DEFS:
-        return JSONResponse({"error": f"Unsupported reset phase: {phase}"}, status_code=400)
+def _get_reset_cols(phase: str) -> list[str]:
+    """Derive the list of status column names for a given reset phase."""
+    cols, _, _ = RESET_DEFS[phase]
+    col_names = [c for i, c in enumerate(cols) if i % 2 == 0]
+    return list(dict.fromkeys(col_names))
 
+
+def _count_reset_impact(phase: str, reset_cols: list[str]) -> dict[str, int]:
+    """Count papers affected per column for a reset operation (read-only)."""
     db = DatabaseClient(DB_PATH)
     db.init_db_papers()
-    cols, reset_where, _ = RESET_DEFS[phase]
-    col_names = [c for i, c in enumerate(cols) if i % 2 == 0]  # status columns only
-    reset_cols = list(dict.fromkeys(col_names))  # unique, preserve order
-
-    # Count impact
     impact = {}
     for c in reset_cols:
         cur = db.conn.execute(
             f"SELECT COUNT(*) FROM papers WHERE {c} IN ('success','failed','skipped')"
         )
         impact[c] = cur.fetchone()[0]
+    return impact
 
-    # Execute reset
+
+def _execute_reset(phase: str, reset_cols: list[str]):
+    """Execute the reset for the given columns."""
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
     for c in reset_cols:
         db.batch_reset_status([(c, "pending")], f"{c} IN ('success','failed','skipped')")
 
+
+@app.post("/pipeline/reset/{phase}")
+async def reset_preview(phase: str):
+    """Preview reset impact — counts affected papers without mutating DB."""
+    if phase not in RESET_DEFS:
+        return JSONResponse({"error": f"Unsupported reset phase: {phase}"}, status_code=400)
+    reset_cols = _get_reset_cols(phase)
+    impact = _count_reset_impact(phase, reset_cols)
+    return JSONResponse({"ok": True, "phase": phase, "impact": impact})
+
+
+@app.post("/pipeline/reset/{phase}/execute")
+async def reset_execute(phase: str):
+    """Execute the reset after user confirmation."""
+    if phase not in RESET_DEFS:
+        return JSONResponse({"error": f"Unsupported reset phase: {phase}"}, status_code=400)
+    reset_cols = _get_reset_cols(phase)
+    impact = _count_reset_impact(phase, reset_cols)
+    _execute_reset(phase, reset_cols)
     return JSONResponse({"ok": True, "phase": phase, "impact": impact})
 
 
