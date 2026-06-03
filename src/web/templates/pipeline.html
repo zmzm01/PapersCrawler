@@ -127,20 +127,23 @@ async function runAll() {
 }
 
 async function confirmReset(phase) {
+  // Step 1: count impact (read-only, no mutation)
   const r = await fetch('/pipeline/reset/' + phase, { method: 'POST' });
   const data = await r.json();
   if (data.error) { alert(data.error); return; }
   let msg = 'Phase ' + phase + ' will be reset.\n\nAffected columns:\n';
+  let hasImpact = false;
   for (const [col, count] of Object.entries(data.impact)) {
-    if (count > 0) msg += '  - ' + col + ': ' + count + ' papers\n';
+    if (count > 0) { msg += '  - ' + col + ': ' + count + ' papers\n'; hasImpact = true; }
   }
+  if (!hasImpact) { alert('No papers to reset for Phase ' + phase + '.'); return; }
   msg += '\nConfirm reset?';
-  if (confirm(msg)) {
-    // Re-execute the reset
-    const r2 = await fetch('/pipeline/reset/' + phase, { method: 'POST' });
-    const d2 = await r2.json();
-    if (d2.ok) { alert('Reset complete.'); refreshCharts(); }
-  }
+  if (!confirm(msg)) return;
+
+  // Step 2: execute reset (only after confirmation)
+  const r2 = await fetch('/pipeline/reset/' + phase + '/execute', { method: 'POST' });
+  const d2 = await r2.json();
+  if (d2.ok) { alert('Reset complete.'); refreshCharts(); }
 }
 </script>
 {% endblock %}
