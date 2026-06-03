@@ -3,6 +3,9 @@
 {% block content %}
 <h2>Pipeline Logs</h2>
 
+<p class="text-muted">Showing last ~200 KB of <code>data/PaperCrawler.log</code>.
+The log file accumulates across all pipeline runs (CLI + Web UI). Use the filter below to narrow by severity level.</p>
+
 <div class="log-controls">
   <label>Filter:
     <select id="log-filter" onchange="filterLogs()">

@@ -380,6 +380,13 @@ h3 {
 .c-failed  { color: var(--failed); }
 .c-skipped { color: var(--skipped); }
 .c-pending { color: var(--pending); }
+.chart-legend {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  display: flex;
+  gap: 1rem;
+  color: var(--text-muted);
+}
 
 .pipeline-toolbar {
   display: flex;
