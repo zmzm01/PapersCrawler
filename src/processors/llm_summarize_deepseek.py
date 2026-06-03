@@ -299,24 +299,27 @@ class DeepSeekPaperSummarizer:
         return total
 
 
-class LLMFormulaFixer:
-    """用 LLM 修复论文总结中裸写的 LaTeX 命令的公式包裹。
+class FormulaFixer:
+    """用 LLM 修复单段文本中裸写的 LaTeX 命令或缺失的分隔符反斜杠。
 
-    接收整个总结 dict，用 flash 模型检查并修正公式格式，
-    使用 json_object 模式保证返回合法 JSON。
+    纯文本输入/纯文本输出，不涉及 JSON 结构，
+    避免 JSON 转义带来的 LLM 理解负担。
     修复失败时回退原内容，不抛异常。
     """
 
-    FIX_PROMPT = """你是一个学术论文总结格式修正助手。请根据以下格式要求，修正下面 JSON 总结中的 LaTeX 公式包裹问题。
+    FIX_PROMPT = """你是一个 LaTeX 公式格式修正助手。下面是一段学术文本，请检查并修复其中的 LaTeX 公式格式问题。
 
-【格式要求】
-- 行内公式必须用 \\(...\\) 包裹，禁止用 $...$
-- 独立公式（行间公式）必须用 \\[...\\] 包裹，禁止用 $$...$$
-- 所有 LaTeX 命令必须被数学模式包裹，禁止裸写
-- 在 JSON 字符串内，每个反斜杠必须双写（例如 \\( 应写为 \\\\(）
+【常见问题】
+1. 公式分隔符缺少反斜杠：例如 `(\alpha)` 应该是 `\\(\\alpha\\)`
+2. LaTeX 命令裸写：例如 `使用 \alpha 驱动` 应该是 `使用 \\(\\alpha\\) 驱动`
+3. 独立公式缺少正确包裹：例如 `[E = mc^2]` 应该是 `\\[E = mc^2\\]`
 
-请修正下面的 JSON 总结，输出结构完全相同的 JSON，仅修改公式包裹问题：
-"""
+【修正规则】
+- 行内公式必须用 \\(...\\) 包裹
+- 独立公式必须用 \\[...\\] 包裹
+- 不要改变文本内容、语序、标点
+
+只输出修正后的文本，不要包含任何额外解释："""
 
     def __init__(self, llm_api_config: Dict[str, Any]):
         self.config = llm_api_config
@@ -326,18 +329,40 @@ class LLMFormulaFixer:
             "Content-Type": "application/json",
         })
 
-    def fix_json_summary(self, summary_dict: dict) -> dict:
-        """对整个总结 JSON 运行公式修复，返回修正后的 dict。"""
-        input_json = json.dumps(summary_dict, ensure_ascii=False)
-        if input_json == "{}":
-            return summary_dict
+    @staticmethod
+    def needs_fix(text: str) -> bool:
+        """检测文本中是否有 LaTeX 公式格式问题。
 
+        覆盖两类情况：
+        1. 裸写 LaTeX 命令（\\alpha 无 \\( 包裹）
+        2. 公式分隔符反斜杠丢失（\\( → (，\\[ → [）
+
+        通过移除已正确包裹的 \\(...\\) 和 \\[...\\] 区域后，
+        检查剩余文本中是否还有 LaTeX 命令来判断。
+        """
+        cleaned = re.sub(r'\\\(.*?\\\)|\\\[.*?\\\]', '', text, flags=re.DOTALL)
+        return bool(re.search(r'\\[a-zA-Z]{2,}', cleaned))
+
+    def fix_text(self, text: str) -> str:
+        """修正单段文本中的 LaTeX 公式格式问题。
+
+        Parameters
+        ----------
+        text : str
+            需要修复的文本字符串（纯文本，单反斜杠）
+
+        Returns
+        -------
+        str
+            修复后的文本，失败时回退原内容
+        """
+        if not text or text == "未提供" or not self.needs_fix(text):
+            return text
         payload = {
             "model": self.config.get("model", "deepseek-v4-flash"),
             "messages": [
-                {"role": "user", "content": self.FIX_PROMPT + input_json},
+                {"role": "user", "content": self.FIX_PROMPT + "\n\n" + text},
             ],
-            "response_format": {"type": "json_object"},
             "thinking": {"type": "disabled"},
         }
         try:
@@ -347,14 +372,12 @@ class LLMFormulaFixer:
                 timeout=self.config.get("timeout", 60),
             )
             resp.raise_for_status()
-            fixed = json.loads(
-                resp.json()["choices"][0]["message"]["content"]
-            )
+            fixed = resp.json()["choices"][0]["message"]["content"]
             return fixed
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.warning(f"公式修复失败，回退原内容: {e}")
-            return summary_dict
+            return text
 
 
 if __name__ == "__main__":

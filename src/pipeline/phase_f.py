@@ -15,7 +15,7 @@ from config import (
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import logger
 from processors.llm_summarize_deepseek import (
-    DeepSeekPaperSummarizer, LLMFormulaFixer, LLMContextLengthExceed,
+    DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
 )
 from processors.paper_relevance import LLMAPICallError, LLMResponseParseError
 
@@ -52,7 +52,7 @@ def phase_f_llm_summary(db):
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
     fixer = None
     if not SKIP_FORMULA_FIX:
-        fixer = LLMFormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE)
+        fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE)
 
     tasks = []
     for paper in relevant_papers:
@@ -92,7 +92,14 @@ def phase_f_llm_summary(db):
                 result_str = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 parsed = json.loads(result_str)
                 if fixer:
-                    parsed = fixer.fix_json_summary(parsed)
+                    FIXER_FIELDS = [
+                        "one_sentence", "motivation_and_goal",
+                        "key_setup_and_method", "main_results_and_physics",
+                        "take_home_message",
+                    ]
+                    for field in FIXER_FIELDS:
+                        if field in parsed and isinstance(parsed[field], str):
+                            parsed[field] = fixer.fix_text(parsed[field])
                     result_str = json.dumps(parsed, ensure_ascii=False)
                 db.update_llm_summary(
                     doi, result_str, FetchStatus.SUCCESS.value, timestamp,
