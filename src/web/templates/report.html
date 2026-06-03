@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Report{% endblock %}
 {% block content %}
-<h2>Generate Report</h2>
+<h2 data-i18n="report.title">Generate Report</h2>
 
 <div class="report-controls">
-  <label>Publisher:
+  <label><span data-i18n="report.publisher">Publisher:</span>
     <select id="filter-publisher" onchange="filterPapers()">
       <option value="">-- All publishers --</option>
       {% for p in publishers %}
@@ -12,15 +12,15 @@
       {% endfor %}
     </select>
   </label>
-  <button class="btn btn-sm btn-secondary" onclick="selectAll(true)">Select All</button>
-  <button class="btn btn-sm btn-secondary" onclick="selectAll(false)">Deselect All</button>
-  <button class="btn btn-primary" id="generate-btn" onclick="generateReport()">Generate Report</button>
+  <button class="btn btn-sm btn-secondary" onclick="selectAll(true)" data-i18n="report.select_all">Select All</button>
+  <button class="btn btn-sm btn-secondary" onclick="selectAll(false)" data-i18n="report.deselect_all">Deselect All</button>
+  <button class="btn btn-primary" id="generate-btn" onclick="generateReport()" data-i18n="report.generate">Generate Report</button>
 </div>
 
 <table class="papers-table" id="paper-table">
   <thead>
     <tr><th><input type="checkbox" onchange="selectAll(this.checked)" id="select-all"></th>
-        <th>DOI</th><th>Title</th><th>Publisher</th><th>Summary Date</th></tr>
+        <th data-i18n="report.doi">DOI</th><th data-i18n="report.title_col">Title</th><th data-i18n="report.publisher_col">Publisher</th><th data-i18n="report.summary_date">Summary Date</th></tr>
   </thead>
   <tbody>
     {% for p in papers %}
@@ -36,10 +36,10 @@
 </table>
 
 <div id="report-preview" class="report-preview" style="display:none;">
-  <h3>Report Preview</h3>
+  <h3 data-i18n="report.preview">Report Preview</h3>
   <p id="report-filename" class="text-muted"></p>
   <pre class="config-pre" id="preview-content"></pre>
-  <a id="download-link" class="btn btn-sm btn-primary" target="_blank" style="display:inline-block;">Download</a>
+  <a id="download-link" class="btn btn-sm btn-primary" target="_blank" style="display:inline-block;" data-i18n="report.download">Download</a>
 </div>
 
 <script>
@@ -57,9 +57,9 @@ function selectAll(val) {
 
 async function generateReport() {
   const dois = Array.from(document.querySelectorAll('.paper-check:checked')).map(cb => cb.value);
-  if (!dois.length) { alert('Select at least one paper.'); return; }
+  if (!dois.length) { alert(getI18n('report.select_hint') || 'Select at least one paper.'); return; }
   const btn = document.getElementById('generate-btn');
-  btn.disabled = true; btn.textContent = 'Generating...';
+  btn.disabled = true; btn.textContent = getI18n('report.generate') + '...';
   try {
     const r = await fetch('/report/generate', {
       method: 'POST',
@@ -75,11 +75,11 @@ async function generateReport() {
     document.getElementById('preview-content').textContent = data.preview || '(empty report)';
     document.getElementById('download-link').href = '/report/download/' + data.filename;
     document.getElementById('download-link').style.display = 'inline-block';
-    document.getElementById('report-filename').textContent = 'Generated: ' + data.filename;
+    document.getElementById('report-filename').textContent = (getI18n('report.generated') || 'Generated: ') + data.filename;
   } catch (err) {
     alert('Network error: ' + err.message);
   } finally {
-    btn.disabled = false; btn.textContent = 'Generate Report';
+    btn.disabled = false; btn.textContent = getI18n('report.generate') || 'Generate Report';
   }
 }
 </script>

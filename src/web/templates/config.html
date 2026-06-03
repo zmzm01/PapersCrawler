@@ -1,34 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Configuration{% endblock %}
 {% block content %}
-<h2>Configuration</h2>
+<h2 data-i18n="config.title">Configuration</h2>
 
-<h3>Phase Switches</h3>
+<h3 data-i18n="config.phase_switches">Phase Switches</h3>
 <table class="config-table">
-  <thead><tr><th>Phase</th><th>Default</th><th>Override</th><th>Action</th></tr></thead>
+  <thead><tr>
+    <th data-i18n="config.phase">Phase</th>
+    <th data-i18n="config.default">Default</th>
+    <th data-i18n="config.override">Override</th>
+    <th data-i18n="config.action">Action</th>
+  </tr></thead>
   <tbody>
     {% for key in ['A','B','C','D','E','E2','F','G','H'] %}
     <tr>
       <td>Phase {{ key }}</td>
       <td><span class="badge badge-{{ 'skipped' if skip_config[key] else 'pending' }}">{{ 'Skip' if skip_config[key] else 'Run' }}</span></td>
       <td><span class="badge badge-{{ 'skipped' if skip_config[key] else 'pending' }}" id="override-{{ key }}">{{ 'Skip' if skip_config[key] else 'Run' }}</span></td>
-      <td><button class="btn btn-sm btn-secondary" onclick="toggleSkip('{{ key }}')">Toggle</button></td>
+      <td><button class="btn btn-sm btn-secondary" onclick="toggleSkip('{{ key }}')" data-i18n="config.toggle">Toggle</button></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 
-<h3>publishers.yaml</h3>
+<h3 data-i18n="config.publishers">publishers.yaml</h3>
 <textarea class="yaml-editor" id="publishers-editor">{{ publishers_raw }}</textarea>
 <div class="editor-actions">
-  <button class="btn btn-sm btn-primary" onclick="saveYaml('publishers')">Save</button>
+  <button class="btn btn-sm btn-primary" onclick="saveYaml('publishers')" data-i18n="config.save">Save</button>
   <span id="publishers-status" class="save-status"></span>
 </div>
 
-<h3>keywords.yaml</h3>
+<h3 data-i18n="config.keywords">keywords.yaml</h3>
 <textarea class="yaml-editor" id="keywords-editor" rows="15">{{ keywords_raw }}</textarea>
 <div class="editor-actions">
-  <button class="btn btn-sm btn-primary" onclick="saveYaml('keywords')">Save</button>
+  <button class="btn btn-sm btn-primary" onclick="saveYaml('keywords')" data-i18n="config.save">Save</button>
   <span id="keywords-status" class="save-status"></span>
 </div>
 
@@ -50,7 +55,6 @@ async function saveYaml(name) {
   const content = document.getElementById(editorId).value;
   const status = document.getElementById(statusId);
 
-  // First: validate
   const validateR = await fetch('/config/save-' + name, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -58,15 +62,13 @@ async function saveYaml(name) {
   });
   const validateData = await validateR.json();
   if (validateData.error) {
-    status.textContent = 'Error: ' + validateData.error;
+    status.textContent = getI18n('config.syntax_error', {msg: validateData.error});
     status.className = 'save-status error';
     return;
   }
 
-  // Confirm
-  if (!confirm('Save changes to ' + name + '.yaml? This will overwrite the file.')) return;
+  if (!confirm(getI18n('config.save_confirm', {file: name + '.yaml'}))) return;
 
-  // Save
   const r = await fetch('/config/save-' + name, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -74,10 +76,10 @@ async function saveYaml(name) {
   });
   const data = await r.json();
   if (data.ok) {
-    status.textContent = 'Saved to ' + data.path;
+    status.textContent = getI18n('config.saved', {path: data.path});
     status.className = 'save-status ok';
   } else {
-    status.textContent = 'Error: ' + data.error;
+    status.textContent = getI18n('config.syntax_error', {msg: data.error});
     status.className = 'save-status error';
   }
 }
