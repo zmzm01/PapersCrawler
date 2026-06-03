@@ -34,6 +34,8 @@
 | **异常重命名** | `NaturePageNotPaper` → `NonResearchPageError`；修复 reset-publisher 误重试非论文页面 | 06-01 |
 | **报告日期过滤** | `get_papers_for_report()` 改用 `report_date IS NULL` 替代 `report_status = 'pending'`；`reset-report` 新增 `--days` 参数支持按日期范围重置 | 06-03 |
 | **SMTP 加固** | `email_sender.py`: 连接移入 try/except + 1 次重试 + STARTTLS 后 ehlo() + quit 保护网易邮箱 SSL 端口配置修正 | 06-03 |
+| **FormulaFixer 重构** | `LLMFormulaFixer` → `FormulaFixer`：JSON in/out 改为纯文本 in/out，新增 `needs_fix()` 预检测 + 逐字段修复 + module-level logger | 06-03 |
+| **独立修复工具** | 新增 `tools/fix_summary_formulas.py`，支持 `--doi` / `--publisher` / `--dry-run` / `--verbose`，无需重跑 Phase F | 06-03 |
 
 # 2026-05-23 — Pipeline 全面修复与增强
 
@@ -321,15 +323,33 @@ python src/main.py
 
 **当前状态**：可运行生成 PDF，但公式渲染暂不支持，PDF 中公式显示为空白。保留 `--mathjax` 升级路径（需解决 `file://` 协议下 CDN 加载问题或换用本地 MathJax）。
 
-## LLM 公式格式修复
+## LLM 公式格式修复（v1 — JSON in/out，已弃用）
 
-**动机**：Large Model 指令遵循不到位，部分 LaTeX 命令（`\times`、`\mathrm` 等）未用 `\(` 包裹。正则方案边缘 case 过多，总有遗漏。
+**动机**：LLM 指令遵循不到位，部分 LaTeX 命令（`\times`、`\mathrm` 等）未用 \(` 包裹。正则方案边缘 case 过多，总有遗漏。
 
-**解决**：
-- 新增 `LLMFormulaFixer` 类（`utils/llm_summarize_deepseek.py`），用 flash 模型修复裸 LaTeX 命令的公式包裹
-- 新增 `LLMFormulaFixer` 类（`utils/llm_summarize_deepseek.py`），接收整个总结 dict 并用 json_object 模式修复
-- 新增 `SKIP_FORMULA_FIX = True` 配置开关（**实验性功能**，默认关闭，需评估 prompt 效果后再开启）
-- `phase_f_llm_summary()` 中条件初始化 + 条件调用 fixer，默认跳过
+**v1 方案**：新增 `LLMFormulaFixer` 类，接收整个总结 dict 并用 `json_object` 模式修复。问题：LLM 需要同时处理 JSON 结构 + 双层反斜杠转义，输出质量不稳定，默认关闭。
+
+## FormulaFixer 重构（v2 — 纯文本 in/out，2026-06-03）
+
+**动机**：JSON 进/JSON 出的方案给 LLM 增加了不必要的转义负担（`\\\\(` vs `\\(`），LLM 频繁输出非法 JSON 导致修复失败。且原方案只能全量运行，无法单独对已有总结进行修复。
+
+**v2 方案**：替换 `LLMFormulaFixer` → `FormulaFixer`，核心变化：
+
+1. **纯文本进/纯文本出** — `json.loads()` 后的 Python 字符串（单反斜杠）直接送 flash 模型，LLM 只理解 LaTeX 语法，无需关心 JSON 结构
+2. **预检测 `needs_fix()`** — 先移除已正确包裹的 `\(...\)` / `\[...\]` 区域，只对残留 `\command` 的字段调 API，大部分字段零成本跳过
+3. **逐字段修复** — Phase F 中遍历 5 个文本字段逐个调用 `fix_text()`，Python 的 `json.dumps()` 自动处理写入 DB 时的 JSON 转义
+4. **独立工具** — 新增 `tools/fix_summary_formulas.py`，无需重跑 Phase F，支持 `--doi` / `--publisher` / `--dry-run` 等参数
+5. **Logger 补全** — 跳过/成功/失败三个出口均有日志记录
+
+**数据流对比**：
+```
+v1: LLM JSON string → json.loads → dict 
+     → json.dumps → flash(JSON in/out) → json.loads → json.dumps → DB
+
+v2: LLM JSON string → json.loads → dict 
+     → 各字段(纯文本) → needs_fix? → flash(纯文本 in/out) 
+     → 放回 dict → json.dumps(自动转义) → DB
+```
 
 ## 错误处理增强 + RSS 缓存简化
 
