@@ -92,14 +92,22 @@ def phase_f_llm_summary(db):
                 result_str = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 parsed = json.loads(result_str)
                 if fixer:
+                    logger.debug(f"FormulaFixer: [{doi}] 检查 5 个字段")
                     FIXER_FIELDS = [
                         "one_sentence", "motivation_and_goal",
                         "key_setup_and_method", "main_results_and_physics",
                         "take_home_message",
                     ]
+                    fixed_count = 0
                     for field in FIXER_FIELDS:
                         if field in parsed and isinstance(parsed[field], str):
-                            parsed[field] = fixer.fix_text(parsed[field])
+                            before = parsed[field]
+                            after = fixer.fix_text(before, field_name=field)
+                            if after != before:
+                                fixed_count += 1
+                            parsed[field] = after
+                    if fixed_count:
+                        logger.info(f"FormulaFixer: [{doi}] {fixed_count}/{len(FIXER_FIELDS)} 个字段已修复")
                     result_str = json.dumps(parsed, ensure_ascii=False)
                 db.update_llm_summary(
                     doi, result_str, FetchStatus.SUCCESS.value, timestamp,
