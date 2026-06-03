@@ -1,46 +1,76 @@
 {% extends "base.html" %}
-{% block title %}Report Generation{% endblock %}
+{% block title %}Report{% endblock %}
 {% block content %}
 <h2>Generate Report</h2>
 
-<form id="report-form" class="report-form">
-  <div class="form-group">
-    <label for="publisher">Publisher (optional, leave empty for all):</label>
-    <select name="publisher" id="publisher">
+<div class="report-controls">
+  <label>Publisher:
+    <select id="filter-publisher" onchange="filterPapers()">
       <option value="">-- All publishers --</option>
       {% for p in publishers %}
       <option value="{{ p }}">{{ p }}</option>
       {% endfor %}
     </select>
-  </div>
+  </label>
+  <button class="btn btn-sm btn-secondary" onclick="selectAll(true)">Select All</button>
+  <button class="btn btn-sm btn-secondary" onclick="selectAll(false)">Deselect All</button>
+  <button class="btn btn-primary" id="generate-btn" onclick="generateReport()">Generate Report</button>
+</div>
 
-  <button type="submit" class="btn btn-primary" id="generate-btn">Generate Report</button>
-</form>
+<table class="papers-table" id="paper-table">
+  <thead>
+    <tr><th><input type="checkbox" onchange="selectAll(this.checked)" id="select-all"></th>
+        <th>DOI</th><th>Title</th><th>Publisher</th><th>Summary Date</th></tr>
+  </thead>
+  <tbody>
+    {% for p in papers %}
+    <tr data-publisher="{{ p.publisher or '' }}">
+      <td><input type="checkbox" class="paper-check" value="{{ p.doi }}"></td>
+      <td class="td-doi"><code>{{ p.doi }}</code></td>
+      <td class="td-title">{{ p.title or '—' }}</td>
+      <td>{{ p.publisher or '—' }}</td>
+      <td>{{ p.llm_summary_date or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 
-<div id="report-result" class="report-result" style="display:none;">
-  <h3>Report Generated</h3>
-  <p id="report-path"></p>
-  <a id="report-link" class="btn btn-sm btn-secondary" target="_blank">Open Report</a>
+<div id="report-preview" class="report-preview" style="display:none;">
+  <h3>Report Preview</h3>
+  <pre class="config-pre" id="preview-content"></pre>
+  <a id="download-link" class="btn btn-sm btn-primary" target="_blank">Download</a>
 </div>
 
 <script>
-document.getElementById('report-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
+function filterPapers() {
+  const pub = document.getElementById('filter-publisher').value;
+  document.querySelectorAll('#paper-table tbody tr').forEach(tr => {
+    tr.style.display = (!pub || tr.dataset.publisher === pub) ? '' : 'none';
+  });
+}
+
+function selectAll(val) {
+  document.querySelectorAll('.paper-check').forEach(cb => cb.checked = val);
+  document.getElementById('select-all').checked = val;
+}
+
+async function generateReport() {
+  const dois = Array.from(document.querySelectorAll('.paper-check:checked')).map(cb => cb.value);
+  if (!dois.length) { alert('Select at least one paper.'); return; }
   const btn = document.getElementById('generate-btn');
-  btn.disabled = true;
-  btn.textContent = 'Generating...';
-
-  const r = await fetch('/report/generate', { method: 'POST' });
+  btn.disabled = true; btn.textContent = 'Generating...';
+  const r = await fetch('/report/generate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({dois: dois}),
+  });
   const data = await r.json();
-
-  btn.disabled = false;
-  btn.textContent = 'Generate Report';
-
+  btn.disabled = false; btn.textContent = 'Generate Report';
   if (data.ok) {
-    document.getElementById('report-result').style.display = 'block';
-    // Refresh the page to show latest report
-    setTimeout(() => location.reload(), 2000);
+    document.getElementById('report-preview').style.display = 'block';
+    document.getElementById('preview-content').textContent = data.preview;
+    document.getElementById('download-link').href = '/report/download/' + data.filename;
   }
-});
+}
 </script>
 {% endblock %}

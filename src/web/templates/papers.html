@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Papers{% endblock %}
+{% block content %}
+<h2>Papers by Semantic Similarity</h2>
+<p class="text-muted">Top {{ papers|length }} papers with semantic similarity scores.</p>
+
+<table class="papers-table">
+  <thead>
+    <tr>
+      <th>Score</th>
+      <th>Title</th>
+      <th>Journal</th>
+      <th>Date</th>
+      <th>DOI</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in papers %}
+    <tr>
+      <td>
+        <div class="score-bar-wrap">
+          <div class="score-bar" style="width:{{ (p.semantic_similarity_score * 100)|round(1) }}%"></div>
+          <span class="score-text">{{ '%.3f'|format(p.semantic_similarity_score) }}</span>
+        </div>
+      </td>
+      <td class="td-title">{{ p.title or '—' }}</td>
+      <td>{{ p.journal or '—' }}</td>
+      <td>{{ p.paperdate_rss or '—' }}</td>
+      <td class="td-doi"><code>{{ p.doi or '—' }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

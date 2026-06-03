@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<div class="hero">
+  <h2>PapersCrawler</h2>
+  <p class="hero-subtitle">Academic paper auto‑tracking &amp; push system</p>
+
+  <div class="hero-cards">
+    <div class="hero-card">
+      <h3>Pipeline</h3>
+      <p>Control each phase independently — run, reset, watch live logs.</p>
+      <a href="/pipeline" class="btn btn-primary">Go to Pipeline &rarr;</a>
+    </div>
+    <div class="hero-card">
+      <h3>Papers</h3>
+      <p>Browse papers sorted by semantic similarity to your research domain.</p>
+      <a href="/papers" class="btn btn-primary">Browse Papers &rarr;</a>
+    </div>
+    <div class="hero-card">
+      <h3>Report</h3>
+      <p>Select papers with summaries, generate Markdown reports, preview &amp; download.</p>
+      <a href="/report" class="btn btn-primary">Generate Report &rarr;</a>
+    </div>
+  </div>
+
+  <div class="hero-stats">
+    <div class="stat-card">
+      <div class="stat-value">{{ publisher_count }}</div>
+      <div class="stat-label">Publishers</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ paper_count }}</div>
+      <div class="stat-label">Papers in DB</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">9</div>
+      <div class="stat-label">Pipeline Phases</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
