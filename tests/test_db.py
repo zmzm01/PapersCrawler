@@ -169,7 +169,7 @@ def test_get_relevant_papers(db):
 
 
 def test_get_papers_for_report(db):
-    """验证 get_papers_for_report 只返回已总结且未报告的论文。"""
+    """验证 get_papers_for_report 只返回已总结且 report_date IS NULL 的论文。"""
     db.insert_rss_basicinfo("10.0000/s1", "S1", "http://s1", "J", "pub", "2025")
     db.insert_rss_basicinfo("10.0000/s2", "S2", "http://s2", "J", "pub", "2025")
     db.update_llm_summary("10.0000/s1", '{"x":"y"}',

@@ -690,7 +690,8 @@ class DatabaseClient:
         """
         获取待汇入报告的新论文：LLM 总结成功且尚未被报告过。
 
-        查询条件: llm_summary_status = 'success' AND report_status = 'pending'
+        查询条件: llm_summary_status = 'success' AND report_date IS NULL
+        用 report_date 替代 report_status 作为过滤条件，支持按日期重置重报。
         排序: 按 RSS 日期倒序
 
         Returns:
@@ -699,7 +700,7 @@ class DatabaseClient:
         cur = self.conn.execute("""
         SELECT * FROM papers
         WHERE llm_summary_status = 'success'
-          AND report_status = 'pending'
+          AND report_date IS NULL
         ORDER BY paperdate_rss DESC
         """)
         return cur.fetchall()
@@ -709,7 +710,9 @@ class DatabaseClient:
         批量标记论文为已报告。
 
         将指定 DOI 列表的论文 report_status 设为 'reported'，
-        并记录首次报告时间。
+        并记录报告时间。get_papers_for_report 使用 report_date IS NULL 过滤，
+        因此设置了 report_date 的论文将不再出现在后续报告中，除非通过
+        reset-report --days 重置。
 
         Args:
             dois:      论文 DOI 列表

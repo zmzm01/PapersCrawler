@@ -109,9 +109,14 @@ python tools/reset_pipeline.py reset-summary [--publisher aps]
 
 # 重置报告状态，使已报告论文重新出现在下次报告中
 python tools/reset_pipeline.py reset-report [--publisher aps]
+
+# 仅重置今天被报告的论文（同一天重试时使用，避免报告碎片化）
+python tools/reset_pipeline.py reset-report --days 1
 ```
 
 所有子命令支持 `--publisher` 过滤，执行前打印 SQL 和影响行数，需输入 `y` 确认。
+
+> **关于报告日期**：`get_papers_for_report()` 以 `report_date IS NULL` 作为过滤条件。论文首次被报告后写入 `report_date`，不再出现在后续报告中。通过 `reset-report --days N` 可重置最近 N 天被报告的论文，适用于当天重试需要合并报告的场景。
 
 ### 6. Markdown → PDF 转换（实验性）
 
