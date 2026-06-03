@@ -505,7 +505,10 @@ NonResearchPageError 触发后，Phase C 会：
 - 仅处理有 MinerU 全文的论文（无全文直接标记 skipped）
 - 使用 `ThreadPoolExecutor` 并发调用 DeepSeek API
 - 输出 JSON 包含 5 个字段：`one_sentence`、`motivation_and_goal`、`key_setup_and_method`、`main_results_and_physics`、`take_home_message`
-- 可选后处理：`LLMFormulaFixer`（实验性，`SKIP_FORMULA_FIX = True` 默认关闭），用 flash 模型修复裸 LaTeX 命令的公式包裹
+- 可选后处理：`FormulaFixer`（实验性，`SKIP_FORMULA_FIX = True` 默认关闭），用 flash 模型修复公式格式问题
+  - 纯文本进/纯文本出：`json.loads` 后的 Python 字符串直接送 LLM，避免 JSON 转义带来的理解负担
+  - 预检测：`needs_fix()` 先移除已正确包裹的 `\(...\)` / `\[...\]` 区域，剩余文本中如有 `\command` 残留才调 API
+  - 逐字段修复 + `json.dumps()` 自动转义写回 DB
 
 # PDF 转换路径
 

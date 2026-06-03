@@ -121,7 +121,27 @@ python tools/reset_pipeline.py reset-report --days 3
 
 > **关于报告日期**：`get_papers_for_report()` 以 `report_date IS NULL` 作为过滤条件。论文首次被报告后写入 `report_date`，不再出现在后续报告中。通过 `reset-report --today` 或 `--days N` 可重置指定范围内被报告的论文，适用于当天重试需要合并报告的场景。
 
-### 6. Markdown → PDF 转换（实验性）
+### 6. 修复 LLM 总结中的 LaTeX 公式格式
+
+LLM 生成的总结有时存在公式分隔符反斜杠丢失（`(\alpha)` 应为 `\(\alpha\)`）或 LaTeX 命令裸写的问题。可使用本工具对已有总结进行修正，无需重跑 Phase F：
+
+```bash
+# 预览模式，查看哪些字段需要修复
+python tools/fix_summary_formulas.py --dry-run --verbose
+
+# 修复全部已有总结
+python tools/fix_summary_formulas.py
+
+# 单篇论文
+python tools/fix_summary_formulas.py --doi 10.1103/PhysRevLett.136.123456
+
+# 按出版社过滤
+python tools/fix_summary_formulas.py --publisher aps
+```
+
+修复逻辑：`FormulaFixer.needs_fix()` 先移除已正确包裹的 `\(...\)` / `\[...\]` 区域，仅当残留 `\command` 时调用 flash 模型。纯文本进/纯文本出，Python 的 `json.dumps()` 自动处理写入 DB 时的 JSON 转义。
+
+### 7. Markdown → PDF 转换（实验性）
 
 报告默认输出为 Markdown。如需 PDF，可尝试：
 
@@ -131,7 +151,7 @@ python tools/convert_md_to_pdf.py data/reports/report_20260601.md
 
 > ⚠️ **已知问题**：公式渲染尚不支持，PDF 中公式部分显示为空白。如有公式渲染需求请先使用 Markdown 格式报告。欢迎贡献修复。
 
-### 7. Web UI（新增）
+### 8. Web UI
 
 提供图形化界面控制流水线、查看状态、生成报告。
 
@@ -154,6 +174,19 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 - **Report** — 选择出版社范围，生成 Markdown 报告
 - **Logs** — 流水线日志查看，支持按级别过滤
 - **Config** — 只读展示 publishers.yaml / keywords.yaml / 阶段开关状态
+
+### 9. 调试与辅助工具
+
+```bash
+# 诊断 LLM Summary JSON 解析失败（打印错误上下文）
+python tools/debug_llm_summary.py <doi>
+
+# 用 headful 浏览器诊断 Publisher URL 抓取问题
+python tools/debug_publisher_urls.py
+
+# 重置空摘要论文的 Phase D/E/G 状态
+python tools/reset_empty_abstract.py
+```
 
 ## 支持的出版社/期刊
 
