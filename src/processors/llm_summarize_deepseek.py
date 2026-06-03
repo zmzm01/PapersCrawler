@@ -29,6 +29,8 @@ from typing import Optional, Dict, Any
 
 from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError, LLMContextLengthExceed
 
+logger = logging.getLogger(__name__)
+
 
 class DeepSeekPaperSummarizer:
     """
@@ -343,21 +345,29 @@ class FormulaFixer:
         cleaned = re.sub(r'\\\(.*?\\\)|\\\[.*?\\\]', '', text, flags=re.DOTALL)
         return bool(re.search(r'\\[a-zA-Z]{2,}', cleaned))
 
-    def fix_text(self, text: str) -> str:
+    def fix_text(self, text: str, field_name: str = "") -> str:
         """修正单段文本中的 LaTeX 公式格式问题。
 
         Parameters
         ----------
         text : str
             需要修复的文本字符串（纯文本，单反斜杠）
+        field_name : str
+            字段名（用于日志）
 
         Returns
         -------
         str
             修复后的文本，失败时回退原内容
         """
-        if not text or text == "未提供" or not self.needs_fix(text):
+        tag = f"[{field_name}] " if field_name else ""
+        if not text or text == "未提供":
+            logger.debug(f"{tag}跳过修复: 空字段或未提供")
             return text
+        if not self.needs_fix(text):
+            logger.debug(f"{tag}跳过修复: 无需修复")
+            return text
+        logger.info(f"{tag}正在修复公式格式 ({len(text)} 字符)")
         payload = {
             "model": self.config.get("model", "deepseek-v4-flash"),
             "messages": [
@@ -373,10 +383,10 @@ class FormulaFixer:
             )
             resp.raise_for_status()
             fixed = resp.json()["choices"][0]["message"]["content"]
+            logger.info(f"{tag}公式修复成功 ({len(text)}→{len(fixed)} 字符)")
             return fixed
         except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.warning(f"公式修复失败，回退原内容: {e}")
+            logger.warning(f"{tag}公式修复失败，回退原内容: {e}")
             return text
 
 

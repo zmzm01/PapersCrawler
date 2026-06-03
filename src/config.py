@@ -179,7 +179,7 @@ SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 # 对 json.loads 后的纯文本字段做二次公式包裹修正。
 # 先通过 needs_fix() regex 检测，仅命中时调 flash API（纯文本进/纯文本出）。
 # True = 跳过，False = 启用
-SKIP_FORMULA_FIX = True
+SKIP_FORMULA_FIX = False
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
 # 避免连续请求触发 Cloudflare 速率限制，降低 IP 信誉受损风险
