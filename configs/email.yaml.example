@@ -1,0 +1,18 @@
+# SMTP 邮件发送配置
+# 复制为 email.yaml 并填写真实信息后使用。
+# 注意：授权码不是邮箱密码，需在邮箱设置中生成。
+#
+# 常见邮箱 SMTP 配置：
+#   163.com:   端口 465, SSL (use_tls: false)
+#   QQ邮箱:    端口 587, TLS (use_tls: true)
+#   Gmail:     端口 587, TLS (use_tls: true)
+
+smtp_host: "smtp.163.com"        # SMTP 服务器
+smtp_port: 465                   # TLS: 587, SSL: 465
+use_tls: false                   # false = SSL (端口 465), true = STARTTLS (端口 587)
+username: "your_email@example.com"   # 邮箱账号
+password: "your_auth_code"          # 授权码（非邮箱密码）
+from_addr: "your_email@example.com"  # 发件人
+
+to_addrs:                         # 收件人列表
+  - "colleague@example.com"
