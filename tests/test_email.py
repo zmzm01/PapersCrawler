@@ -78,6 +78,7 @@ def test_send_tls_calls_correct_methods():
 
         mock_smtp.assert_called_once_with("smtp.test.com", 587, timeout=30)
         mock_instance.starttls.assert_called_once()
+        mock_instance.ehlo.assert_called_once()
         mock_instance.login.assert_called_once_with("user", "pass")
         mock_instance.send_message.assert_called_once()
         mock_instance.quit.assert_called_once()

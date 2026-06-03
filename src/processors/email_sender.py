@@ -15,6 +15,7 @@ email_sender.py
 """
 
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -76,63 +77,73 @@ class EmailSender:
         """
         发送邮件。
 
-        工作流程:
-          1. 构建 MIMEMultipart 邮件对象
-          2. 添加邮件头 (From, To, Subject)
-          3. 添加正文 (纯文本或 HTML)
-          4. 逐个添加附件（文件以 base64 编码）
-          5. 连接 SMTP 服务器，加密，登录，发送
+        含 1 次自动重试（共 2 次尝试），应对 SMTP 瞬态故障。
+        TLS 模式下在 STARTTLS 后主动发送 EHLO 重新协商能力（部分
+        国内 SMTP 服务器需要）。
 
         Args:
             subject:     邮件主题
             body:        邮件正文内容
             body_type:   "plain" 表示纯文本, "html" 表示 HTML 格式
-            attachments: 附件路径列表，如 ["/path/to/file.pdf", "/path/to/photo.png"]
-                         路径不存在则自动跳过该附件
+            attachments: 附件路径列表，路径不存在则自动跳过
 
         Returns:
             bool: 发送成功返回 True
 
         Raises:
-            smtplib.SMTPException: SMTP 连接或认证失败
-            socket.gaierror:      服务器地址解析失败
+            smtplib.SMTPException: 所有尝试均失败时抛出最后一次异常
+            OSError:               网络不可达 / DNS 解析失败
         """
         # ---- 1. 构建邮件对象 ----
-        msg = MIMEMultipart()                   # 支持正文+附件的复合邮件
+        msg = MIMEMultipart()
         msg["From"] = self.from_addr
-        msg["To"] = ", ".join(self.to_addrs)    # 多个收件人用逗号分隔
+        msg["To"] = ", ".join(self.to_addrs)
         msg["Subject"] = subject
-        msg.attach(MIMEText(body, body_type, "utf-8"))  # 正文使用 UTF-8 编码
+        msg.attach(MIMEText(body, body_type, "utf-8"))
 
         # ---- 2. 添加附件 ----
         if attachments:
             for path in attachments:
                 path = Path(path)
                 if not path.exists():
-                    continue                   # 附件不存在则静默跳过
+                    continue
                 with open(path, "rb") as f:
                     part = MIMEBase("application", "octet-stream")
                     part.set_payload(f.read())
-                    encoders.encode_base64(part)  # 附件 base64 编码
+                    encoders.encode_base64(part)
                     part.add_header(
                         "Content-Disposition",
                         f'attachment; filename="{path.name}"'
                     )
                     msg.attach(part)
 
-        # ---- 3. 连接 SMTP 服务器 ----
-        # TLS 模式: 先建立普通连接, 再升级为加密连接 (STARTTLS)
-        if self.use_tls:
-            server = smtplib.SMTP(self.host, self.port, timeout=30)
-            server.starttls()
-        # SSL 模式: 直接建立加密连接
-        else:
-            server = smtplib.SMTP_SSL(self.host, self.port, timeout=30)
+        # ---- 3. 连接并发送（含 1 次重试） ----
+        for attempt in range(2):
+            server = None
+            try:
+                if self.use_tls:
+                    # TLS (STARTTLS): 先明文连接，再升级为 TLS
+                    server = smtplib.SMTP(self.host, self.port, timeout=30)
+                    server.starttls()
+                    # RFC 3207: TLS 协商后须重新 EHLO 以获取加密通道内能力
+                    server.ehlo()
+                else:
+                    # SSL: 直接建立加密连接
+                    server = smtplib.SMTP_SSL(self.host, self.port, timeout=30)
 
-        try:
-            # ---- 4. 登录并发送 ----
-            server.login(self.username, self.password)
-            server.send_message(msg)
-        finally:
-            server.quit()
-        return True
+                server.login(self.username, self.password)
+                server.send_message(msg)
+                return True
+
+            except (smtplib.SMTPException, OSError) as e:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                raise
+
+            finally:
+                if server is not None:
+                    try:
+                        server.quit()
+                    except Exception:
+                        pass

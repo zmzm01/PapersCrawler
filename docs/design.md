@@ -401,6 +401,20 @@ abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
 
 配套工具 `tools/reset_empty_abstract.py` 可将已入库空摘要论文的 Phase D/E/G 重置为 pending，触发重新评估。
 
+## 6. SMTP 重试与连接加固
+
+`EmailSender.send()` (`src/processors/email_sender.py`) 含 1 次自动重试（共 2 次尝试），间隔 2s：
+
+| 尝试 | 行为 |
+|------|------|
+| 第 1 次 | 正常连接 |
+| 第 2 次 | sleep(2) 后重试，失败则抛最后一次异常 |
+
+额外保护措施：
+- 连接代码包裹在 `try/except` 内，`SMTPServerDisconnected` 等异常被捕获后触发重试
+- TLS 模式下 STARTTLS 后显式调用 `ehlo()` 重新协商加密通道能力（RFC 3207）
+- `finally` 中 `server.quit()` 以 `try/except` 保护，且先判断 `server is not None`
+
 ## 6. 非论文页面检测（NonResearchPageError）
 
 某些 RSS 抓取的条目不是研究论文（Erratum、Publisher's Note、Comment on、Response to 等），
