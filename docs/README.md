@@ -9,7 +9,7 @@
 ### 1. 安装依赖
 
 ```bash
-pip install requests feedparser beautifulsoup4 parsel pyyaml python-dateutil
+pip install requests feedparser beautifulsoup4 parsel pyyaml ruamel.yaml python-dateutil
 pip install python-dotenv                  # .env 密钥加载
 pip install cloakbrowser "cloakbrowser[geoip]"  # 浏览器自动化
 pip install sentence-transformers          # 语义相似度初筛（Phase D）
@@ -41,20 +41,19 @@ keywords:
   - ...
 ```
 
-**configs/email.yaml** — 邮件推送配置（可选，不填则跳过）：
+**SMTP 配置（可选，不配置则跳过 Phase H）：** 编辑 `.env` 文件，添加以下字段：
 
-```yaml
-smtp_host: "smtp.qq.com"
-smtp_port: 587
-use_tls: true
-username: "your_email@qq.com"
-password: "your_auth_code"          # 授权码，不是邮箱密码
-from_addr: "your_email@qq.com"
-to_addrs:
-  - "colleague1@example.com"
+```ini
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=587
+SMTP_USE_TLS=true
+SMTP_USERNAME=your_email@qq.com
+SMTP_PASSWORD=your_auth_code          # 授权码，不是邮箱密码
+SMTP_FROM_ADDR=your_email@qq.com
+SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 ```
 
-> ⚠️ `.env` 和 `configs/email.yaml` 包含真实密钥，**不要提交到公开仓库**。
+> ⚠️ `.env` 包含真实密钥，**不要提交到公开仓库**。
 
 配置自检：
 
@@ -153,7 +152,10 @@ python tools/convert_md_to_pdf.py data/reports/report_20260601.md
 
 ### 8. Web UI
 
-提供图形化界面控制流水线、查看状态、生成报告。
+提供图形化界面控制流水线、查看状态、管理数据源、生成报告。
+
+> **定位**：Pipeline 监控仪表盘 + 报告工作站，不是 CLI 的替代品。
+> **配置隔离**：CLI 使用 `src/config.py`，Web UI 使用独立覆写文件（`data/skip_overrides.json` / `data/journal_overrides.json`），互不干扰。
 
 ```bash
 # 安装额外依赖
@@ -169,11 +171,15 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 打开浏览器访问 `http://localhost:8080`。
 
 **页面功能：**
-- **Dashboard** — 各阶段论文状态统计（成功/失败/跳过/待处理）
-- **Pipeline** — 点击按钮独立运行每个阶段，实时日志流（SSE）
-- **Report** — 选择出版社范围，生成 Markdown 报告
-- **Logs** — 流水线日志查看，支持按级别过滤
-- **Config** — 只读展示 publishers.yaml / keywords.yaml / 阶段开关状态
+| 页面 | 功能 |
+|------|------|
+| **Home** | 项目介绍、出版社/论文统计、快速入门指南 |
+| **Pipeline** | 10 阶段（A-RSS / A-CR 独立）Run/Reset 按钮 + 状态柱状图 + SSE 实时日志。Config 页跳过的阶段按钮灰显不可点击 |
+| **Papers** | 论文列表，默认按入库日期排序，可选按发表日期排序（含精度警告）。展示语义相似度分（可选）和 LLM 相关性状态 ✓/✗ |
+| **Report** | 勾选有 LLM 总结的论文 → 生成 Markdown 报告 → 浏览器预览 + 下载（写入 `data/reports/user/`） |
+| **Data Sources** | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源。写入 `data/journal_overrides.json` |
+| **Logs** | 流水线日志（`data/PaperCrawler.log`），支持按级别过滤 |
+| **Config** | SKIP 开关切换（影响 Pipeline 页按钮）、研究领域描述编辑、连通性测试（DeepSeek/CrossRef/MinerU）、MinerU Token 过期色标、YAML 编辑器 |
 
 ### 9. 调试与辅助工具
 
