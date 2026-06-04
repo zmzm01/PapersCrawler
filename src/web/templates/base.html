@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PapersCrawler - {% block title %}Home{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.8/marked.min.js" defer></script>
 </head>
 <body>
   <div class="layout">
@@ -18,6 +22,7 @@
         <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}"><span data-i18n="nav.pipeline">Pipeline</span></a></li>
         <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><span data-i18n="nav.papers">Papers</span></a></li>
         <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><span data-i18n="nav.report">Report</span></a></li>
+        <li><a href="/datasources" class="{% if request.url.path == '/datasources' %}active{% endif %}"><span data-i18n="nav.datasources">Data Sources</span></a></li>
         <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}"><span data-i18n="nav.logs">Logs</span></a></li>
         <li><a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}"><span data-i18n="nav.config">Config</span></a></li>
       </ul>

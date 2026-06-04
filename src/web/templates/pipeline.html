@@ -27,7 +27,7 @@
       <td><span class="badge badge-pending" id="badge-{{ phase.key }}">-</span></td>
       <td class="phase-actions">
         <button class="btn btn-sm btn-primary" onclick="runPhase('{{ phase.key }}')" id="run-{{ phase.key }}" data-i18n="pipeline.run">Run</button>
-        {% if phase.key != 'A' and phase.key != 'H' %}
+        {% if phase.key != 'A-RSS' and phase.key != 'A-CR' and phase.key != 'H' %}
         <button class="btn btn-sm btn-secondary" onclick="confirmReset('{{ phase.key }}')" id="reset-{{ phase.key }}" data-i18n="pipeline.reset">Reset</button>
         {% endif %}
       </td>
@@ -90,6 +90,22 @@ const CHART_TO_PHASE_KEY = {
   llm_summary: 'F',
 };
 
+function updatePhaseButtons(effectiveSkip) {
+  for (const [phase, skipped] of Object.entries(effectiveSkip)) {
+    const btn = document.getElementById('run-' + phase);
+    if (!btn) continue;
+    if (skipped) {
+      btn.disabled = true;
+      btn.classList.add('btn-disabled');
+      btn.innerHTML = (currentLang === 'zh' ? '已跳过' : 'Skipped');
+    } else {
+      btn.disabled = false;
+      btn.classList.remove('btn-disabled');
+      btn.innerHTML = currentLang === 'zh' ? '运行' : 'Run';
+    }
+  }
+}
+
 async function refreshCharts() {
   const r = await fetch('/pipeline/status');
   const data = await r.json();
@@ -125,6 +141,7 @@ async function refreshCharts() {
       }
     }
   }
+  updatePhaseButtons(data.effective_skip || {});
   // Legend
   const legend = document.createElement('div');
   legend.className = 'chart-legend';

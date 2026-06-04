@@ -1,8 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Report{% endblock %}
 {% block content %}
-<h2 data-i18n="report.title">Generate Report</h2>
+<h2 data-i18n="report.title">Report</h2>
 
+<div class="report-viewer">
+  <div class="report-viewer-toolbar">
+    <label><span data-i18n="report.choose_report">Report:</span>
+      <select id="report-select" onchange="loadReport()">
+        <option value="" data-i18n="report.select_hint">-- Select a report --</option>
+        {% for r in reports %}
+        <option value="{{ r.filename }}">{{ r.filename }} ({{ r.source }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <a id="report-download-link" class="btn btn-sm btn-primary" target="_blank" style="display:none" data-i18n="report.download">Download</a>
+  </div>
+  <div id="report-content" class="report-content">
+    {% if reports %}
+    <p class="text-muted" data-i18n="report.choose_hint">Select a report above to view rendered content.</p>
+    {% else %}
+    <p class="text-muted" data-i18n="report.no_report">No reports found. Generate one below.</p>
+    {% endif %}
+  </div>
+</div>
+
+<hr class="section-divider">
+
+<h3 data-i18n="report.generate_title">Generate Custom Report</h3>
 <div class="report-controls">
   <label><span data-i18n="report.publisher">Publisher:</span>
     <select id="filter-publisher" onchange="filterPapers()">
@@ -36,13 +60,68 @@
 </table>
 
 <div id="report-preview" class="report-preview" style="display:none;">
-  <h3 data-i18n="report.preview">Report Preview</h3>
+  <h3 data-i18n="report.preview">Preview</h3>
   <p id="report-filename" class="text-muted"></p>
   <pre class="config-pre" id="preview-content"></pre>
   <a id="download-link" class="btn btn-sm btn-primary" target="_blank" style="display:inline-block;" data-i18n="report.download">Download</a>
 </div>
 
 <script>
+// ── Report viewer ──────────────────────────────────────────────────────────
+
+function renderReportContent(markdown) {
+  const container = document.getElementById('report-content');
+  if (!markdown) {
+    container.innerHTML = '<p class="text-muted">(empty report)</p>';
+    return;
+  }
+  const html = marked.parse(markdown, { breaks: true, gfm: true });
+  container.innerHTML = html;
+  try {
+    renderMathInElement(container, {
+      delimiters: [
+        {left: '\\[', right: '\\]', display: true},
+        {left: '\\(', right: '\\)', display: false},
+      ],
+      throwOnError: false,
+      errorColor: '#cc0000',
+    });
+  } catch (e) {
+    console.warn('KaTeX render error:', e);
+  }
+}
+
+async function loadReport() {
+  const sel = document.getElementById('report-select');
+  const filename = sel.value;
+  const container = document.getElementById('report-content');
+  const dl = document.getElementById('report-download-link');
+  if (!filename) {
+    container.innerHTML = '<p class="text-muted" data-i18n="report.choose_hint">Select a report above to view rendered content.</p>';
+    dl.style.display = 'none';
+    if (typeof switchLanguage === 'function') switchLanguage(currentLang);
+    return;
+  }
+  container.innerHTML = '<p class="text-muted">Loading...</p>';
+  dl.href = '/report/download/' + encodeURIComponent(filename);
+  dl.style.display = 'inline-block';
+  dl.setAttribute('download', filename);
+  try {
+    const r = await fetch('/report/data/' + encodeURIComponent(filename));
+    const data = await r.json();
+    if (data.ok) {
+      renderReportContent(data.content);
+    } else {
+      container.innerHTML = '<p class="text-muted">Error: ' + (data.error || 'failed to load') + '</p>';
+    }
+  } catch (err) {
+    container.innerHTML = '<p class="text-muted">Network error: ' + err.message + '</p>';
+  }
+  if (typeof switchLanguage === 'function') switchLanguage(currentLang);
+}
+
+// ── Generate report ────────────────────────────────────────────────────────
+
 function filterPapers() {
   const pub = document.getElementById('filter-publisher').value;
   document.querySelectorAll('#paper-table tbody tr').forEach(tr => {
@@ -72,15 +151,38 @@ async function generateReport() {
       return;
     }
     document.getElementById('report-preview').style.display = 'block';
-    document.getElementById('preview-content').textContent = data.preview || '(empty report)';
+    const pc = document.getElementById('preview-content');
+    pc.textContent = data.preview || '(empty report)';
+    renderReportContent(data.preview || '');
     document.getElementById('download-link').href = '/report/download/' + data.filename;
     document.getElementById('download-link').style.display = 'inline-block';
     document.getElementById('report-filename').textContent = (getI18n('report.generated') || 'Generated: ') + data.filename;
+    // Refresh report selector to include newly generated report
+    const sel = document.getElementById('report-select');
+    const opt = document.createElement('option');
+    opt.value = data.filename;
+    opt.textContent = data.filename + ' (user)';
+    // Remove existing option with same value
+    for (let i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === data.filename) { sel.remove(i); break; }
+    }
+    sel.insertBefore(opt, sel.options[1] || null);
+    sel.value = data.filename;
+    loadReport();
   } catch (err) {
     alert('Network error: ' + err.message);
   } finally {
     btn.disabled = false; btn.textContent = getI18n('report.generate') || 'Generate Report';
   }
 }
+
+// Auto-load first report on page load
+document.addEventListener('DOMContentLoaded', function() {
+  const sel = document.getElementById('report-select');
+  if (sel.options.length > 1) {
+    sel.selectedIndex = 1;
+    loadReport();
+  }
+});
 </script>
 {% endblock %}
