@@ -8,8 +8,9 @@ import json
 
 from config import (
     load_publishers, load_keywords,
-    DB_PATH, REPORT_DIR, DATA_DIR,
-    SKIP_PHASE_A, SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
+    DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR, DATA_DIR,
+    SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
+    SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
     SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
 )
 
@@ -28,15 +29,17 @@ def _load_skip_overrides():
 def _get_effective_skip(overrides):
     """Build effective skip dict: overrides take precedence over defaults."""
     defaults = {
-        "A": SKIP_PHASE_A, "B": SKIP_PHASE_B, "C": SKIP_PHASE_C,
+        "A_RSS": SKIP_PHASE_A_RSS, "A_CR": SKIP_PHASE_A_CR,
+        "B": SKIP_PHASE_B, "C": SKIP_PHASE_C,
         "D": SKIP_PHASE_D, "E": SKIP_PHASE_E, "E2": SKIP_PHASE_E2,
         "F": SKIP_PHASE_F, "G": SKIP_PHASE_G, "H": SKIP_PHASE_H,
+
     }
     return {k: overrides.get(k, defaults[k]) for k in defaults}
 from db.database import DatabaseClient
 from pipeline.base import logger
 
-from pipeline.phase_a import phase_a_rss
+from pipeline.phase_a import phase_a_rss, phase_a_crossref
 from pipeline.phase_b import phase_b_crossref
 from pipeline.phase_c import phase_c_publisher
 from pipeline.phase_d import phase_d_semantic_filter
@@ -56,8 +59,9 @@ def run_phases(phase_list=None, force=False):
         Phase names to run (e.g. ["A", "C", "F"]).
         If None, runs all non-skipped phases.
     force : bool, optional
-        If True, ignore SKIP_PHASE_* config and run requested phases.
-        Used by Web UI where buttons control execution explicitly.
+        If True, load SKIP overrides from data/skip_overrides.json.
+        Used by Web UI: overrides are set via Config page SKIP toggles.
+        CLI (force=False) always uses config.py defaults only.
     """
     publishers = load_publishers()
     keywords = load_keywords()
@@ -66,23 +70,26 @@ def run_phases(phase_list=None, force=False):
                 f"domain: {len(keywords['domain_description'])} chars")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    AUTO_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    USER_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     db = DatabaseClient(DB_PATH)
     db.init_db_papers()
     logger.info(f"Database ready: {DB_PATH}")
 
-    overrides = _load_skip_overrides()
+    overrides = _load_skip_overrides() if force else {}
     effective_skip = _get_effective_skip(overrides)
     phase_map = {
-        "A": (phase_a_rss, [db, publishers], not effective_skip["A"]),
+        "A-RSS": (phase_a_rss, [db, publishers], not effective_skip["A_RSS"]),
+        "A-CR": (phase_a_crossref, [db, publishers], not effective_skip["A_CR"]),
         "B": (phase_b_crossref, [db], not effective_skip["B"]),
         "C": (phase_c_publisher, [db], not effective_skip["C"]),
         "D": (phase_d_semantic_filter, [db, keywords], not effective_skip["D"]),
         "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
         "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
         "F": (phase_f_llm_summary, [db], not effective_skip["F"]),
-        "G": (phase_g_report, [db, REPORT_DIR], not effective_skip["G"]),
-        "H": (phase_h_email, [REPORT_DIR], not effective_skip["H"]),
+        "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], not effective_skip["G"]),
+        "H": (phase_h_email, [AUTO_REPORT_DIR], not effective_skip["H"]),
     }
 
     if phase_list is None:
@@ -93,8 +100,8 @@ def run_phases(phase_list=None, force=False):
 
     for key in phase_list:
         func, args, enabled = phase_map[key]
-        if not force and not enabled:
-            logger.info(f"Phase {key}: SKIP_PHASE_{key}=True, skipping")
+        if not enabled:
+            logger.info(f"Phase {key}: skipped by config/override")
             continue
         func(*args)
 

@@ -1,5 +1,8 @@
 """
 Phase H: Email delivery.
+
+Sends today's auto-generated report if it exists,
+or a no-update notification if no report was generated.
 """
 
 from datetime import datetime
@@ -10,13 +13,13 @@ from pipeline.base import logger
 from processors.email_sender import EmailSender
 
 
-def phase_h_email(report_dir):
-    """Send latest report via email.
+def phase_h_email(auto_dir):
+    """Send today's auto report or a no-update notification via email.
 
     Parameters
     ----------
-    report_dir : Path
-        Directory containing generated reports.
+    auto_dir : Path
+        Directory containing auto-generated daily reports.
     """
     logger.info("--- Phase H: Email delivery ---")
     if SKIP_PHASE_H:
@@ -43,16 +46,9 @@ def phase_h_email(report_dir):
         logger.info("Phase H: no recipients, skipping")
         return
 
-    report_dir = Path(report_dir)
-    md_files = sorted(report_dir.glob("report_*.md"), reverse=True)
-
-    attachments = []
-    if md_files:
-        attachments.append(str(md_files[0]))
-
-    if not attachments:
-        logger.info("Phase H: no report files, skipping")
-        return
+    auto_dir = Path(auto_dir)
+    today_str = datetime.now().strftime("%Y%m%d")
+    today_report = auto_dir / f"report_{today_str}.md"
 
     sender = EmailSender(
         smtp_host=email_cfg["smtp_host"],
@@ -64,17 +60,31 @@ def phase_h_email(report_dir):
         use_tls=email_cfg.get("use_tls", True),
     )
 
-    subject = f"PapersCrawler Report - {datetime.now().strftime('%Y-%m-%d')}"
-    body = (
-        f"您好，\n\n"
-        f"以下是近期的文献追踪报告，包含 {len(attachments)} 个附件。\n\n"
-        f"祝好！\nPapersCrawler 自动发送"
-    )
+    date_str = datetime.now().strftime("%Y-%m-%d")
 
-    try:
-        sender.send(subject, body, body_type="plain", attachments=attachments)
-        logger.info(f"Email sent to {len(to_addrs)} recipients")
-    except Exception as e:
-        logger.error(f"Email send failed: {e}")
+    if today_report.exists():
+        subject = f"PapersCrawler Report - {date_str}"
+        body = (
+            f"您好，\n\n"
+            f"以下是近期的文献追踪报告。\n\n"
+            f"祝好！\nPapersCrawler 自动发送"
+        )
+        try:
+            sender.send(subject, body, body_type="plain", attachments=[str(today_report)])
+            logger.info(f"Report sent: {today_report.name}")
+        except Exception as e:
+            logger.error(f"Email send failed: {e}")
+    else:
+        subject = f"PapersCrawler Report - {date_str} (No Updates)"
+        body = (
+            f"您好，\n\n"
+            f"本期无新增相关论文，无需关注。\n\n"
+            f"祝好！\nPapersCrawler 自动发送"
+        )
+        try:
+            sender.send(subject, body, body_type="plain")
+            logger.info("No new papers, sent no-update notification")
+        except Exception as e:
+            logger.error(f"Email send failed: {e}")
 
     logger.info("Phase H done")

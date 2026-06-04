@@ -1,5 +1,9 @@
 """
 Phase G: Report generation.
+
+Two modes:
+  - Auto (doi_list=None): pipeline daily run, writes to auto_dir, marks papers reported
+  - User (doi_list provided): Web UI custom selection, writes to user_dir, no mark
 """
 
 import json
@@ -12,35 +16,41 @@ from pipeline.base import logger
 from processors.paper_report_generator import generate_report
 
 
-def phase_g_report(db, report_dir, doi_list=None):
+def phase_g_report(db, auto_dir, user_dir, doi_list=None):
     """Generate Markdown report from summarized papers.
 
     Parameters
     ----------
     db : DatabaseClient
-    report_dir : Path
-        Output directory for reports.
+    auto_dir : Path
+        Output directory for auto-generated daily reports.
+    user_dir : Path
+        Output directory for user-selected custom reports.
     doi_list : list of str, optional
-        If provided, only generate report for these DOIs.
-        If None, use all unreported papers with summaries.
+        If provided, user-selected mode (write to user_dir, no mark).
+        If None, auto mode (write to auto_dir, mark papers reported).
     """
-    if SKIP_PHASE_G:
+    is_auto = doi_list is None
+    if SKIP_PHASE_G and is_auto:
         logger.info("Phase G: SKIP_PHASE_G=True, skipping")
         return
     logger.info("--- Phase G: Report generation ---")
 
-    if doi_list:
+    if is_auto:
+        papers = db.get_papers_for_report()
+    else:
         placeholders = ",".join("?" for _ in doi_list)
         cur = db.conn.execute(
             f"SELECT * FROM papers WHERE llm_summary_status = 'success' AND doi IN ({placeholders})",
             doi_list,
         )
         papers = cur.fetchall()
-    else:
-        papers = db.get_papers_for_report()
 
     if not papers:
-        logger.info("Phase G: no new summarized papers")
+        if is_auto:
+            logger.info("Phase G: no new summarized papers")
+        else:
+            logger.info("Phase G: no papers found for selected DOIs")
         return
 
     logger.info(f"Phase G: {len(papers)} papers for report")
@@ -85,18 +95,21 @@ def phase_g_report(db, report_dir, doi_list=None):
         paper_list.append(paper_dict)
         reported_dois.append(p["doi"])
 
-    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_dir = Path(report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
+    if is_auto:
+        out_dir = Path(auto_dir)
+        date_str = datetime.now().strftime("%Y%m%d")
+        md_path = out_dir / f"report_{date_str}.md"
+        report_timestamp = str(datetime.now())
+        db.mark_papers_reported(reported_dois, report_timestamp)
+        logger.info(f"Marked {len(reported_dois)} papers as reported")
+    else:
+        out_dir = Path(user_dir)
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        md_path = out_dir / f"report_{timestamp_str}.md"
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     md_report = generate_report(paper_list, format="markdown", toc=True)
-    md_path = report_dir / f"report_{timestamp_str}.md"
     md_path.write_text(md_report, encoding="utf-8")
     logger.info(f"Report saved: {md_path}")
 
-    report_timestamp = str(datetime.now())
-    db.mark_papers_reported(reported_dois, report_timestamp)
-    logger.info(f"Marked {len(reported_dois)} papers as reported")
-
     logger.info(f"Phase G done: {len(paper_list)} papers in report")
-    logger.info(f"For PDF: python tools/convert_md_to_pdf.py {md_path}")

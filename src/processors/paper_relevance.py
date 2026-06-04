@@ -257,7 +257,7 @@ class PaperRelevanceChecker:
                 try:
                     json.loads(content)
                 except json.JSONDecodeError:
-                    fixed = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', content)
+                    fixed = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', content)
                     try:
                         json.loads(fixed)
                         content = fixed
@@ -320,44 +320,46 @@ class PaperRelevanceChecker:
 
 class SemanticFilter:
     """
-    语义相似度初筛器。
+    语义相似度参考排序器。
 
-    使用 sentence-transformers 将论文标题+摘要与研究领域描述分别编码为向量，
-    计算余弦相似度作为相关性得分。相比关键词匹配的优势：
+    使用 sentence-transformers 将论文标题+摘要与多个子领域描述分别编码为向量，
+    计算余弦相似度，取最高分作为论文的语义相似度得分。
+    该分数仅用作 WebUI Papers 页面的排序参考，不参与流水线过滤。
 
-    1. 能捕获同义词（如 "GNN" ↔ "graph neural network" ↔ "graph attention network"）
-    2. 能处理上下位词关系（如 "node classification" 与 "graph learning" 仍有一定相关性）
-    3. 模型加载一次后复用，适合大批量论文的初筛场景
+    相比关键词匹配的优势:
+    1. 能捕获同义词（如 "LWFA" ↔ "laser wakefield acceleration"）
+    2. 能处理上下位词关系
+    3. 模型加载一次后复用，适合大批量论文批量计算
     4. 纯本地运行，不依赖外部 API
 
     使用示例:
         sf = SemanticFilter(
-            model_name="all-MiniLM-L6-v2",
-            domain_description="研究领域涵盖：laser plasma, wakefield acceleration"
+            model_name="bge-base-en-v1.5",
+            sub_domains={
+                "ion_acceleration": "Laser-driven ion acceleration...",
+                "beam_transport": "High-gradient plasma beam transport...",
+            }
         )
-        score = sf.compute_similarity(
+        score, best_sub = sf.compute_similarity(
             title="Laser wakefield acceleration of electrons",
             abstract="We demonstrate electron acceleration..."
         )
-        # score ≈ 0.65 — 标题和摘要与领域描述高度语义相关
+        # score ≈ 0.65, best_sub ≈ "beam_transport"
 
     需要安装: pip install sentence-transformers
     """
 
-    def __init__(self, model_name: str, domain_description: str):
+    def __init__(self, model_name: str, sub_domains: dict[str, str] | str = None):
         """
-        初始化语义过滤器，加载模型并预编码领域描述。
-
-        模型加载和领域描述的编码是初始化中最耗时的操作（数秒），
-        完成后后续的 compute_similarity 调用只需编码论文文本，
-        再计算一次余弦相似度，速度很快。
+        初始化语义过滤器，加载模型并预编码各子领域描述。
 
         Args:
-            model_name:         HuggingFace 模型名。
-                                推荐: "all-MiniLM-L6-v2" (轻量快速, 英文)
-                                      "paraphrase-multilingual-MiniLM-L12-v2" (多语言)
-            domain_description: 用自然语言描述的研究领域。
-                                例如 "激光等离子体物理，包括尾场加速、质子加速、超快光学"
+            model_name: HuggingFace 模型名。
+                        "bge-base-en-v1.5" 推荐 (512 tokens, 768-dim)
+            sub_domains: dict[str, str] — 子领域标签到描述的映射。
+                         如 {"ion_acceleration": "Laser-driven ion..."}
+                         若传入普通 str，则包装为 {"default": domain_description}
+                         保持与旧接口兼容。
 
         Raises:
             ImportError: sentence-transformers 未安装
@@ -370,30 +372,38 @@ class SemanticFilter:
             )
 
         self.model = SentenceTransformer(model_name, local_files_only=True)
-        # 预编码领域描述为向量（初始化时只做一次）
-        self.domain_embedding = self.model.encode(
-            domain_description, convert_to_tensor=True
-        )
 
-    def compute_similarity(self, title: str, abstract: str) -> float:
+        if isinstance(sub_domains, str):
+            self.sub_domain_texts = {"default": sub_domains}
+        elif sub_domains is None:
+            self.sub_domain_texts = {"default": ""}
+        else:
+            self.sub_domain_texts = sub_domains
+
+        self.sub_domain_embeddings = {
+            label: self.model.encode(text, convert_to_tensor=True)
+            for label, text in self.sub_domain_texts.items()
+            if text.strip()
+        }
+
+    def compute_similarity(self, title: str, abstract: str) -> tuple[float, str | None]:
         """
-        计算论文文本与领域描述的语义相似度。
+        计算论文文本与各子领域描述的语义相似度。
 
         流程:
         1. 拼接 title + abstract 为 paper_text
-        2. 用 SentenceTransformer 将 paper_text 编码为向量
-        3. 计算 paper_embedding 与 domain_embedding 的余弦相似度
+        2. 编码 paper_text 为向量
+        3. 计算与所有子领域嵌入的余弦相似度
+        4. 返回最高分及对应的子领域标签
 
         Args:
             title:    论文标题
             abstract: 论文摘要
 
         Returns:
-            float: 余弦相似度，范围 [0, 1]，越高越相关。
-                   0.3 以下 → 基本不相关
-                   0.3~0.5 → 轻微相关
-                   0.5~0.7 → 相关
-                   0.7+    → 高度相关
+            tuple[float, str | None]: (max_score, best_subdomain_label)
+                    max_score: 最高余弦相似度 [0, 1]
+                    best_label: 匹配最佳的字段域标签，无可用于 None
         """
         from sentence_transformers import util
 
@@ -401,8 +411,14 @@ class SemanticFilter:
         paper_embedding = self.model.encode(
             paper_text, convert_to_tensor=True
         )
-        score = util.cos_sim(self.domain_embedding, paper_embedding).item()
-        return score
+        best_score = 0.0
+        best_label = None
+        for label, emb in self.sub_domain_embeddings.items():
+            score = util.cos_sim(self.sub_domain_embeddings[label], paper_embedding).item()
+            if score > best_score:
+                best_score = score
+                best_label = label
+        return best_score, best_label
 
 
 # ------------------------------------------------------------------
@@ -448,9 +464,13 @@ if __name__ == "__main__":
     # llm_result = checker.call_deepseek_api(prompt, LLM_API_CONFIG_DICT)
     # print(llm_result)
 
-    # 3. 语义相似度（使用 SemanticFilter，见下方该类的 compute_similarity() 方法）
+    # 3. 语义相似度（使用 SemanticFilter，多子领域模式）
     # from processors.paper_relevance import SemanticFilter
     # from config import SEMANTIC_MODEL_PATH
-    # sf = SemanticFilter(SEMANTIC_MODEL_PATH, "研究领域涵盖：" + ", ".join(keywords))
-    # sim = sf.compute_similarity(title, abstract)
-    # print(f"语义相似度: {sim:.3f}")
+    # sub_domains = {
+    #     "graph_learning": "Graph neural networks for node classification and link prediction.",
+    #     "embedding": "Graph embedding and representation learning methods.",
+    # }
+    # sf = SemanticFilter(SEMANTIC_MODEL_PATH, sub_domains)
+    # score, best = sf.compute_similarity(title, abstract)
+    # print(f"语义相似度: {score:.3f}, 最佳子领域: {best}")
