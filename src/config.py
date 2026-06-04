@@ -6,7 +6,7 @@ config.py
 职责:
   1. 定义所有文件路径常量（数据库、日志、缓存目录等）
   2. 定义运行参数（超时时间、API 密钥等）
-  3. 提供配置文件加载函数（publishers.yaml / keywords.yaml / email.yaml）
+   3. 提供配置文件加载函数（publishers.yaml / keywords.yaml / load_email_config）
   4. 存放 LLM 系统提示词
 
 注意事项:
@@ -53,7 +53,9 @@ RAW_RSS_DIR = DATA_DIR / "raw" / "rss"
 RAW_PAGE_DIR = DATA_DIR / "raw" / "page"
 
 # 生成的报告输出目录
-REPORT_DIR = DATA_DIR / "reports"
+REPORT_DIR = DATA_DIR / "reports"                # 报告根目录
+AUTO_REPORT_DIR = DATA_DIR / "reports" / "auto"  # 自动日报目录 (Phase G 自动)
+USER_REPORT_DIR = DATA_DIR / "reports" / "user"  # 用户自选报告目录 (Web UI)
 MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 
 
@@ -131,7 +133,8 @@ SUMMARIES_PROMPT = """
     行内公式必须用 \\(...\\) 包裹，禁止用 $...$。
     独立公式（行间公式）必须用 \\[...\\] 包裹，禁止用 $$...$$。
     **所有 LaTeX 命令必须被数学模式包裹，禁止裸写**。
-4. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
+4. 禁止使用复杂 LaTeX 环境：禁止 \\begin{} / \\end{}（如 cases、aligned 等），禁止 \\\\ 换行。公式仅限 \\frac、\\sqrt、\\int、\\sum、\\partial 等基本命令及上标/下标/希腊字母。
+5. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
 
 【main_results_and_physics 字段的 Markdown 要求】
 - 使用标准 Markdown 语法：二级标题 ##，粗体 **，斜体 *，行内代码 `，列表 -，引用 >。
@@ -141,21 +144,14 @@ SUMMARIES_PROMPT = """
 
 
 # ==================================================================
-# 语义相似度初筛配置
-# 使用 sentence-transformers 模型判断论文与领域的语义相似度
+# 语义相似度参考排序配置（Phase D）
+# 使用 sentence-transformers 模型计算论文与子领域的余弦相似度。
+# 此分数仅作为 WebUI Papers 页面的排序参考，不参与流水线过滤。
 # 模型已本地化到 data/models/ 目录，无需网络下载
 # ==================================================================
 
-# 模型路径 (本地目录，首次需从 hf-mirror.com 下载后放入)
-# HuggingFace 镜像 (国内直连 huggingface.co 可能失败)
-# 改为本地模型后不再需要网络访问
-SEMANTIC_MODEL_PATH = str(DATA_DIR / "models" / "all-MiniLM-L6-v2")
-
-# 相似度阈值 (0~1)，低于此值的论文直接跳过 LLM 判断
-#   0.3 推荐起点 — 滤掉明显不相关的
-#   0.2 宽松 — 会放过较多无关论文进 LLM
-#   0.4 严格 — 可能漏掉有用但表述不同的论文
-SEMANTIC_SIMILARITY_THRESHOLD = 0.3
+# 模型路径 (本地目录，首次需从 HuggingFace 下载后放入)
+SEMANTIC_MODEL_PATH = str(DATA_DIR / "models" / "bge-base-en-v1.5")
 
 # ==================================================================
 # 测试/调试开关
@@ -165,21 +161,32 @@ SEMANTIC_SIMILARITY_THRESHOLD = 0.3
 # 每阶段最多处理 N 篇论文 (0 = 不限制)
 MAX_PAPERS_PER_PHASE = 0
 # 阶段开关（True = 跳过该阶段）
-SKIP_PHASE_A = False
+SKIP_PHASE_A = False       # 保持兼容: 同时控制 A-RSS + A-CR (不等同于 SKIP_PHASE_A_RSS AND SKIP_PHASE_A_CR)
+SKIP_PHASE_A_RSS = False   # RSS 发现路径独立开关
+SKIP_PHASE_A_CR = False    # CrossRef 发现路径独立开关
 SKIP_PHASE_B = False
 SKIP_PHASE_C = False
-SKIP_PHASE_D = False
+SKIP_PHASE_D = True  # 默认跳过，所有论文直接进 Phase E LLM 判断
 SKIP_PHASE_E = False
 SKIP_PHASE_E2 = False
 SKIP_PHASE_F = False
 SKIP_PHASE_G = False
 SKIP_PHASE_H = True  # 邮件推送 (SMTP 已配置)
 
+# Phase A CrossRef 发现: 回溯天数（每日增量模式下取今天往前 N 天）
+CROSSREF_LOOKBACK_DAYS = 1
+
 # LLM 公式修复开关（实验性功能，默认关闭）
 # 对 json.loads 后的纯文本字段做二次公式包裹修正。
 # 先通过 needs_fix() regex 检测，仅命中时调 flash API（纯文本进/纯文本出）。
 # True = 跳过，False = 启用
 SKIP_FORMULA_FIX = False
+
+# 强制公式修复开关
+# 为 True 时跳过 needs_fix() 正则检测，所有字段都送 LLM 修复。
+# 适用于正则无法覆盖的边缘情况（如裸上下标 E = m c^2 等）。
+# True = 跳过检测直接修复，False = 仅修复正则命中的字段
+FORCE_FORMULA_FIX = False
 
 # Phase C Publisher 爬虫: 同 publisher 内页面间随机延迟范围 (秒)
 # 避免连续请求触发 Cloudflare 速率限制，降低 IP 信誉受损风险
@@ -234,51 +241,86 @@ def load_keywords():
          → domain_description 回退为关键词拼接
       2. 字典 {"keywords": [...], "domain_description": "..."}
          → 有 domain_description 则使用，无则回退
-      3. 字典 {"keywords": [...]}
-         → domain_description 回退为关键词拼接
+      3. 字典 {"keywords": [...], "domain_description": "...", "sub_domains": {...}}
+         → sub_domains 为二维映射（标签 → 段落），供 Phase D 语义相似度使用
 
     Returns:
-        dict: {"keywords": list[str], "domain_description": str}
-              文件不存在或为空时返回 {"keywords": [], "domain_description": ""}
+        dict: {"keywords": list[str], "domain_description": str, "sub_domains": dict[str, str]}
+              文件不存在或为空时返回 {"keywords": [], "domain_description": "", "sub_domains": {}}
     """
     path = CONFIG_DIR / "keywords.yaml"
     if not path.exists():
-        return {"keywords": [], "domain_description": ""}
+        return {"keywords": [], "domain_description": "", "sub_domains": {}}
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if data is None:
-        return {"keywords": [], "domain_description": ""}
+        return {"keywords": [], "domain_description": "", "sub_domains": {}}
 
     # 纯列表格式 → 包装为 dict
     if isinstance(data, list):
         keywords = data
         domain_description = ""
+        sub_domains = {}
     else:
         keywords = data.get("keywords", [])
         domain_description = data.get("domain_description", "")
+        sub_domains = data.get("sub_domains", {})
 
     # 未提供 domain_description 时回退到关键词拼接
     if not domain_description and keywords:
         domain_description = "研究领域涵盖：" + ", ".join(keywords)
 
-    return {"keywords": keywords, "domain_description": domain_description}
+    return {"keywords": keywords, "domain_description": domain_description, "sub_domains": sub_domains}
 
 
 def load_email_config():
     """
     加载邮件发送配置。
 
-    从 configs/email.yaml 读取 SMTP 服务器信息和收件人列表。
+    从 .env 环境变量读取 SMTP 服务器信息和收件人列表。
     字段: smtp_host, smtp_port, use_tls, username, password, from_addr, to_addrs
 
+    .env 配置项:
+        SMTP_HOST      — SMTP 服务器地址
+        SMTP_PORT      — 端口 (TLS=587, SSL=465)
+        SMTP_USE_TLS   — true=STARTTLS, false=SSL 直连
+        SMTP_USERNAME  — 登录用户名
+        SMTP_PASSWORD  — 授权码
+        SMTP_FROM_ADDR — 发件人地址
+        SMTP_TO_ADDRS  — 收件人列表（逗号分隔）
+
     Returns:
-        dict: 邮件配置字典。文件不存在时返回空字典 {}。
+        dict: 邮件配置字典。必要字段缺失时返回空字典 {}。
     """
-    path = CONFIG_DIR / "email.yaml"
-    if not path.exists():
+    host = os.getenv("SMTP_HOST", "")
+    port_str = os.getenv("SMTP_PORT", "")
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    from_addr = os.getenv("SMTP_FROM_ADDR", "")
+    to_addrs_str = os.getenv("SMTP_TO_ADDRS", "")
+
+    if not host or not port_str or not username or not password or not from_addr:
         return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+
+    try:
+        port = int(port_str)
+    except ValueError:
+        return {}
+
+    use_tls_str = os.getenv("SMTP_USE_TLS", "true")
+    use_tls = use_tls_str.strip().lower() in ("true", "1", "yes")
+
+    to_addrs = [addr.strip() for addr in to_addrs_str.split(",") if addr.strip()]
+
+    return {
+        "smtp_host": host,
+        "smtp_port": port,
+        "use_tls": use_tls,
+        "username": username,
+        "password": password,
+        "from_addr": from_addr,
+        "to_addrs": to_addrs,
+    }
 
 
 # ==================================================================

@@ -1,15 +1,52 @@
 """
-Phase A: RSS Feed fetching.
+Phase A: RSS Feed fetching and CrossRef journal querying.
 """
 
-from datetime import datetime
+import json
+from datetime import datetime, timedelta, date
+from pathlib import Path
 
 from config import (
-    SKIP_PHASE_A, RAW_RSS_DIR, SKIP_NATURE_NEWS,
+    SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
+    RAW_RSS_DIR, SKIP_NATURE_NEWS, CROSSREF_LOOKBACK_DAYS,
+    CROSSREF_MAILTO, DATA_DIR,
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import logger
 from sources.rss import RSSProcessor
+from sources.crossref import CrossrefClient
+
+JOURNAL_OVERRIDES_PATH = DATA_DIR / "journal_overrides.json"
+
+
+def _load_journal_overrides():
+    """Load per-journal enable/disable overrides from data/journal_overrides.json.
+
+    Returns a dict keyed by journal id, with fields: enabled, rss_enabled, cr_enabled.
+    Missing keys fall back to publishers.yaml defaults.
+    """
+    if not JOURNAL_OVERRIDES_PATH.exists():
+        return {}
+    try:
+        return json.loads(JOURNAL_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, Exception):
+        return {}
+
+
+def _journal_effective(journal, overrides, field):
+    """Resolve effective setting for a journal field.
+
+    Priority: journal_overrides.json > publishers.yaml.
+    ``field`` is one of 'enabled', 'rss_enabled', 'cr_enabled'.
+    For 'rss_enabled'/'cr_enabled', falls back to 'enabled' if not specified.
+    """
+    jid = journal["id"]
+    ov = overrides.get("journals", {}).get(jid, {})
+    if field in ov:
+        return ov[field]
+    if field in ("rss_enabled", "cr_enabled") and "enabled" in ov:
+        return ov["enabled"]
+    return journal.get(field, True)
 
 
 def phase_a_rss(db, publishers):
@@ -21,17 +58,16 @@ def phase_a_rss(db, publishers):
     publishers : list of dict
         Publisher configs from publishers.yaml.
     """
-    if SKIP_PHASE_A:
-        logger.info("Phase A: SKIP_PHASE_A=True, skipping")
+    if SKIP_PHASE_A_RSS:
+        logger.info("Phase A-RSS: SKIP_PHASE_A_RSS=True, skipping")
         return
-    logger.info("--- Phase A: RSS Feed fetch ---")
+    logger.info("--- Phase A-RSS: RSS Feed fetch ---")
     rsspro = RSSProcessor()
     timestamp = datetime.now().strftime("%Y%m%d")
+    overrides = _load_journal_overrides()
 
     for journal in publishers:
-        if not journal.get("enabled", True):
-            logger.info(f"Skipping disabled journal: "
-                        f"{journal.get('name', journal.get('id', 'unknown'))}")
+        if not _journal_effective(journal, overrides, "rss_enabled"):
             continue
 
         journalid = journal["id"]
@@ -71,4 +107,67 @@ def phase_a_rss(db, publishers):
         except Exception as e:
             logger.error(f"RSS fetch failed [{journalid}]: {e}")
 
-    logger.info("Phase A done")
+    logger.info("Phase A-RSS done")
+
+
+def phase_a_crossref(db, publishers):
+    """Fetch papers from CrossRef by journal ISSN + date range.
+
+    Daily incremental mode: queries from (today - CROSSREF_LOOKBACK_DAYS) to today.
+    New DOIs are inserted with discovery_source='crossref'.
+    Existing DOIs get discovery_source appended with ',crossref'.
+
+    Parameters
+    ----------
+    db : DatabaseClient
+    publishers : list of dict
+        Publisher configs from publishers.yaml.
+    """
+    if SKIP_PHASE_A_CR:
+        logger.info("Phase A-CR: SKIP_PHASE_A_CR=True, skipping")
+        return
+    logger.info("--- Phase A-CR: CrossRef journal query ---")
+
+    to_date = date.today().isoformat()
+    from_date = (date.today() - timedelta(days=CROSSREF_LOOKBACK_DAYS)).isoformat()
+    logger.info(f"Query window: {from_date} ~ {to_date}")
+
+    client = CrossrefClient(mailto=CROSSREF_MAILTO)
+    overrides = _load_journal_overrides()
+
+    for journal in publishers:
+        if not _journal_effective(journal, overrides, "cr_enabled"):
+            continue
+
+        issn = journal.get("issn")
+        if not issn:
+            logger.debug(f"No ISSN configured for [{journal['id']}], skipping")
+            continue
+
+        journal_name = journal["name"]
+        publisher = journal["publisher"]
+
+        try:
+            papers = client.fetch_by_journal(issn, from_date, to_date)
+            logger.info(f"{journal['id']}: found {len(papers)} papers via CrossRef")
+
+            for paper in papers:
+                if not paper.doi:
+                    continue
+                if db.paper_doi_exists(paper.doi):
+                    db.append_discovery_source(paper.doi, "crossref")
+                else:
+                    db.insert_paper_basicinfo(
+                        doi=paper.doi,
+                        title=paper.title or "",
+                        link=paper.url or "",
+                        journal=journal_name,
+                        publisher=publisher,
+                        date=paper.published,
+                        source="crossref",
+                    )
+
+        except Exception as e:
+            logger.error(f"CrossRef journal query failed [{journal['id']}]: {e}")
+
+    logger.info("Phase A-CR done")
