@@ -4,6 +4,13 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **YAML 注释保留** | `config/save-domain` 改用 `ruamel.yaml` 替代 `pyyaml` 的 `yaml.dump()`，避免 domain_description 编辑时丢失 keywords.yaml 中的注释 | 06-04 |
+| **Web UI 定位** | 明确 Web UI = 监控仪表盘 + 报告工作站，非 CLI 替代；配置隔离（CLI 用 config.py，Web UI 用 skip_overrides.json，互不干扰）；SKIP 切换从"仅影响 CLI"改为"仅影响 Web UI Pipeline 页" | 06-04 |
+| **Web UI 新增** | 新增 Data Sources 页面（期刊启用/禁用 + RSS/CrossRef 独立开关，写入 data/journal_overrides.json）；Config 页增加 domain_description 文本框 + 连通性测试按钮 + MinerU Token 过期色标 | 06-04 |
+| **Web UI 修正** | Pipeline 页跳过阶段按钮灰显 + 不可点击 + 后端返回 400；Papers 页改为日期排序（入库/发表日期选择）+ 语义分列/LLM 相关性列；修复 home 页和 js i18n 中过时的 SKIP 描述 | 06-04 |
+| **Phase A** | 新增 `_load_journal_overrides()` / `_journal_effective()` 支持 Data Sources 页面设置的期刊级开关 | 06-04 |
+| **双源发现** | Phase A 拆为 A-RSS + A-CR 双路径；新增 fetch_by_journal() 按 ISSN+日期范围查询；新增 discovery_source 列跟踪每篇论文的来源；publishers.yaml 所有期刊增加 ISSN | 06-04 |
+| **Phase D 重构** | Phase D 改为参考排序模式（不参与过滤）；模型升级 bge-base-en-v1.5；子领域分离；SKIP_PHASE_D 默认开启；语义分与 LLM 判断解耦 | 06-04 |
 | **测试修复** | `test_publisher_parse.py` 旧异常名 `NaturePageNotPaper` → `NonResearchPageError`（4 处） | 06-01 |
 | **Email 检测** | 占位符判断从 `"your_" in username` 改为 `"@" not in username` | 06-01 |
 | **代理配置** | Optica 硬编码代理 `http://127.0.0.1:10808` 移至 `config.py` 的 `PUBLISHER_PROXY` 字典 | 06-01 |
@@ -34,6 +41,8 @@
 | **异常重命名** | `NaturePageNotPaper` → `NonResearchPageError`；修复 reset-publisher 误重试非论文页面 | 06-01 |
 | **报告日期过滤** | `get_papers_for_report()` 改用 `report_date IS NULL` 替代 `report_status = 'pending'`；`reset-report` 新增 `--days` 参数支持按日期范围重置 | 06-03 |
 | **SMTP 加固** | `email_sender.py`: 连接移入 try/except + 1 次重试 + STARTTLS 后 ehlo() + quit 保护网易邮箱 SSL 端口配置修正 | 06-03 |
+| **SKIP 隔离** | Web UI 的 `skip_overrides.json` 不再影响 CLI（`runner.py` 仅 `force=True` 时加载 overrides） | 06-04 |
+| **配置合并** | email 配置从 `configs/email.yaml` 完全合并到 `.env`；删除 `email.yaml.example`；`load_email_config()` 改为从 `os.getenv` 读取 | 06-04 |
 | **FormulaFixer 重构** | `LLMFormulaFixer` → `FormulaFixer`：JSON in/out 改为纯文本 in/out，新增 `needs_fix()` 预检测 + 逐字段修复 + module-level logger | 06-03 |
 | **独立修复工具** | 新增 `tools/fix_summary_formulas.py`，支持 `--doi` / `--publisher` / `--dry-run` / `--verbose`，无需重跑 Phase F | 06-03 |
 
@@ -584,4 +593,535 @@ TLS 模式 mock 断言增加 `mock_instance.ehlo.assert_called_once()`，验证 
 - CF 检测移至 `fetch_page()` 和 `parse_page()` 之间
 - CF 拦截时显示 "Cloudflare detected (attempt X/3)" 并走重试逻辑
 - 只有非 CF 页面才进入 `parse_page()`，避免误报页面结构变化
+
+# 2026-06-03 — 报告分离：自动报告 vs 用户报告 + 推送无更新通知
+
+**动机**：自动流水线生成日报用于邮件推送，Web UI 用户勾选生成临时报告。两者混用同一目录
+`report_*.md` 命名，Phase H 取最新文件时可能误发用户报告。此外，无新增论文时不应推空报告。
+
+**变更**：
+
+### 目录分离
+
+```
+data/reports/
+├── auto/        ← Phase G 自动日报（按日期覆盖）
+└── user/        ← Web UI 用户自选报告（精确到秒）
+```
+
+### 文件改动
+
+| 文件 | 改动 |
+|------|------|
+| `src/config.py` | 新增 `AUTO_REPORT_DIR` 和 `USER_REPORT_DIR` 路径常量 |
+| `src/pipeline/phase_g.py` | 签名改为 `(db, auto_dir, user_dir, doi_list=None)`；自动模式写入 `auto/report_YYYYMMDD.md`（覆盖），标记已报告；用户模式写入 `user/report_YYYYMMDD_HHMMSS.md`，**不标记**已报告；无论文时直接 return 不创建文件 |
+| `src/pipeline/phase_h.py` | 签名改为 `(auto_dir)`；检查 `auto/report_YYYYMMDD.md`；存在→作为附件发送；不存在→发送「本期无新增相关论文，无需关注」通知 |
+| `src/pipeline/runner.py` | 创建 `auto/` 和 `user/` 目录；Phase G 传入双路径；Phase H 仅传入 `auto_dir` |
+| `src/web/app.py` | `/report/generate` 向 `USER_REPORT_DIR` 写入；预览/下载也指向 `user/` |
+
+### 推送行为
+
+| 场景 | Phase G | Phase H |
+|------|---------|---------|
+| 有新增论文 | `auto/report_20260603.md` | 发送该文件为附件 |
+| 无新增论文 | 不创建文件，log + return | 发送「本期无新增相关论文」通知（无附件） |
+| Web UI 用户勾选生成 | 写入 `user/`，不标记已报告 | 不参与推送 |
+
+# 2026-06-03 — FormulaFixer 增强：裸上下标检测 + force 强制模式
+
+**动机**：`needs_fix()` 的旧正则仅检测 `\command` 模式（`\alpha`、`\times` 等），遗漏了仅含上下标的裸 LaTeX 公式（如 `E = m c^2`、`x_i`、`E_{kin}`），导致这些公式被判定为"无需修复"，跳过 LLM 修复流程。
+
+**变更**：
+
+**1. 正则增强**（`src/processors/llm_summarize_deepseek.py`）
+
+旧：`r'\\[a-zA-Z]{2,}'` — 仅匹配 `\command`
+
+新：
+```
+r'\\[a-zA-Z]{2,}          # \command 模式
+ |[\w\)\]]\^[\w\{\(]      # 上标: c^2, x^{n+1}, )^2
+ |[\w\)\]]_[\w\{\(]'      # 下标: x_i, E_{kin}, )_i
+```
+
+新增匹配的用例：
+
+| 输入 | 旧行为 | 新行为 |
+|------|--------|--------|
+| `E = m c^2` | `needs_fix`=False → 跳过 | `needs_fix`=True → 送修 |
+| `laser energy E_0` | `needs_fix`=False → 跳过 | `needs_fix`=True → 送修 |
+| `x^{n+1} expansion` | `needs_fix`=False → 跳过 | `needs_fix`=True → 送修 |
+| `\\alpha particles`（已正确包裹）| `needs_fix`=False → 跳过 | `needs_fix`=False → 跳过（不变）|
+
+已知假阳性：`x_ray` 等含 `_` 的复合词也会触发，但在学术英文中此类写法极少（通常写作 "X-ray"），且即使误触发 LLM 也能正确处理。
+
+**2. force 强制模式**
+
+| 层级 | 变更 |
+|------|------|
+| `FormulaFixer.__init__()` | 新增 `force: bool = False` 参数 |
+| `FormulaFixer.needs_fix()` | 新增 `force: bool = False` 参数，为 True 时跳过检测直接返回 True |
+| `FormulaFixer.fix_text()` | 传递 `self.force` 给 `needs_fix()` |
+| `src/config.py` | 新增 `FORCE_FORMULA_FIX = False` |
+| `src/pipeline/phase_f.py` | `import FORCE_FORMULA_FIX` + 传给 `FormulaFixer(force=...)` |
+| `tools/fix_summary_formulas.py` | 新增 `--force` CLI 参数，透传给 `FormulaFixer` |
+
+使用方式：
+
+```bash
+# 仅修复正则命中的字段（默认行为）
+python tools/fix_summary_formulas.py
+
+# 跳过正则检测，强制修复全部字段
+python tools/fix_summary_formulas.py --force
+
+# Pipeline 中启用（config.py）
+FORCE_FORMULA_FIX = True
+```
+
+**设计考量**：
+- `force` 模式需要额外调用 flash API，逐字段送修。默认关闭，仅在正则无法覆盖时由用户按需开启。
+- `force` 与 `SKIP_FORMULA_FIX` 语义正交：前者控制"是否检测"，后者控制"是否启用修复器"。
+
+# 2026-06-03 — FormulaFixer FIX_PROMPT 重写：Unicode → LaTeX 转换
+
+**动机**：LLM 输出的总结字段中常混入 Unicode 数学字符（希腊字母 `α β γ`、上标 `² ³`、运算符 `≈ ≠` 等），
+这些字符在 Markdown 报告中显示为 Unicode 文本而非 LaTeX 渲染，格式不统一，且 PDF 转换时无法正确处理。
+
+**变更**：
+
+**1. FIX_PROMPT 重写**（`src/processors/llm_summarize_deepseek.py`）
+
+旧 prompt 只处理 3 类问题：缺反斜杠分隔符、裸 LaTeX 命令、独立公式缺包裹。
+
+新 prompt 增加第 1 类规则——Unicode 数学符号 → LaTeX 命令，包含：
+
+| 类别 | 示例 | LaTeX 转换 |
+|------|------|-----------|
+| 希腊字母 | α, β, γ, δ, ε 及大写 | \alpha, \beta, \gamma, \delta, \varepsilon |
+| 上标/下标 | ², ³, ⁰, ₀, ₙ, ₓ | ^2, ^3, ^0, _0, _n, _x |
+| 关系运算符 | ≈, ≠, ≤, ≥, ≡ | \approx, \neq, \leq, \geq, \equiv |
+| 二元运算符 | ±, ×, ÷, · | \pm, \times, \div, \cdot |
+| 箭头 | →, ←, ⇒, ⇔ | \rightarrow, \leftarrow, \Rightarrow, \leftrightarrow |
+| 其他常用 | ∂, ∇, ∞, ℏ, ∈, ∉, ∀, ∃, √, ∝, ∠, ⊥ | \partial, \nabla, \infty, \hbar, \in, \notin, ... |
+
+并新增输出约束："输出中不应保留任何数学类 Unicode 字符，仅允许普通 ASCII 文本和 LaTeX 命令"。
+
+**2. needs_fix() 正则增强**
+
+新增 Unicode 数学字符范围检测：
+
+```python
+unicode_math = (
+    r'[\u0370-\u03FF'       # Greek & Coptic
+    r'\u2070-\u209F'        # Superscripts & Subscripts
+    r'\u2190-\u21FF'        # Arrows
+    r'\u2200-\u22FF'        # Mathematical Operators
+    r'\u2100-\u214F'        # Letterlike Symbols (ℏ, ℓ)
+    r'\u00B2\u00B3\u00B9'   # ² ³ ¹
+    r']'
+)
+```
+
+确保含 Unicode 数学符号的文本能触发修复器。
+
+**3. FIX_PROMPT 改为 raw string 修复历史转义 bug**
+
+旧 prompt 使用普通字符串 `"""..."""`，Python 将 `\alpha` 中的 `\a` 解析为 ASCII Bell（`\x07`），
+`\beta` 中的 `\b` 解析为 Backspace（`\x08`），导致 LLM 长期收到损坏的示例文本。
+
+改为 raw string `r"""..."""` 后，所有反斜杠保持字面值，LLM 正确接收到 `\alpha`、`\beta`、`\(` 等。
+
+**关键设计保持**：
+- 纯文本输入/纯文本输出（`json.loads()` 解码后的单反斜杠格式）
+- 不引入 JSON 转义层，prompt 中的反斜杠始终是单层 `\`
+- 修复失败时回退原始文本
+
+# 2026-06-03 — SUMMARIES_PROMPT 禁止复杂 LaTeX 环境
+
+**动机**：LLM 总结中可能使用 `\begin{cases}`、`\begin{aligned}` 等复杂 LaTeX 环境，
+其中包含 `\\` 换行和 `&` 对齐符，经过 JSON → Python → Markdown 多层转义后极易出错，
+且 FormulaFixer 和下游报告渲染均无法正确可靠地处理它们。
+
+**变更**（`src/config.py` + `src/processors/llm_summarize_deepseek.py`）：
+
+在 `SUMMARIES_PROMPT` 的内容要求中新增第 4 条：
+
+```
+4. 禁止使用复杂 LaTeX 环境：禁止 \begin{} / \end{}（如 cases、aligned 等），
+   禁止 \\ 换行。公式仅限 \frac、\sqrt、\int、\sum、\partial 等基本命令
+   及上标/下标/希腊字母。
+```
+
+原第 4 条（`\\n` 换行规则）顺延为第 5 条。
+
+**设计考量**：
+- `\text{}`、`\mathrm{}` 等简单文本命令仍允许（物理单位标注常用）
+- `\begin{}` / `\end{}` 已被 `needs_fix()` 的 `\\[a-zA-Z]{2,}` 正则匹配覆盖，
+  但解决之道是预防而非修复——禁止 LLM 生成它们
+- 已入库的旧总结不受影响；如需重新生成，使用 `reset-summary --all`
+
+# 2026-06-04 — SKIP 覆盖隔离与 Email 配置合并到 .env
+
+## SKIP 覆盖隔离
+
+**背景**：Web UI Config 页面切换的 SKIP 状态持久化到 `data/skip_overrides.json`，但该文件被
+`runner.py` 无条件加载（`overrides = _load_skip_overrides()`），导致 Web UI 的设置意外影响 CLI 行为。
+Web UI Pipeline 页面使用 `force=True` 本来就忽略 SKIP 配置，等于"Web UI 写了一个只影响 CLI 的配置"，
+违反直觉。
+
+**解决**（`src/pipeline/runner.py`）：
+- `overrides = _load_skip_overrides()` → `overrides = _load_skip_overrides() if force else {}`
+- CLI（`force=False`）只使用 `config.py` 原生 `SKIP_PHASE_*` 值
+- Web UI 的 `force=True` 路径不受影响
+
+## Email 配置合并到 .env
+
+**背景**：SMTP 配置（含密码凭证）分散在 `configs/email.yaml` 中，与 `.env` 中的 API 密钥同属敏感信息
+却分两处管理。`email.yaml` 虽然被 `.gitignore` 排除，但额外的 yaml 文件增加了用户的认知负担。
+
+**解决**：
+- `configs/email.yaml` — 完全删除（原已 gitignore，不影响已有本地配置）
+- `configs/email.yaml.example` — 删除（不再需要）
+- `.env` / `.env.example` — 新增 7 个 `SMTP_*` 字段（host/port/use_tls/username/password/from_addr/to_addrs），`to_addrs` 用逗号分隔
+- `src/config.py` — `load_email_config()` 从 `os.getenv` 读取，拼装与原 `email.yaml` 相同结构的 dict（`phase_h.py` 零改动）
+- `tests/real/real_email.py` — 改为调用 `config.load_email_config()`，不再直接读 yaml
+- `.gitignore` — 移除 `configs/email.yaml` 行
+- 更新 docs/README.md、docs/design.md 中相关引用
+
+**不受影响**：`EmailSender` 构造函数、`phase_h.py`、`web/app.py`、`configs/publishers.yaml` / `keywords.yaml`。
+
+# 2026-06-04 — Phase D 重构：参考排序模式 + 模型升级 + 子领域分离
+
+**背景**：原 Phase D 作为 Phase E 的门禁，用 sentence-transformers 余弦相似度阈值（0.3）过滤论文。
+实践中发现：(1) `all-MiniLM-L6-v2` 的 256 token 上限导致长 `domain_description` 被截断；(2) 单向量
+编码三个不同子领域信息被稀释；(3) 每轮 ~200-400 篇论文的 LLM API 成本仅 ~$0.08，阈值过滤的节省微不足道。
+
+**核心变更**：Phase D 从"门禁"改为"参考排序"，与 Phase E 解耦。
+
+### 变更详解
+
+**1. 子领域分离**（`configs/keywords.yaml`）
+
+新增 `sub_domains` 字段，将 `domain_description` 的三段拆为独立子领域：
+- `ion_acceleration` — 激光离子加速
+- `beam_transport` — 等离子体束流传输
+- `control_system` — 加速器控制系统
+
+| 字段 | 用途 | 语种 | 要求 |
+|------|------|------|------|
+| `domain_description`（保留） | Phase E LLM prompt | 中/英均可 | 尽量详细 |
+| `sub_domains`（新增） | Phase D 语义相似度 | **仅英文** | 每段 < 300 字，简练自然语言 |
+
+`domain_description` 与 `sub_domains` 的关系：前者是给 LLM 看的完整领域描述；后者是从中提取核心语义
+的英文简练段落，专供嵌入模型编码。
+
+**2. 模型升级**（`src/config.py`）
+
+`all-MiniLM-L6-v2` (256 tokens, 384-dim) → `BAAI/bge-base-en-v1.5` (512 tokens, 768-dim)
+
+消除长摘要被截断的风险（大部分 title + abstract ≤ 450 tokens）。
+
+**3. 解耦 Phase D 与 Phase E**（`src/pipeline/phase_d.py`）
+
+| 行为 | 旧 | 新 |
+|------|----|----|
+| Phase D 修改 `llm_relevance_status` | 分数 < 0.3 时标记 `skipped` | **不移除** — 所有论文正常进 Phase E |
+| Phase D 用途 | 门禁过滤 | 仅计算参考分数供排序 |
+| `SKIP_PHASE_D` 默认值 | `False` | **`True`**（跳过，全部走 LLM） |
+| `SEMANTIC_SIMILARITY_THRESHOLD` | `0.3` | **已删除**（不再需要） |
+| `compute_similarity()` 返回值 | `float` | `tuple[float, str\|None]` — 分数 + 最佳子领域标签 |
+
+**4. SemanticFilter 多向量支持**（`src/processors/paper_relevance.py`）
+
+```python
+# 旧
+sf = SemanticFilter(model_name, "单一段落描述")
+score = sf.compute_similarity(title, abstract)
+
+# 新
+sf = SemanticFilter(model_name, {"label1": "段落1", "label2": "段落2"})
+score, best_label = sf.compute_similarity(title, abstract)
+```
+
+每条子领域预编码为独立向量，取余弦相似度最高者作为总分并记录子领域标签。
+
+**5. WebUI Papers 页适配**（`src/web/templates/papers.html` + `src/web/app.py`）
+
+| 场景 | 显示 |
+|------|------|
+| Phase D 关闭（默认） | 无分数列，按日期降序排列 |
+| Phase D 开启 | 有分数条 + 最佳子领域标签，分数列优先 |
+| 混合数据 | ORDER BY 使用 `semantic_similarity_score IS NOT NULL DESC, score DESC, date DESC` |
+
+Reset 定义修正：
+
+```python
+# 旧
+"RESET_DEFS["D"]" → 含 llm_relevance_status + llm_relevance_result
+"RESET_CASCADE["D"]" → "llm_relevance_status"
+
+# 新
+RESET_DEFS["D"] → 仅含 semantic_filter_* + semantic_similarity_score + semantic_best_subdomain
+RESET_CASCADE["D"] → ""  # 空，不级联
+```
+
+**6. `tools/reset_pipeline.py` SEMANTIC_CASCADE 精简**
+
+从 13 行（语义 + LLM + 报告）缩减为 5 行（仅语义相关列）：
+```
+semantic_similarity_score = NULL
+semantic_filter_status = 'pending'
+semantic_filter_error = NULL
+semantic_filter_date = NULL
+semantic_best_subdomain = NULL
+```
+
+**7. DB Schema**（`src/db/database.py`）
+
+| 列名 | 类型 | 用途 |
+|------|------|------|
+| `semantic_best_subdomain` | TEXT (新增) | 最佳匹配子领域标签 |
+
+`get_papers_sorted_by_semantic()` 改为全量返回（无 WHERE score IS NOT NULL 限制），
+ORDER BY 增加回退排序。
+
+### 文件改动清单
+
+| 文件 | 变更概要 |
+|------|---------|
+| `configs/keywords.yaml` | 新增 `sub_domains` 字段（3 子领域） |
+| `src/config.py` | 模型路径 bge-base-en-v1.5；`SKIP_PHASE_D=True`；删除阈值；`load_keywords()` 返回 `sub_domains` |
+| `src/processors/paper_relevance.py` | `SemanticFilter` 多向量支持，`compute_similarity()` 返回 `(score, best_label)` |
+| `src/db/database.py` | 新增 `semantic_best_subdomain` 列 + 迁移；`update_semantic_filter()` 加 `best_subdomain` 参数；`get_papers_sorted_by_semantic()` 全量返回 + 回退排序 |
+| `src/pipeline/phase_d.py` | 重写：去掉阈值、去掉 llm_relevance 级联、使用 sub_domains 多向量 |
+| `src/web/app.py` | `RESET_DEFS["D"]` 只重置语义列；`RESET_CASCADE["D"]=""`；`_execute_reset`/`_count_reset_impact` 处理非状态列 |
+| `src/web/templates/papers.html` | None 分数自适应 + 子领域列 |
+| `tools/reset_pipeline.py` | `SEMANTIC_CASCADE` 精简为仅语义列；help 文本更新 |
+| `tests/test_relevance.py` | SemanticFilter 测试适配新接口 + 多子领域 fixture |
+
+### 遗留
+
+- `Phase C NonResearchPageError` 级联机制保留不变（非论文页面仍应跳过所有下游处理）
+- `tools/reset_empty_abstract.py` 仍重置 Phase D/E/G，无影响（语义分可重新计算）
+
+# 2026-06-04 — 双源发现：RSS + CrossRef 并行 + 来源标注
+
+**动机**：
+1. RSS 的完整性不可控——Feed 只返回最新 N 篇或编辑精选，无法确认是否有遗漏
+2. 时间跨度受限——RSS 天然只提供最近内容，无法回溯或补漏
+3. 调试困难——无法区分论文从哪个数据源发现，难以判断 RSS 是否"缺斤少两"
+
+**解决**：
+
+### 架构变革
+
+Phase A 从单一路径（RSS）拆为**双路径并行**：
+
+```
+Phase A (新版)
+  ├─ A-RSS:  RSS Feed 抓取 ← 原有逻辑
+  └─ A-CR:   CrossRef 期刊查询 ← 新增
+```
+
+两路各有独立 SKIP 开关（`SKIP_PHASE_A_RSS` / `SKIP_PHASE_A_CR`），在 Web UI Pipeline 页面也显示为两个独立按钮。
+
+### 新增：`CrossrefClient.fetch_by_journal()`
+
+`src/sources/crossref.py` 新增方法，用于按 ISSN + 日期范围批量获取期刊论文列表：
+
+| 端点 | `GET /journals/{issn}/works` |
+|------|------------------------------|
+| 过滤 | `type:journal-article`（排除 editorial/correction）|
+| 翻页 | offset 模式，最大 100 条/页，上限约 10000 条 |
+| 限流 | 页间 0.2s 礼貌间隔 |
+| 返回 | `list[PaperMetadata]`（doi/title/date/journal/publisher/authors/url 等） |
+
+### 新增：来源标注列 `discovery_source`
+
+**数据库**（`src/db/database.py`）：
+- 新增 `discovery_source TEXT` 列，存储论文的发现来源
+
+| 值 | 含义 |
+|----|------|
+| `rss` | 仅 RSS 发现 |
+| `crossref` | 仅 CrossRef 发现 |
+| `rss,crossref` | 两路都发现了这篇 |
+
+- `insert_paper_basicinfo(doi, ..., source)` — 通用插入方法，新论文写入发现来源
+- `append_discovery_source(doi, source)` — 已有论文追加新来源（逗号分隔，不重复）
+- `insert_rss_basicinfo()` — 兼容旧接口，自动设置 `discovery_source='rss'`
+
+**调试用法**：
+```sql
+SELECT discovery_source, COUNT(*) FROM papers GROUP BY discovery_source;
+```
+输出样例：
+```
+rss              →  142  (仅 RSS 发现)
+crossref         →   35  (仅 CrossRef 发现，RSS 漏了这些)
+rss,crossref     →  223  (双路均发现)
+```
+如果 `crossref_only` 数量大于 0，说明 RSS 确实存在遗漏。
+
+### 配置变动
+
+**`configs/publishers.yaml`** — 22 个期刊各新增 `issn` 字段：
+
+```yaml
+- id: nature
+  name: Nature
+  publisher: nature
+  rss: https://www.nature.com/nature.rss
+  issn: "1476-4687"        # 新增
+  enabled: true
+```
+
+**`src/config.py`** — 新增配置项：
+
+```python
+SKIP_PHASE_A_RSS = False    # RSS 发现路径
+SKIP_PHASE_A_CR = False     # CrossRef 发现路径
+CROSSREF_LOOKBACK_DAYS = 1  # 每日增量回溯天数
+```
+
+### Phase A 详细逻辑
+
+**A-RSS**（`phase_a_rss`）— 与原来一致，仅增加 `discovery_source='rss'` 写入。
+
+**A-CR**（`phase_a_crossref`）：
+1. 计算时间窗口：`from = today - CROSSREF_LOOKBACK_DAYS`，`to = today`
+2. 遍历每个 enabled + 有 ISSN 的期刊
+3. 调用 `fetch_by_journal(issn, from_date, to_date)`
+4. 对每个返回的论文：
+   - DOI 不存在 → `insert_paper_basicinfo(..., source='crossref')`
+   - DOI 已存在（已被 RSS 发现）→ `append_discovery_source(doi, 'crossref')`
+
+### 文件改动清单
+
+| 文件 | 改动量 | 说明 |
+|------|--------|------|
+| `configs/publishers.yaml` | ~20 行 | 22 个期刊各加 `issn` |
+| `src/config.py` | ~10 行 | 新增 `SKIP_PHASE_A_RSS` / `SKIP_PHASE_A_CR` / `CROSSREF_LOOKBACK_DAYS` |
+| `src/sources/crossref.py` | ~80 行 | 新增 `fetch_by_journal()` |
+| `src/db/database.py` | ~60 行 | 新增 `discovery_source` 列 + migration + `insert_paper_basicinfo()` + `append_discovery_source()` |
+| `src/pipeline/phase_a.py` | ~80 行 | 新增 `phase_a_crossref()`；`phase_a_rss()` 守卫改为 `SKIP_PHASE_A_RSS` |
+| `src/pipeline/runner.py` | ~10 行 | Phase map 新增 A-RSS / A-CR |
+| `src/web/app.py` | ~5 行 | `PHASE_LABELS` / `PHASE_DEFAULTS` 拆分为 A-RSS / A-CR |
+| `src/web/templates/pipeline.html` | 2 行 | Reset 按钮排除 A-RSS / A-CR |
+| `tests/test_crossref.py` | ~100 行 | 3 个 `fetch_by_journal` 新测试（basic/pagination/max_results）|
+| `tests/test_phases.py` | ~15 行 | 新增 `test_phase_a_crossref_signature` |
+
+**测试结果**：`pytest tests/` → **92 passed**（含 3 个新增 crossref 测试）
+
+# 2026-06-04 — Web UI 定位重构 + 配置隔离 + 新页面
+
+**背景**：Web UI 是临时起意开发的，缺乏明确定位。功能散乱，SKIP 切换语义混乱（Config 页切换影响 CLI 而非 Web UI）。
+
+**核心决策**：明确定位 Web UI = "Pipeline 监控仪表盘 + 报告工作站"，不是 CLI 替代品。
+
+### 配置隔离
+
+```
+之前: skip_overrides.json → runner.py 无条件加载 → 影响 CLI + Web UI（但 force=True 绕过）
+之后: skip_overrides.json → runner.py 仅 force=True 时加载 → 仅影响 Web UI
+      CLI → 只读 config.py 的 SKIP_PHASE_* → 不受 Web UI 影响
+```
+
+### 变更详解
+
+**1. SKIP 切换语义修正**（`src/pipeline/runner.py`）
+
+| 行为 | 改前 | 改后 |
+|------|------|------|
+| `force=True` 绕过 SKIP 检查 | 是（line 102: `if not force and not enabled`） | 否（改为 `if not enabled`） |
+| Config 页 SKIP 切换效果 | 仅影响 CLI（隔离前）/ 无效果（隔离后） | 影响 Web UI Pipeline 页按钮状态 |
+| CLI 是否受 overrides 影响 | 是（force=False 时不加载 overrides ✅，但之前版本会） | 否（完全不读取 skip_overrides.json） |
+
+**2. Pipeline 页跳过阶段交互**
+
+- Config 页切换 Phase E → Skip → 写入 `skip_overrides.json`
+- Pipeline 页每 10s 轮询 status API → 拿到 `effective_skip`
+- Phase E 按钮 → 灰显 + 文字变为"(Skipped)" + 不可点击
+- 直接 POST `/pipeline/run/E` → 后端返回 400: "Phase E is skipped in Config"
+- Run All → 自动跳过被跳过的阶段
+- 三层防护：前端禁用 → API 守卫 → runner 跳过
+
+**3. Papers 页排序改造**
+
+| 维度 | 改前 | 改后 |
+|------|------|------|
+| 默认排序 | 语义相似度（Phase D 关闭时回退日期） | 入库日期（`created_date DESC`） |
+| 可选排序 | 无 | 发表日期（`COALESCE page > crossref > rss`，含精度警告） |
+| 展示列 | 语义分 + 子领域 | 语义分（可选）+ LLM 相关性状态 ✓/✗ + 日期 |
+
+**4. 新增 Data Sources 页面**
+
+独立配置偏好文件 `data/journal_overrides.json`：
+
+```json
+{
+  "journals": {
+    "nature": { "enabled": true, "rss_enabled": true, "cr_enabled": true },
+    "nphys": { "enabled": false }
+  }
+}
+```
+
+- `phase_a.py` 新增 `_load_journal_overrides()` / `_journal_effective()`
+- 不修改 `publishers.yaml`（安全的独立覆写）
+- 每个期刊可独立控制 RSS 和 CrossRef 数据源
+
+**5. Config 页增强**
+
+| 组件 | 实现 |
+|------|------|
+| Domain description 文本框 | 读取/写入 `keywords.yaml` 的 `domain_description` 字段 |
+| MinerU Token 色标 | 解码 JWT `exp` 字段：绿 >30d / 黄 7-30d / 红 <7d |
+| 连通性测试按钮 | 3 个按钮：DeepSeek（ping 请求）/ CrossRef（查已知 DOI）/ MinerU（user/info 端点） |
+
+### ruamel.yaml 保留 YAML 注释
+
+**问题**：`config/save-domain` 使用 `yaml.safe_load()` + `yaml.dump()` 写回 `keywords.yaml`，`dump()` 不保留文件中的注释行（`# sub_domains: ...`、`# General & Core Concepts` 等全部丢失）。
+
+**解决**：改用 `ruamel.yaml` 替代 `pyyaml` 的 dump：
+
+```python
+# 改前
+kw = yaml.safe_load(path.read_text())
+kw["domain_description"] = content
+path.write_text(yaml.dump(kw, ...))
+
+# 改后
+from ruamel.yaml import YAML
+ryaml = YAML()
+kw = ryaml.load(path)        # 保留注释的 CommentedMap
+kw["domain_description"] = content
+ryaml.dump(kw, path)         # 写回，注释完好
+```
+
+注：`config/save-publishers` / `config/save-keywords` 是全文替换（浏览器 textarea → 原文写回），不受此问题影响。
+
+### 文件改动清单
+
+| 文件 | 改动 |
+|------|------|
+| `src/web/app.py` | `config/save-domain` 改用 `ruamel.yaml.YAML().load/dump` 保留注释 |
+| `docs/README.md` | 安装命令增加 `ruamel.yaml` |
+| `docs/tasks.md` | 本文 |
+| `src/pipeline/runner.py` | force 语义修正：`if not enabled` 取代 `if not force and not enabled` |
+| `src/pipeline/phase_a.py` | 新增 `_load_journal_overrides()` / `_journal_effective()`；A-RSS/A-CR 读取 journal_overrides.json |
+| `src/web/app.py` | 新增 datasources / datasources/save / config/mineru-token / config/test-* / config/save-domain 端点；`_pipeline_status()` 增加 `effective_skip`；`run_phase()` 增加跳过守卫 |
+| `src/web/templates/pipeline.html` | 新增 `updatePhaseButtons()` 处理跳过按钮状态 |
+| `src/web/templates/papers.html` | 完全重写：排序选择 + 语义分列 + LLM 相关性列 + 日期列 + 精度警告 |
+| `src/web/templates/datasources.html` | **新建**：期刊启用表格 + RSS/CrossRef 独立开关 + 联动逻辑 |
+| `src/web/templates/config.html` | 新增 domain 文本框 + 连通性测试 + MinerU Token 状态 |
+| `src/web/templates/base.html` | 侧边栏新增 Data Sources 入口 |
+| `src/web/templates/home.html` | 新增 Data Sources 快速指南行；更新 SKIP 描述 |
+| `src/web/static/js/app.js` | 新增 datasources / config 相关的 i18n 键（中英文共 ~40 个） |
+| `src/web/static/css/style.css` | 新增 `.btn-disabled` / `.td-center` / `.alert` / `.conn-test-*` 样式 |
+| `src/db/database.py` | 新增 `get_papers()` 方法支持 created/published 排序 |
+| `docs/design.md` | Web UI 定位章节 + 配置隔离规则 + 页面表更新 |
+| `docs/tasks.md` | 本文 |
+
 
