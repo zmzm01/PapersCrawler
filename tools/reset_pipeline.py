@@ -26,25 +26,15 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "papers.db"
 
 # ------------------------------------------------------------------
-# Phase D → G 级联重置列
-# 语义判断结果变更后，下游所有依赖列必须一并清零
+# Phase D 重置列（仅清理语义相似度，不影响 LLM 判断结果）
+# Phase D 与 Phase E 已解耦：语义分仅供排序参考，不参与过滤
 # ------------------------------------------------------------------
 SEMANTIC_CASCADE = [
-    # Phase D — 语义相似度初筛
     "semantic_similarity_score = NULL",
     "semantic_filter_status = 'pending'",
     "semantic_filter_error = NULL",
     "semantic_filter_date = NULL",
-    # Phase E — LLM 相关性判断
-    "llm_relevance_status = 'pending'",
-    "llm_relevance_result = 0",
-    "llm_relevance_confidence = NULL",
-    "llm_relevance_reason = NULL",
-    "llm_relevance_error = NULL",
-    "llm_relevance_date = NULL",
-    # Phase G — 报告状态
-    "report_status = 'pending'",
-    "report_date = NULL",
+    "semantic_best_subdomain = NULL",
 ]
 
 
@@ -330,16 +320,17 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_sem = sub.add_parser("reset-semantic",
-        help="重置语义判断及下游全部结果",
+        help="重置语义相似度分数（仅清理排序参考，不影响 LLM 判断）",
         description=(
-            "修改 domain_description / keywords 后使用。"
-            "重置 Phase D/E/G 为 pending，保留 MinerU 和 LLM 总结结果。"
+            "修改 sub_domains 后使用。仅重置 Phase D 的语义相似度分数，"
+            "不影响 Phase E（LLM 相关性判断）结果。"
+            "Phase D 与 Phase E 已解耦。"
             "\n\n受影响的状态列:"
             "\n  semantic_filter_*    → pending"
-            "\n  llm_relevance_*     → pending"
-            "\n  report_*            → pending"
+            "\n  semantic_similarity_score → NULL"
+            "\n  semantic_best_subdomain   → NULL"
             "\n  不受影响:"
-            "\n  mineru_*, llm_summary_*"
+            "\n  llm_relevance_*, mineru_*, llm_summary_*, report_*"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

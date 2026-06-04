@@ -8,6 +8,7 @@
   python tools/fix_summary_formulas.py                         # 全部已成功总结
   python tools/fix_summary_formulas.py --doi 10.1103/PhysRevLett.136.123456  # 单篇
   python tools/fix_summary_formulas.py --publisher aps         # 按出版社过滤
+  python tools/fix_summary_formulas.py --force                 # 跳过正则检测，强制修复所有字段
   python tools/fix_summary_formulas.py --dry-run               # 预览模式，不实际写入
   python tools/fix_summary_formulas.py --verbose               # 显示每个字段的检测结果
 """
@@ -56,8 +57,17 @@ def load_papers(db, doi=None, publisher=None):
     return all_papers
 
 
-def analyze_papers(papers, fixer, verbose=False):
-    """分析每篇论文中需要修复的字段，返回统计信息。"""
+def analyze_papers(papers, fixer, verbose=False, force=False):
+    """分析每篇论文中需要修复的字段，返回统计信息。
+
+    Parameters
+    ----------
+    papers : list
+    fixer : FormulaFixer
+    verbose : bool
+    force : bool
+        为 True 时跳过 needs_fix() 检测，所有非空字段视为需要修复。
+    """
     stats = {"total": len(papers), "total_fields": 0, "needs_fix": 0}
     paper_results = []
     for p in papers:
@@ -74,7 +84,7 @@ def analyze_papers(papers, fixer, verbose=False):
             if not isinstance(text, str) or not text or text == "未提供":
                 fields_info.append((field, "skip", ""))
                 continue
-            need = fixer.needs_fix(text)
+            need = True if force else fixer.needs_fix(text)
             stats["total_fields"] += 1
             if need:
                 stats["needs_fix"] += 1
@@ -132,6 +142,7 @@ def main():
     )
     parser.add_argument("--doi", help="仅处理指定 DOI 的论文")
     parser.add_argument("--publisher", help="仅处理指定出版社的论文 (如 aps, nature)")
+    parser.add_argument("--force", action="store_true", help="跳过 needs_fix() 检测，强制修复所有字段")
     parser.add_argument("--dry-run", action="store_true", help="预览模式，不实际写入 DB")
     parser.add_argument("--verbose", action="store_true", help="显示每个字段的检测结果")
     args = parser.parse_args()
@@ -140,10 +151,10 @@ def main():
     papers = load_papers(db, doi=args.doi, publisher=args.publisher)
     del db
 
-    fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE)
+    fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE, force=args.force)
 
     logger.info(f"共 {len(papers)} 篇论文，正在检测公式格式问题...")
-    stats, paper_results = analyze_papers(papers, fixer, verbose=args.verbose)
+    stats, paper_results = analyze_papers(papers, fixer, verbose=args.verbose, force=args.force)
 
     print(f"\n统计: {stats['total_fields']} 个字段中 {stats['needs_fix']} 个需要修复")
     if stats["needs_fix"] == 0:

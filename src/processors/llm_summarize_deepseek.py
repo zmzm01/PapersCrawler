@@ -180,7 +180,7 @@ class DeepSeekPaperSummarizer:
                 try:
                     json.loads(content)
                 except json.JSONDecodeError:
-                    fixed = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', content)
+                    fixed = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', content)
                     try:
                         json.loads(fixed)
                         content = fixed
@@ -302,29 +302,42 @@ class DeepSeekPaperSummarizer:
 
 
 class FormulaFixer:
-    """用 LLM 修复单段文本中裸写的 LaTeX 命令或缺失的分隔符反斜杠。
+    """用 LLM 修复单段文本中的 LaTeX 公式格式问题。
+
+    功能：
+    1. 将 Unicode 数学符号（希腊字母、上下标、运算符等）转为 LaTeX 命令
+    2. 修复裸写的 LaTeX 命令（缺少 \\( 包裹）
+    3. 修复缺失反斜杠的分隔符
 
     纯文本输入/纯文本输出，不涉及 JSON 结构，
     避免 JSON 转义带来的 LLM 理解负担。
     修复失败时回退原内容，不抛异常。
     """
 
-    FIX_PROMPT = """你是一个 LaTeX 公式格式修正助手。下面是一段学术文本，请检查并修复其中的 LaTeX 公式格式问题。
+    FIX_PROMPT = r"""你是一个 LaTeX 公式格式修正助手。下面是一段学术文本，请检查并修复其中的 LaTeX 公式格式问题。
 
-【常见问题】
-1. 公式分隔符缺少反斜杠：例如 `(\alpha)` 应该是 `\\(\\alpha\\)`
-2. LaTeX 命令裸写：例如 `使用 \alpha 驱动` 应该是 `使用 \\(\\alpha\\) 驱动`
-3. 独立公式缺少正确包裹：例如 `[E = mc^2]` 应该是 `\\[E = mc^2\\]`
+【转换规则】
+1. 将所有 Unicode 数学符号转换为对应的 LaTeX 命令：
+   - 希腊字母: α→\alpha, β→\beta, γ→\gamma, δ→\delta, ε→\varepsilon, 及对应大写
+   - 上标/下标: ²→^2, ³→^3, ⁰→^0, ₀→_0, ₙ→_n, ₓ→_x
+   - 关系运算符: ≈→\approx, ≠→\neq, ≤→\leq, ≥→\geq, ≡→\equiv
+   - 二元运算符: ±→\pm, ×→\times, ÷→\div, ·→\cdot
+   - 箭头: →→\rightarrow, ←→\leftarrow, ⇒→\Rightarrow, ⇔→\leftrightarrow
+   - 其他常用: ∂→\partial, ∇→\nabla, ∞→\infty, ℏ→\hbar, ∈→\in, ∉→\notin, ∀→\forall, ∃→\exists, √→\sqrt, ∝→\propto, ∠→\angle, ⊥→\perp
+
+2. 修复裸露的 LaTeX 命令：缺少分隔符的 \alpha 应改为 \(\alpha\)
+3. 修复缺少反斜杠的分隔符：(\alpha) 应改为 \(\alpha\)，[E=mc^2] 应改为 \[E=mc^2\]
 
 【修正规则】
-- 行内公式必须用 \\(...\\) 包裹
-- 独立公式必须用 \\[...\\] 包裹
+- 行内公式必须用 \(...\) 包裹，独立公式必须用 \[...\] 包裹
 - 不要改变文本内容、语序、标点
+- 输出中不应保留任何数学类 Unicode 字符，仅允许普通 ASCII 文本和 LaTeX 命令
 
 只输出修正后的文本，不要包含任何额外解释："""
 
-    def __init__(self, llm_api_config: Dict[str, Any]):
+    def __init__(self, llm_api_config: Dict[str, Any], force: bool = False):
         self.config = llm_api_config
+        self.force = force
         self._session = requests.Session()
         self._session.headers.update({
             "Authorization": f"Bearer {self.config['api_key']}",
@@ -332,18 +345,45 @@ class FormulaFixer:
         })
 
     @staticmethod
-    def needs_fix(text: str) -> bool:
+    def needs_fix(text: str, force: bool = False) -> bool:
         """检测文本中是否有 LaTeX 公式格式问题。
 
-        覆盖两类情况：
+        覆盖四类情况：
         1. 裸写 LaTeX 命令（\\alpha 无 \\( 包裹）
         2. 公式分隔符反斜杠丢失（\\( → (，\\[ → [）
+        3. 裸上下标（c^2, x_i, E_{kin} 等）
+        4. Unicode 数学符号（α, ², ≈ 等希腊字母/上下标/运算符）
 
         通过移除已正确包裹的 \\(...\\) 和 \\[...\\] 区域后，
-        检查剩余文本中是否还有 LaTeX 命令来判断。
+        检查剩余文本中是否有 LaTeX 命令、裸上下标或 Unicode 数学字符。
+
+        Parameters
+        ----------
+        text : str
+            待检测的文本
+        force : bool
+            为 True 时跳过检测直接返回 True（强制修复）
         """
+        if force:
+            return True
         cleaned = re.sub(r'\\\(.*?\\\)|\\\[.*?\\\]', '', text, flags=re.DOTALL)
-        return bool(re.search(r'\\[a-zA-Z]{2,}', cleaned))
+        # Unicode 数学字符范围：希腊字母、上下标、箭头、运算符、字母类符号
+        unicode_math = (
+            r'[\u0370-\u03FF'       # Greek & Coptic
+            r'\u2070-\u209F'        # Superscripts & Subscripts
+            r'\u2190-\u21FF'        # Arrows
+            r'\u2200-\u22FF'        # Mathematical Operators
+            r'\u2100-\u214F'        # Letterlike Symbols (ℏ, ℓ, etc.)
+            r'\u00B2\u00B3\u00B9'   # ² ³ ¹ (common superscripts)
+            r']'
+        )
+        return bool(re.search(
+            r'\\[a-zA-Z]{2,}'       # LaTeX command: \alpha
+            r'|[\w\)\]]\^[\w\{\(]'  # Bare superscript: c^2, x^{n}
+            r'|[\w\)\]]_[\w\{\(]'   # Bare subscript: x_i, E_{kin}
+            r'|' + unicode_math,    # Unicode math characters
+            cleaned,
+        ))
 
     def fix_text(self, text: str, field_name: str = "") -> str:
         """修正单段文本中的 LaTeX 公式格式问题。
@@ -364,7 +404,7 @@ class FormulaFixer:
         if not text or text == "未提供":
             logger.debug(f"{tag}跳过修复: 空字段或未提供")
             return text
-        if not self.needs_fix(text):
+        if not self.needs_fix(text, force=self.force):
             logger.debug(f"{tag}跳过修复: 无需修复")
             return text
         logger.info(f"{tag}正在修复公式格式 ({len(text)} 字符)")
@@ -420,7 +460,8 @@ if __name__ == "__main__":
     1. 所有字段必须用中文学术语言，信息密度高，不遗漏关键物理内涵。
     2. 如果某项信息在论文中未提及，对应字段的值必须设为 "未提供"。绝不编造内容。
     3. 反斜杠转义规则：JSON 字符串中，每个反斜杠必须双写。行内公式必须用 \\\\(...\\\\) 包裹，禁止用 $...$。独立公式必须用 \\\\\\[...\\\\\\] 包裹，禁止用 $$...$$。
-    4. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
+    4. 禁止使用复杂 LaTeX 环境：禁止 \\begin{} / \\end{}（如 cases、aligned 等），禁止 \\\\ 换行。公式仅限 \\frac、\\sqrt、\\int、\\sum、\\partial 等基本命令及上标/下标/希腊字母。
+    5. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
 
     【main_results_and_physics 字段的 Markdown 要求】
     - 使用标准 Markdown 语法：二级标题 ##，粗体 **，斜体 *，行内代码 `，列表 -，引用 >。
