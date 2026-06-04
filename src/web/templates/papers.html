@@ -1,34 +1,72 @@
 {% extends "base.html" %}
 {% block title %}Papers{% endblock %}
 {% block content %}
-<h2 data-i18n="papers.title">Papers by Semantic Similarity</h2>
-<p class="text-muted" data-i18n="papers.desc" data-i18n-vars='{"n": "{{ papers|length }}"}'><span data-i18n="papers.desc">Top {{ papers|length }} papers with semantic similarity scores.</span></p>
+<h2 data-i18n="papers.title">Papers</h2>
+
+<div class="papers-toolbar">
+  <label data-i18n="papers.sort_label">Sort by:</label>
+  <select id="sort-select" onchange="changeSort()">
+    <option value="created" {% if sort_by == 'created' %}selected{% endif %} data-i18n="papers.sort_created">Created Date</option>
+    <option value="published" {% if sort_by == 'published' %}selected{% endif %} data-i18n="papers.sort_published">Published Date</option>
+  </select>
+</div>
+
+{% if sort_by == 'published' %}
+<div class="alert alert-warning">
+  ⚠ <span data-i18n="papers.pub_warning">Published dates come from multiple sources (publisher page > CrossRef > RSS) and may be inaccurate.</span>
+</div>
+{% endif %}
 
 <table class="papers-table">
   <thead>
     <tr>
-      <th data-i18n="papers.score">Score</th>
+      <th data-i18n="papers.date">Date</th>
       <th data-i18n="papers.title_col">Title</th>
       <th data-i18n="papers.journal">Journal</th>
-      <th data-i18n="papers.date">Date</th>
+      <th data-i18n="papers.score">Semantic</th>
+      <th data-i18n="papers.relevance">LLM Relevance</th>
       <th data-i18n="papers.doi">DOI</th>
     </tr>
   </thead>
   <tbody>
     {% for p in papers %}
     <tr>
+      <td class="td-date">{{ (p.created_date or '—')[:10] if sort_by == 'created' else (p.paperdate_page or p.paperdate_crossref or p.paperdate_rss or '—')[:10] }}</td>
+      <td class="td-title">{{ p.title or '—' }}</td>
+      <td>{{ p.journal or '—' }}</td>
       <td>
+        {% if p.semantic_similarity_score is not none %}
         <div class="score-bar-wrap">
           <div class="score-bar" style="width:{{ (p.semantic_similarity_score * 100)|round(1) }}%"></div>
           <span class="score-text">{{ '%.3f'|format(p.semantic_similarity_score) }}</span>
         </div>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
       </td>
-      <td class="td-title">{{ p.title or '—' }}</td>
-      <td>{{ p.journal or '—' }}</td>
-      <td>{{ p.paperdate_rss or '—' }}</td>
+      <td>
+        {% if p.llm_relevance_status == 'success' %}
+          {% if p.llm_relevance_result == 1 %}
+          <span class="badge badge-success">✓</span>
+          {% else %}
+          <span class="badge badge-failed">✗</span>
+          {% endif %}
+        {% elif p.llm_relevance_status == 'skipped' %}
+        <span class="badge badge-skipped" data-i18n="papers.skipped">Skipped</span>
+        {% else %}
+        <span class="badge badge-pending" data-i18n="papers.pending">Pending</span>
+        {% endif %}
+      </td>
       <td class="td-doi"><code>{{ p.doi or '—' }}</code></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+
+<script>
+function changeSort() {
+  const val = document.getElementById('sort-select').value;
+  window.location.href = '/papers?sort=' + val;
+}
+</script>
 {% endblock %}

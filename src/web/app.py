@@ -31,9 +31,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import (
-    DB_PATH, REPORT_DIR, LOG_FILE_PATH, DATA_DIR, CONFIG_DIR,
+    DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
+    LOG_FILE_PATH, DATA_DIR, CONFIG_DIR,
     load_publishers, load_keywords,
-    SKIP_PHASE_A, SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
+    SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
+    SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
     SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
 )
 from db.database import DatabaseClient
@@ -49,16 +51,20 @@ _running_phase: Optional[str] = None
 _phase_lock = asyncio.Lock()
 
 PHASE_LABELS = {
-    "A": "RSS Fetch", "B": "CrossRef Metadata", "C": "Publisher Page",
+    "A-RSS": "RSS Fetch", "A-CR": "CrossRef Query",
+    "B": "CrossRef Metadata", "C": "Publisher Page",
     "D": "Semantic Filter", "E": "LLM Relevance", "E2": "MinerU PDF",
     "F": "LLM Summary", "G": "Report", "H": "Email",
 }
 
 PHASE_DEFAULTS = {
-    "A": SKIP_PHASE_A, "B": SKIP_PHASE_B, "C": SKIP_PHASE_C,
+    "A-RSS": SKIP_PHASE_A_RSS, "A-CR": SKIP_PHASE_A_CR,
+    "B": SKIP_PHASE_B, "C": SKIP_PHASE_C,
     "D": SKIP_PHASE_D, "E": SKIP_PHASE_E, "E2": SKIP_PHASE_E2,
     "F": SKIP_PHASE_F, "G": SKIP_PHASE_G, "H": SKIP_PHASE_H,
 }
+
+PHASE_ORDER = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F", "G", "H"]
 
 SKIP_OVERRIDES_PATH = DATA_DIR / "skip_overrides.json"
 
@@ -90,7 +96,8 @@ def _pipeline_status():
             status = p[col] if p[col] else "pending"
             counts[status] = counts.get(status, 0) + 1
         phases[label] = counts
-    return {"total": total, "phases": phases}
+    effective_skip = {k: _get_effective_skip().get(k, False) for k in PHASE_ORDER}
+    return {"total": total, "phases": phases, "effective_skip": effective_skip}
 
 
 # Reset definitions: (columns_to_pending, cascade_info, extra_where)
@@ -102,7 +109,7 @@ RESET_DEFS = {
           "OR publisher_page_fetched_error NOT LIKE 'NonResearchPageError:%')",
           None),
     "D": (["semantic_filter_status", "semantic_filter_error",
-           "llm_relevance_status", "llm_relevance_result"],
+           "semantic_similarity_score", "semantic_best_subdomain"],
           "semantic_filter_status IN ('success','failed','skipped')", None),
     "E": (["llm_relevance_status", "llm_relevance_result", "llm_relevance_confidence",
            "llm_relevance_reason", "llm_relevance_error"],
@@ -118,7 +125,7 @@ RESET_DEFS = {
 }
 
 RESET_CASCADE = {
-    "B": "", "C": "", "D": "llm_relevance_status",
+    "B": "", "C": "", "D": "",
     "E": "", "E2": "llm_summary_status, report_status",
     "F": "report_status", "G": "",
 }
@@ -185,6 +192,9 @@ async def run_phase(phase: str):
     global _running_phase
     if phase not in PHASE_LABELS:
         return JSONResponse({"error": f"Unknown phase: {phase}"}, status_code=400)
+    effective = _get_effective_skip()
+    if effective.get(phase, False):
+        return JSONResponse({"error": f"Phase {phase} is skipped in Config — enable it first"}, status_code=400)
     async with _phase_lock:
         if _running_phase:
             return JSONResponse({"error": f"Phase {_running_phase} is already running"}, status_code=409)
@@ -212,11 +222,17 @@ def _get_reset_cols(phase: str) -> list[str]:
 
 
 def _count_reset_impact(phase: str, reset_cols: list[str]) -> dict[str, int]:
-    """Count papers affected per column for a reset operation (read-only)."""
+    """Count papers affected per column for a reset operation (read-only).
+
+    For Phase D, skip REAL/NULL columns (semantic_similarity_score,
+    semantic_best_subdomain) — count only on the primary status column.
+    """
     db = DatabaseClient(DB_PATH)
     db.init_db_papers()
+    status_cols = [c for c in reset_cols
+                   if c not in ("semantic_similarity_score", "semantic_best_subdomain")]
     impact = {}
-    for c in reset_cols:
+    for c in status_cols:
         cur = db.conn.execute(
             f"SELECT COUNT(*) FROM papers WHERE {c} IN ('success','failed','skipped')"
         )
@@ -229,7 +245,17 @@ def _execute_reset(phase: str, reset_cols: list[str]):
     db = DatabaseClient(DB_PATH)
     db.init_db_papers()
     for c in reset_cols:
-        db.batch_reset_status([(c, "pending")], f"{c} IN ('success','failed','skipped')")
+        if c in ("semantic_similarity_score", "semantic_best_subdomain"):
+            # Non-status columns → set to NULL
+            db.batch_reset_status(
+                [(c, None)],
+                "semantic_filter_status IN ('success','failed','skipped')",
+            )
+        else:
+            db.batch_reset_status(
+                [(c, "pending")],
+                f"{c} IN ('success','failed','skipped')",
+            )
 
 
 @app.post("/pipeline/reset/{phase}")
@@ -281,14 +307,35 @@ async def pipeline_logs_sse():
 # ── Papers ─────────────────────────────────────────────────────────────────────
 
 @app.get("/papers", response_class=HTMLResponse)
-async def papers_page(request: Request):
+async def papers_page(request: Request, sort: str = "created"):
     db = DatabaseClient(DB_PATH)
     db.init_db_papers()
-    papers = db.get_papers_sorted_by_semantic(limit=100)
-    return templates.TemplateResponse(request, "papers.html", {"papers": papers})
+    sort_by = sort if sort in ("created", "published") else "created"
+    papers = db.get_papers(limit=100, sort_by=sort_by)
+    return templates.TemplateResponse(request, "papers.html", {
+        "papers": papers, "sort_by": sort_by,
+    })
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────
+
+
+def _list_reports():
+    """List all report files from auto/ and user/ directories, newest first."""
+    reports = []
+    for source, directory in [("auto", AUTO_REPORT_DIR), ("user", USER_REPORT_DIR)]:
+        if not directory.exists():
+            continue
+        for f in sorted(directory.glob("report_*.md"), reverse=True):
+            reports.append({
+                "filename": f.name,
+                "source": source,
+                "path": str(f.relative_to(DATA_DIR.parent)),
+                "mtime": f.stat().st_mtime,
+            })
+    reports.sort(key=lambda r: r["mtime"], reverse=True)
+    return reports
+
 
 @app.get("/report", response_class=HTMLResponse)
 async def report_page(request: Request):
@@ -297,9 +344,27 @@ async def report_page(request: Request):
     papers = db.get_papers_with_summaries()
     publishers = load_publishers()
     publisher_names = sorted(set(p["publisher"] for p in publishers if p.get("enabled", True)))
+    reports = _list_reports()
     return templates.TemplateResponse(
-        request, "report.html", {"papers": papers, "publishers": publisher_names}
+        request, "report.html", {
+            "papers": papers, "publishers": publisher_names, "reports": reports,
+        }
     )
+
+
+@app.get("/report/list")
+async def report_list():
+    return JSONResponse({"ok": True, "reports": _list_reports()})
+
+
+@app.get("/report/data/{filename:path}")
+async def report_data(filename: str):
+    for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
+        file_path = directory / filename
+        if file_path.exists():
+            content = file_path.read_text(encoding="utf-8")
+            return JSONResponse({"ok": True, "content": content, "filename": filename})
+    return JSONResponse({"error": "Report not found"}, status_code=404)
 
 
 @app.post("/report/generate")
@@ -311,11 +376,11 @@ async def generate_report(request: Request):
     db.init_db_papers()
 
     from pipeline.phase_g import phase_g_report
-    phase_g_report(db, REPORT_DIR, doi_list=dois)
+    phase_g_report(db, AUTO_REPORT_DIR, USER_REPORT_DIR, doi_list=dois)
 
-    # Find latest report
-    report_dir = Path(REPORT_DIR)
-    md_files = sorted(report_dir.glob("report_*.md"), reverse=True)
+    # Find latest user report
+    user_dir = Path(USER_REPORT_DIR)
+    md_files = sorted(user_dir.glob("report_*.md"), reverse=True)
     filename = md_files[0].name if md_files else ""
     preview = md_files[0].read_text(encoding="utf-8") if md_files else ""
     return JSONResponse({"ok": True, "filename": filename, "preview": preview})
@@ -323,10 +388,11 @@ async def generate_report(request: Request):
 
 @app.get("/report/download/{filename:path}")
 async def download_report(filename: str):
-    file_path = REPORT_DIR / filename
-    if not file_path.exists():
-        return JSONResponse({"error": "File not found"}, status_code=404)
-    return FileResponse(str(file_path), filename=filename, media_type="text/markdown")
+    for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
+        file_path = directory / filename
+        if file_path.exists():
+            return FileResponse(str(file_path), filename=filename, media_type="text/markdown")
+    return JSONResponse({"error": "File not found"}, status_code=404)
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
@@ -351,10 +417,12 @@ async def config_page(request: Request):
     config_dir = CONFIG_DIR
     publishers_raw = (config_dir / "publishers.yaml").read_text(encoding="utf-8")
     keywords_raw = (config_dir / "keywords.yaml").read_text(encoding="utf-8")
+    domain_description = keywords.get("domain_description", "")
     return templates.TemplateResponse(request, "config.html", {
         "publishers": publishers, "keywords": keywords,
         "skip_config": skip_config, "overrides_raw": overrides_raw,
         "publishers_raw": publishers_raw, "keywords_raw": keywords_raw,
+        "domain_description": domain_description,
     })
 
 
@@ -395,3 +463,173 @@ async def config_save_keywords(request: Request):
     path = CONFIG_DIR / "keywords.yaml"
     path.write_text(content, encoding="utf-8")
     return JSONResponse({"ok": True, "path": str(path)})
+
+
+@app.get("/config/mineru-token")
+async def config_mineru_token_status():
+    import base64, time
+    token = os.getenv("MINERU_TOKEN", "")
+    if not token:
+        return JSONResponse({"ok": True, "valid": False, "error": "Not configured"})
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return JSONResponse({"ok": True, "valid": False, "error": "Invalid JWT format"})
+        payload = parts[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data = json.loads(base64.b64decode(payload))
+        exp = data.get("exp", 0)
+        if not exp:
+            return JSONResponse({"ok": True, "valid": True, "days_left": None})
+        days_left = (exp - time.time()) / 86400
+        return JSONResponse({"ok": True, "valid": True, "days_left": round(days_left, 1)})
+    except Exception as e:
+        return JSONResponse({"ok": True, "valid": False, "error": str(e)})
+
+
+@app.post("/config/test-deepseek")
+async def config_test_deepseek():
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key or api_key.startswith("sk-placeholder"):
+        return JSONResponse({"ok": False, "error": "DEEPSEEK_API_KEY not configured"})
+    try:
+        import requests
+        resp = requests.post(
+            "https://api.deepseek.com/chat/completions",
+            json={"model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return JSONResponse({"ok": True})
+        else:
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@app.post("/config/test-crossref")
+async def config_test_crossref():
+    try:
+        import requests
+        resp = requests.get(
+            "https://api.crossref.org/works/10.1038/nature12373",
+            headers={"User-Agent": "PaperCrawler (mailto:test@example.com) Python"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return JSONResponse({"ok": True})
+        else:
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@app.post("/config/save-domain")
+async def config_save_domain(request: Request):
+    body = await request.json()
+    content = body.get("content", "")
+    try:
+        from ruamel.yaml import YAML
+        kw_path = CONFIG_DIR / "keywords.yaml"
+        ryaml = YAML()
+        kw = ryaml.load(kw_path)
+        if kw is None or not isinstance(kw, dict):
+            kw = {"domain_description": content}
+        else:
+            kw["domain_description"] = content
+        ryaml.dump(kw, kw_path)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@app.post("/config/test-mineru")
+async def config_test_mineru():
+    token = os.getenv("MINERU_TOKEN", "")
+    if not token:
+        return JSONResponse({"ok": False, "error": "MINERU_TOKEN not configured"})
+    try:
+        import requests
+        resp = requests.get(
+            "https://mineru.net/api/v1/user/info",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return JSONResponse({"ok": True})
+        else:
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+# ── Data Sources ──────────────────────────────────────────────────────────────
+
+JOURNAL_OVERRIDES_PATH = DATA_DIR / "journal_overrides.json"
+
+
+def _load_journal_overrides():
+    if not JOURNAL_OVERRIDES_PATH.exists():
+        return {"journals": {}}
+    try:
+        return json.loads(JOURNAL_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, Exception):
+        return {"journals": {}}
+
+
+def _journal_override_value(jid, overrides, field):
+    ov = overrides.get("journals", {}).get(jid, {})
+    if field in ov:
+        return ov[field]
+    if field in ("rss_enabled", "cr_enabled") and "enabled" in ov:
+        return ov["enabled"]
+    return None
+
+
+@app.get("/datasources", response_class=HTMLResponse)
+async def datasources_page(request: Request):
+    publishers = load_publishers()
+    overrides = _load_journal_overrides()
+    journals = []
+    for j in publishers:
+        jid = j["id"]
+        ov = overrides.get("journals", {}).get(jid, {})
+        enabled_default = j.get("enabled", True)
+        override_enabled = _journal_override_value(jid, overrides, "enabled")
+        if override_enabled is not None:
+            override_enabled = bool(override_enabled)
+        else:
+            override_enabled = bool(enabled_default)
+        override_rss = _journal_override_value(jid, overrides, "rss_enabled")
+        if override_rss is None:
+            override_rss = override_enabled
+        else:
+            override_rss = bool(override_rss)
+        override_cr = _journal_override_value(jid, overrides, "cr_enabled")
+        if override_cr is None:
+            override_cr = override_enabled
+        else:
+            override_cr = bool(override_cr)
+        journals.append({
+            "id": jid,
+            "name": j.get("name", ""),
+            "publisher": j.get("publisher", ""),
+            "issn": j.get("issn", ""),
+            "has_rss": bool(j.get("rss")),
+            "has_issn": bool(j.get("issn")),
+            "enabled_default": bool(enabled_default),
+            "override_enabled": override_enabled,
+            "override_rss": override_rss,
+            "override_cr": override_cr,
+        })
+    return templates.TemplateResponse(request, "datasources.html", {"journals": journals})
+
+
+@app.post("/datasources/save")
+async def datasources_save(request: Request):
+    body = await request.json()
+    journals = body.get("journals", {})
+    overrides = {"journals": journals}
+    JOURNAL_OVERRIDES_PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
+    return JSONResponse({"ok": True, "path": str(JOURNAL_OVERRIDES_PATH)})

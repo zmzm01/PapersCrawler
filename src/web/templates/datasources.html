@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Data Sources{% endblock %}
+{% block content %}
+<h2 data-i18n="datasources.title">Data Sources</h2>
+<p class="text-muted" data-i18n="datasources.desc">Enable or disable journals and their data sources (RSS / CrossRef). Changes are saved to a separate override file and take effect on the next pipeline run.</p>
+
+<form id="datasources-form">
+<table class="config-table">
+  <thead><tr>
+    <th data-i18n="datasources.enabled">Enabled</th>
+    <th data-i18n="datasources.publisher">Publisher</th>
+    <th data-i18n="datasources.journal">Journal</th>
+    <th data-i18n="datasources.issn">ISSN</th>
+    <th data-i18n="datasources.rss">RSS</th>
+    <th data-i18n="datasources.crossref">CrossRef</th>
+  </tr></thead>
+  <tbody>
+    {% for j in journals %}
+    <tr>
+      <td class="td-center">
+        <input type="checkbox" class="ds-enabled" data-jid="{{ j.id }}"
+               onchange="syncDS('{{ j.id }}')"
+               {{ 'checked' if j.override_enabled else '' }}>
+      </td>
+      <td>{{ j.publisher }}</td>
+      <td><strong>{{ j.name }}</strong>{% if not j.enabled_default %}{% endif %}</td>
+      <td><code>{{ j.issn or '—' }}</code></td>
+      <td class="td-center">
+        <input type="checkbox" class="ds-rss" data-jid="{{ j.id }}"
+               {{ 'disabled' if not j.has_rss else '' }}
+               {{ 'checked' if j.override_rss else '' }}>
+      </td>
+      <td class="td-center">
+        <input type="checkbox" class="ds-cr" data-jid="{{ j.id }}"
+               {{ 'disabled' if not j.has_issn else '' }}
+               {{ 'checked' if j.override_cr else '' }}>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="editor-actions">
+  <button type="button" class="btn btn-primary" onclick="saveDataSources()" data-i18n="datasources.save">Save Changes</button>
+  <span id="datasources-status" class="save-status"></span>
+</div>
+</form>
+
+<script>
+function syncDS(jid) {
+  const enabled = document.querySelector('.ds-enabled[data-jid="' + jid + '"]').checked;
+  const rssCb = document.querySelector('.ds-rss[data-jid="' + jid + '"]');
+  const crCb = document.querySelector('.ds-cr[data-jid="' + jid + '"]');
+  const rssEnabled = rssCb && !rssCb.disabled;
+  const crEnabled = crCb && !crCb.disabled;
+  if (rssCb && rssCb.disabled) rssCb.checked = enabled;
+  if (crCb && crCb.disabled) crCb.checked = enabled;
+  if (!enabled && rssCb && !rssCb.disabled) rssCb.checked = false;
+  if (!enabled && crCb && !crCb.disabled) crCb.checked = false;
+}
+
+async function saveDataSources() {
+  const journals = {};
+  document.querySelectorAll('.ds-enabled').forEach(cb => {
+    const jid = cb.dataset.jid;
+    const rssCb = document.querySelector('.ds-rss[data-jid="' + jid + '"]');
+    const crCb = document.querySelector('.ds-cr[data-jid="' + jid + '"]');
+    journals[jid] = {
+      enabled: cb.checked,
+    };
+    if (rssCb && !rssCb.disabled) journals[jid].rss_enabled = rssCb.checked;
+    if (crCb && !crCb.disabled) journals[jid].cr_enabled = crCb.checked;
+  });
+  const data = { journals };
+  const r = await fetch('/datasources/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  const result = await r.json();
+  const status = document.getElementById('datasources-status');
+  if (result.ok) {
+    status.textContent = getI18n('datasources.saved');
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = getI18n('config.syntax_error', {msg: result.error});
+    status.className = 'save-status error';
+  }
+}
+</script>
+{% endblock %}

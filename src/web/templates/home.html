@@ -67,10 +67,15 @@
         <td data-i18n="home.logs_notes">Shows the most recent ~200 KB. New log lines arrive in real time via SSE.</td>
       </tr>
       <tr>
+        <td><a href="/datasources"><span data-i18n="nav.datasources">Data Sources</span></a></td>
+        <td data-i18n="home.datasources_desc">Enable or disable journals and their RSS / CrossRef data sources</td>
+        <td data-i18n="home.config_notes_yaml">Changes saved to a separate override file, does not modify publishers.yaml.</td>
+      </tr>
+      <tr>
         <td><a href="/config"><span data-i18n="nav.config">Config</span></a></td>
-        <td data-i18n="home.config_desc">Toggle SKIP switches (persisted to <code>data/skip_overrides.json</code>), edit publishers.yaml and keywords.yaml</td>
+        <td data-i18n="home.config_desc">Toggle SKIP switches, edit domain description, test connectivity, edit publishers.yaml and keywords.yaml</td>
         <td>
-          <span data-i18n="home.config_notes_skip"><strong>SKIP toggles</strong> affect CLI behavior; Web UI ignores them (click Run to execute).</span><br>
+          <span data-i18n="home.config_notes_skip"><strong>SKIP toggles</strong> affect Web UI Pipeline buttons; CLI uses config.py defaults.</span><br>
           <span data-i18n="home.config_notes_yaml"><strong>YAML editors</strong> validate syntax on save and require a second confirmation.</span>
         </td>
       </tr>
