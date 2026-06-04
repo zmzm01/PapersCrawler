@@ -1,12 +1,18 @@
 """
-Phase D: Semantic similarity filtering.
+Phase D: Semantic similarity reference scoring.
+
+Computes cosine similarity between each paper and multiple sub-domain
+descriptions. The resulting score is used ONLY for sorting in the WebUI
+Papers page. It does NOT gate Phase E (LLM relevance).
+
+When SKIP_PHASE_D = True (default), all papers go directly to Phase E.
 """
 
 from datetime import datetime
 
 from config import (
     SKIP_PHASE_D, MAX_PAPERS_PER_PHASE,
-    SEMANTIC_MODEL_PATH, SEMANTIC_SIMILARITY_THRESHOLD,
+    SEMANTIC_MODEL_PATH,
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import logger
@@ -14,31 +20,28 @@ from processors.paper_relevance import SemanticFilter
 
 
 def phase_d_semantic_filter(db, domain_config):
-    """Filter papers by semantic similarity to domain description.
+    """Compute semantic similarity scores for WebUI reference sorting.
 
     Parameters
     ----------
     db : DatabaseClient
     domain_config : dict
-        {"keywords": [...], "domain_description": "..."}
+        {"keywords": [...], "domain_description": "...", "sub_domains": {...}}
     """
     if SKIP_PHASE_D:
         logger.info("Phase D: SKIP_PHASE_D=True, skipping")
         return
-    logger.info("--- Phase D: Semantic similarity filter ---")
+    logger.info("--- Phase D: Semantic similarity (reference only) ---")
 
-    keywords = domain_config.get("keywords", [])
-    domain_description = domain_config.get("domain_description", "")
-
-    if not domain_description:
-        logger.info("Phase D: no domain description, skipping")
+    sub_domains = domain_config.get("sub_domains", {})
+    if not sub_domains:
+        logger.info("Phase D: no sub_domains configured, skipping")
         return
 
-    logger.info(f"Domain: {domain_description[:100]}...")
-    logger.info(f"Keywords: {len(keywords)}")
+    logger.info(f"Phase D: {len(sub_domains)} sub-domains loaded")
 
     try:
-        sf = SemanticFilter(SEMANTIC_MODEL_PATH, domain_description)
+        sf = SemanticFilter(SEMANTIC_MODEL_PATH, sub_domains)
     except ImportError as e:
         logger.error(f"Phase D: {e}")
         logger.error("Install sentence-transformers: pip install sentence-transformers")
@@ -55,10 +58,7 @@ def phase_d_semantic_filter(db, domain_config):
         return
 
     logger.info(f"Phase D: {len(papers)} papers pending")
-
-    threshold = SEMANTIC_SIMILARITY_THRESHOLD
-    passed = 0
-    skipped = 0
+    success_count = 0
 
     for paper in papers:
         doi = paper["doi"]
@@ -67,19 +67,12 @@ def phase_d_semantic_filter(db, domain_config):
         timestamp = str(datetime.now())
 
         try:
-            score = sf.compute_similarity(title, abstract)
-            db.update_semantic_filter(doi, score, FetchStatus.SUCCESS.value, timestamp)
-
-            if score >= threshold:
-                passed += 1
-            else:
-                db.update_process_status(
-                    doi, "llm_relevance_status",
-                    FetchStatus.SKIPPED.value,
-                    "llm_relevance_date", timestamp,
-                )
-                skipped += 1
-
+            score, best_label = sf.compute_similarity(title, abstract)
+            db.update_semantic_filter(
+                doi, score, FetchStatus.SUCCESS.value,
+                timestamp, best_subdomain=best_label,
+            )
+            success_count += 1
         except Exception as e:
             logger.error(f"Phase D: similarity failed [{doi}]: {e}")
             db.update_error_message(
@@ -89,4 +82,4 @@ def phase_d_semantic_filter(db, domain_config):
                 "semantic_filter_date", timestamp,
             )
 
-    logger.info(f"Phase D done: {passed} passed, {skipped} skipped")
+    logger.info(f"Phase D done: {success_count} scored")

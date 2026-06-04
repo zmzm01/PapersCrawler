@@ -88,7 +88,7 @@ def phase_e_llm_relevance(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
-                result_str = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str)
+                result_str = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 result = json.loads(result_str)
                 relevant = 1 if result.get("relevant", False) else 0
                 confidence = result.get("confidence", "low")

@@ -34,7 +34,7 @@ def test_runner_importable():
     assert callable(run_phases)
 
 
-def test_phase_a_signature():
+def test_phase_a_rss_signature():
     """phase_a_rss should accept (db, publishers)."""
     from pipeline.phase_a import phase_a_rss
     import inspect
@@ -44,20 +44,31 @@ def test_phase_a_signature():
     assert "publishers" in param_names
 
 
+def test_phase_a_crossref_signature():
+    """phase_a_crossref should accept (db, publishers)."""
+    from pipeline.phase_a import phase_a_crossref
+    import inspect
+    sig = inspect.signature(phase_a_crossref)
+    param_names = list(sig.parameters.keys())
+    assert "db" in param_names
+    assert "publishers" in param_names
+
+
 def test_phase_g_signature():
-    """phase_g_report should accept (db, report_dir)."""
+    """phase_g_report should accept (db, auto_dir, user_dir)."""
     from pipeline.phase_g import phase_g_report
     import inspect
     sig = inspect.signature(phase_g_report)
     param_names = list(sig.parameters.keys())
     assert "db" in param_names
-    assert "report_dir" in param_names
+    assert "auto_dir" in param_names
+    assert "user_dir" in param_names
 
 
 def test_phase_h_signature():
-    """phase_h_email should accept (report_dir)."""
+    """phase_h_email should accept (auto_dir)."""
     from pipeline.phase_h import phase_h_email
     import inspect
     sig = inspect.signature(phase_h_email)
     param_names = list(sig.parameters.keys())
-    assert "report_dir" in param_names
+    assert "auto_dir" in param_names

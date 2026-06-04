@@ -10,7 +10,7 @@ from datetime import datetime
 from config import (
     SKIP_PHASE_F, MAX_PAPERS_PER_PHASE,
     load_keywords, LLM_API_CONFIG_DICT_SUMM, LLM_API_CONFIG_DICT_RELE,
-    SUMMARIES_PROMPT, SKIP_FORMULA_FIX, LLM_CONCURRENT_MAX,
+    SUMMARIES_PROMPT, SKIP_FORMULA_FIX, FORCE_FORMULA_FIX, LLM_CONCURRENT_MAX,
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import logger
@@ -52,7 +52,7 @@ def phase_f_llm_summary(db):
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
     fixer = None
     if not SKIP_FORMULA_FIX:
-        fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE)
+        fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE, force=FORCE_FORMULA_FIX)
 
     tasks = []
     for paper in relevant_papers:
@@ -89,7 +89,7 @@ def phase_f_llm_summary(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
-                result_str = re.sub(r'(?<!\\)\\(?![\\"/bfnrtu])', r'\\\\', result_str)
+                result_str = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', result_str)
                 parsed = json.loads(result_str)
                 if fixer:
                     logger.debug(f"FormulaFixer: [{doi}] 检查 5 个字段")
