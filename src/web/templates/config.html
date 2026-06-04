@@ -12,7 +12,7 @@
     <th data-i18n="config.action">Action</th>
   </tr></thead>
   <tbody>
-    {% for key in ['A','B','C','D','E','E2','F','G','H'] %}
+     {% for key in ['A-RSS','A-CR','B','C','D','E','E2','F','G','H'] %}
     <tr>
       <td>Phase {{ key }}</td>
       <td><span class="badge badge-{{ 'skipped' if skip_config[key] else 'pending' }}">{{ 'Skip' if skip_config[key] else 'Run' }}</span></td>
@@ -22,6 +22,35 @@
     {% endfor %}
   </tbody>
 </table>
+
+<h3 data-i18n="config.domain_desc">Research Domain Description</h3>
+<p class="text-muted" data-i18n="config.domain_desc_hint">This description is used by the LLM relevance checker (Phase E) to understand your research focus.</p>
+<textarea class="yaml-editor" id="domain-editor" rows="8">{{ domain_description }}</textarea>
+<div class="editor-actions">
+  <button class="btn btn-sm btn-primary" onclick="saveDomain()" data-i18n="config.save">Save</button>
+  <span id="domain-status" class="save-status"></span>
+</div>
+
+<h3 data-i18n="config.connectivity">Connectivity Tests</h3>
+<p class="text-muted" data-i18n="config.connectivity_hint">Test reachability of external services. These send lightweight requests and report back.</p>
+<div class="conn-test-grid">
+  <div class="conn-test-card">
+    <strong>DeepSeek API</strong>
+    <button class="btn btn-sm btn-secondary" onclick="testConn('deepseek')" id="test-deepseek" data-i18n="config.test">Test</button>
+    <span id="test-deepseek-status"></span>
+  </div>
+  <div class="conn-test-card">
+    <strong>CrossRef API</strong>
+    <button class="btn btn-sm btn-secondary" onclick="testConn('crossref')" id="test-crossref" data-i18n="config.test">Test</button>
+    <span id="test-crossref-status"></span>
+  </div>
+  <div class="conn-test-card">
+    <strong>MinerU API</strong>
+    <button class="btn btn-sm btn-secondary" onclick="testConn('mineru')" id="test-mineru" data-i18n="config.test">Test</button>
+    <span id="test-mineru-status"></span>
+    <div id="mineru-token-status" class="conn-test-detail"></div>
+  </div>
+</div>
 
 <h3 data-i18n="config.publishers">publishers.yaml</h3>
 <textarea class="yaml-editor" id="publishers-editor">{{ publishers_raw }}</textarea>
@@ -83,5 +112,65 @@ async function saveYaml(name) {
     status.className = 'save-status error';
   }
 }
+
+async function saveDomain() {
+  const content = document.getElementById('domain-editor').value;
+  const status = document.getElementById('domain-status');
+  const r = await fetch('/config/save-domain', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content: content}),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = getI18n('config.saved', {path: 'domain_description'});
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = getI18n('config.syntax_error', {msg: data.error});
+    status.className = 'save-status error';
+  }
+}
+
+async function testConn(service) {
+  const btn = document.getElementById('test-' + service);
+  const status = document.getElementById('test-' + service + '-status');
+  btn.disabled = true;
+  status.textContent = 'Testing...';
+  status.className = 'save-status';
+  const r = await fetch('/config/test-' + service, { method: 'POST' });
+  const data = await r.json();
+  btn.disabled = false;
+  if (data.ok) {
+    status.textContent = '✓ OK';
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = '✗ ' + (data.error || 'Failed');
+    status.className = 'save-status error';
+  }
+}
+
+async function loadMineruTokenStatus() {
+  const el = document.getElementById('mineru-token-status');
+  const r = await fetch('/config/mineru-token');
+  const data = await r.json();
+  if (!data.ok) return;
+  if (!data.valid) {
+    el.textContent = 'Token: ' + (data.error || 'invalid');
+    el.className = 'conn-test-detail error';
+  } else if (data.days_left === null) {
+    el.textContent = 'Token: valid (expiry unknown)';
+    el.className = 'conn-test-detail ok';
+  } else if (data.days_left < 7) {
+    el.textContent = 'Token expires in ' + data.days_left + ' days — renew soon!';
+    el.className = 'conn-test-detail error';
+  } else if (data.days_left < 30) {
+    el.textContent = 'Token expires in ' + data.days_left + ' days';
+    el.className = 'conn-test-detail warning';
+  } else {
+    el.textContent = 'Token expires in ' + data.days_left + ' days';
+    el.className = 'conn-test-detail ok';
+  }
+}
+loadMineruTokenStatus();
 </script>
 {% endblock %}
