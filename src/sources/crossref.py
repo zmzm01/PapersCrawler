@@ -189,6 +189,82 @@ class CrossrefClient:
         return None
 
     # ---------------------------------------------------------
+    # 期刊级查询
+    # ---------------------------------------------------------
+
+    def fetch_by_journal(self, issn: str, from_date: str, to_date: str,
+                         max_results: int | None = None) -> list[PaperMetadata]:
+        """
+        按 ISSN + 日期范围查询期刊论文列表。
+
+        使用 CrossRef /journals/{issn}/works 端点，支持:
+        - 日期范围过滤 (from-pub-date / until-pub-date)
+        - 文章类型过滤 (type=journal-article，排除 editorial/correction 等)
+        - offset 翻页（上限约 10000 条，超出需 cursor 模式，暂不实现）
+
+        Args:
+            issn:        期刊 ISSN，如 "1476-4687"
+            from_date:   起始日期，含该日，"YYYY-MM-DD"
+            to_date:     截止日期，含该日，"YYYY-MM-DD"
+            max_results: 返回条数上限，None 表示全部
+
+        Returns:
+            list[PaperMetadata]: 日期范围内的论文列表。每篇包含 doi/title/date/
+                                 journal/publisher/authors/url 等字段。
+
+        Raises:
+            requests.RequestException: 网络错误（超时、HTTP 非 2xx 等）
+        """
+        papers: list[PaperMetadata] = []
+        offset = 0
+        rows = 100
+
+        url = f"{self.BASE_URL}/journals/{issn}/works"
+
+        while True:
+            params = {
+                "filter": (
+                    f"from-pub-date:{from_date},"
+                    f"until-pub-date:{to_date},"
+                    f"type:journal-article"
+                ),
+                "rows": rows,
+                "offset": offset,
+            }
+
+            try:
+                response = self.session.get(url, params=params,
+                                            timeout=self.timeout)
+                response.raise_for_status()
+                data = response.json()
+            except requests.RequestException as e:
+                raise e
+
+            items = data.get("message", {}).get("items", [])
+            for item in items:
+                try:
+                    paper = self.parse_work(item)
+                    if paper.doi:
+                        papers.append(paper)
+                except Exception:
+                    continue
+
+            total = data.get("message", {}).get("total-results", 0)
+            offset += rows
+
+            if max_results is not None and len(papers) >= max_results:
+                papers = papers[:max_results]
+                break
+            if offset >= total or not items:
+                break
+            if offset > 10000:
+                break
+
+            time.sleep(0.2)
+
+        return papers
+
+    # ---------------------------------------------------------
     # 文本清洗工具
     # ---------------------------------------------------------
     @staticmethod

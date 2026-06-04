@@ -200,15 +200,19 @@ class DatabaseClient:
             mineru_fulltext TEXT,
             mineru_output_dir TEXT,
 
-            -- 语义相似度初筛
+            -- 语义相似度初筛（参考排序，不参与过滤）
             semantic_similarity_score REAL,
             semantic_filter_status TEXT DEFAULT 'pending',
             semantic_filter_error TEXT,
             semantic_filter_date TEXT,
+            semantic_best_subdomain TEXT,
 
             -- 报告生成状态
             report_status TEXT DEFAULT 'pending',
             report_date TEXT,
+
+            -- 论文发现来源 (逗号分隔，如 "rss" / "crossref" / "rss,crossref")
+            discovery_source TEXT,
 
             -- 时间戳
             created_date TEXT,
@@ -260,6 +264,18 @@ class DatabaseClient:
                 self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
             except sqlite3.OperationalError:
                 pass  # 列已存在则跳过
+
+        # ---- 迁移: 为旧数据库添加语义最佳子领域列 ----
+        try:
+            self.conn.execute("ALTER TABLE papers ADD COLUMN semantic_best_subdomain TEXT")
+        except sqlite3.OperationalError:
+            pass  # 列已存在则跳过
+
+        # ---- 迁移: 为旧数据库添加发现来源列 ----
+        try:
+            self.conn.execute("ALTER TABLE papers ADD COLUMN discovery_source TEXT")
+        except sqlite3.OperationalError:
+            pass  # 列已存在则跳过
 
     # ==================================================================
     # 基本查询方法
@@ -325,6 +341,7 @@ class DatabaseClient:
         Phase A 专用: 将 RSS 抓取的论文基本信息写入数据库。
 
         此方法不做去重检查 — 调用方必须先用 paper_doi_exists() 判断。
+        自动设置 discovery_source = 'rss'。
 
         Args:
             doi:       论文 DOI
@@ -336,8 +353,9 @@ class DatabaseClient:
         """
         self.conn.execute(
             """
-            INSERT INTO papers (doi, title, page_url, journal, publisher, paperdate_rss)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO papers (doi, title, page_url, journal, publisher,
+                                paperdate_rss, discovery_source)
+            VALUES (?, ?, ?, ?, ?, ?, 'rss')
             """,
             (doi, title, link, journal, publisher, updated),
         )
@@ -358,6 +376,63 @@ class DatabaseClient:
             (created_date, doi),
         )
         self.conn.commit()
+
+    def insert_paper_basicinfo(self, doi, title, link, journal, publisher,
+                                date, source):
+        """
+        通用: 将论文基本信息和发现来源写入数据库。
+
+        适用于 RSS 和 CrossRef 发现两条路径，通过 source 参数区分。
+        此方法不做去重检查 — 调用方必须先用 paper_doi_exists() 判断。
+
+        Args:
+            doi:       论文 DOI
+            title:     论文标题
+            link:      论文页面 URL (page_url 列)
+            journal:   期刊名称
+            publisher: 出版社标识
+            date:      发布日期 (paperdate_rss 列)
+            source:    发现来源，如 "rss" / "crossref"
+        """
+        self.conn.execute(
+            """
+            INSERT INTO papers (doi, title, page_url, journal, publisher,
+                                paperdate_rss, discovery_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (doi, title, link, journal, publisher, date, source),
+        )
+        self.conn.commit()
+
+    def append_discovery_source(self, doi, source):
+        """
+        在已有论文的 discovery_source 后追加新的发现来源。
+
+        不会重复添加（如果已有此来源则跳过）。
+        例如: discovery_source='rss', source='crossref' → 'rss,crossref'
+              discovery_source='rss,crossref', source='crossref' → 不变
+
+        Args:
+            doi:    论文 DOI
+            source: 要追加的来源名称（如 "crossref"）
+        """
+        cur = self.conn.execute(
+            "SELECT discovery_source FROM papers WHERE doi = ?", (doi,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            return
+
+        existing = row["discovery_source"] or ""
+        sources = [s.strip() for s in existing.split(",") if s.strip()]
+        if source not in sources:
+            sources.append(source)
+            new_value = ",".join(sources)
+            self.conn.execute(
+                "UPDATE papers SET discovery_source = ? WHERE doi = ?",
+                (new_value, doi),
+            )
+            self.conn.commit()
 
     # ==================================================================
     # Phase B: CrossRef 元数据更新
@@ -635,18 +710,16 @@ class DatabaseClient:
     # Phase D: 语义相似度初筛
     # ==================================================================
 
-    def update_semantic_filter(self, doi, score, status, status_date):
+    def update_semantic_filter(self, doi, score, status, status_date, best_subdomain=None):
         """
-        Phase D 专用: 存储语义相似度初筛结果。
-
-        使用 sentence-transformers 计算论文标题+摘要与研究领域描述
-        的余弦相似度，作为论文相关性的初筛得分。
+        Phase D 专用: 存储语义相似度结果（参考排序用，不参与过滤）。
 
         Args:
-            doi:        论文 DOI
-            score:      余弦相似度得分 (0~1)
-            status:     FetchStatus 状态值
-            status_date: 处理日期时间字符串
+            doi:            论文 DOI
+            score:          余弦相似度得分 (0~1)
+            status:         FetchStatus 状态值
+            status_date:    处理日期时间字符串
+            best_subdomain: 最佳匹配子领域标签，如 "ion_acceleration" (可选)
         """
         if not self.paper_doi_exists(doi):
             raise DataBaseDOINotExists(
@@ -657,10 +730,11 @@ class DatabaseClient:
             UPDATE papers
             SET semantic_similarity_score = ?,
                 semantic_filter_status = ?,
-                semantic_filter_date = ?
+                semantic_filter_date = ?,
+                semantic_best_subdomain = ?
             WHERE doi = ?
             """,
-            (score, status, status_date, doi),
+            (score, status, status_date, best_subdomain, doi),
         )
         self.conn.commit()
 
@@ -751,9 +825,10 @@ class DatabaseClient:
 
     def get_papers_sorted_by_semantic(self, limit=50):
         """
-        按语义相似度得分降序返回论文。
+        返回论文列表，按语义相似度降序排列（无分数的排在末尾按日期降序）。
 
         用于 Web UI Papers 页面展示。
+        当 Phase D 关闭（SKIP_PHASE_D=True）时无分数，自动回退到日期排序。
 
         Args:
             limit: 返回最大行数
@@ -764,10 +839,46 @@ class DatabaseClient:
         cur = self.conn.execute("""
         SELECT doi, title, abstract, journal, publisher,
                paperdate_rss, semantic_similarity_score,
+               semantic_best_subdomain,
                llm_relevance_result, llm_relevance_status
         FROM papers
-        WHERE semantic_similarity_score IS NOT NULL
-        ORDER BY semantic_similarity_score DESC
+        ORDER BY semantic_similarity_score IS NOT NULL DESC,
+                 semantic_similarity_score DESC,
+                 paperdate_rss DESC
+        LIMIT ?
+        """, (limit,))
+        return cur.fetchall()
+
+    def get_papers(self, limit=100, sort_by="created"):
+        """
+        返回论文列表，支持按入库日期或发表日期排序。
+
+        Parameters
+        ----------
+        limit : int
+            返回最大行数
+        sort_by : str
+            "created" = 按入库日期降序（默认）
+            "published" = 按发表日期降序（COALESCE page > crossref > rss）
+
+        Returns
+        -------
+        list[sqlite3.Row]
+        """
+        order_clause = {
+            "created": "created_date DESC",
+            "published": ("COALESCE(paperdate_page, paperdate_crossref, "
+                          "paperdate_rss) DESC, created_date DESC"),
+        }
+        order = order_clause.get(sort_by, order_clause["created"])
+        cur = self.conn.execute(f"""
+        SELECT doi, title, abstract, journal, publisher,
+               paperdate_rss, paperdate_crossref, paperdate_page,
+               created_date,
+               semantic_similarity_score, semantic_best_subdomain,
+               llm_relevance_result, llm_relevance_status
+        FROM papers
+        ORDER BY {order}
         LIMIT ?
         """, (limit,))
         return cur.fetchall()

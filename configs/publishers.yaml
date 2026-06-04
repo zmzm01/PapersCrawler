@@ -4,24 +4,28 @@ publishers:
     name: Nature
     publisher: nature
     rss: https://www.nature.com/nature.rss
+    issn: "1476-4687"
     enabled: true
 
   - id: nphys
     name: Nature Physics
     publisher: nature
     rss: https://www.nature.com/nphys.rss
+    issn: "1745-2481"
     enabled: true
 
   - id: nphoton
     name: Nature Photonics
     publisher: nature
     rss: https://www.nature.com/nphoton.rss
+    issn: "1749-4893"
     enabled: true
 
   - id: ncomms
     name: Nature Communications
     publisher: nature
     rss: https://www.nature.com/ncomms.rss
+    issn: "2041-1723"
     enabled: true
 
   # Science Series
@@ -29,12 +33,14 @@ publishers:
     name: Science
     publisher: science
     rss: https://www.science.org/action/showFeed?type=axatoc&feed=rss&jc=science
+    issn: "1095-9203"
     enabled: true
 
   - id: sciadv
     name: Science Advances
     publisher: science
     rss: https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv
+    issn: "2375-2548"
     enabled: true
 
   # APS Series
@@ -42,42 +48,49 @@ publishers:
     name: Physical Review Letters
     publisher: aps
     rss: https://feeds.aps.org/rss/recent/prlsuggestions.xml
+    issn: "1079-7114"
     enabled: true
 
   - id: prlpbp
     name: Physical Review Letters
     publisher: aps
     rss: https://feeds.aps.org/rss/tocsec/PRL-PlasmaandBeamPhysics.xml
+    issn: "1079-7114"
     enabled: true
 
   - id: prabsugg
     name: Physical Review Accelerators and Beams
     publisher: aps
     rss: https://feeds.aps.org/rss/prstabsuggestions.xml
+    issn: "2469-9888"
     enabled: true
 
   - id: prab
     name: Physical Review Accelerators and Beams
     publisher: aps
     rss: https://feeds.aps.org/rss/recent/prstab.xml
+    issn: "2469-9888"
     enabled: true
 
   - id: prepp
     name: Physical Review E
     publisher: aps
     rss: https://feeds.aps.org/rss/tocsec/PRE-Plasmaphysics.xml
+    issn: "2470-0053"
     enabled: true
 
   - id: prasugg
     name: Physical Review Applied
     publisher: aps
     rss: https://feeds.aps.org/rss/prappliedsuggestions.xml
+    issn: "2331-7019"
     enabled: true
 
   - id: pra
     name: Physical Review Applied
     publisher: aps
     rss: https://feeds.aps.org/rss/recent/prapplied.xml
+    issn: "2331-7019"
     enabled: true
 
   # HPLSE
@@ -85,6 +98,7 @@ publishers:
     name: High Power Laser Science and Engineering
     publisher: cambridge
     rss: https://www.cambridge.org/core/rss/product/id/D30FF81AE5FAEE26735889C8553C99DD
+    issn: "2052-3289"
     enabled: true
 
   # AIP Series
@@ -92,36 +106,42 @@ publishers:
     name: Physics of Plasmas
     publisher: aip
     rss: https://pubs.aip.org/rss/site_1000039/1000022.xml
+    issn: "1089-7674"
     enabled: true
 
   - id: popoi
     name: Physics of Plasmas
     publisher: aip
     rss: https://pubs.aip.org/rss/site_1000039/LatestOpenIssueArticles_1000022.xml
+    issn: "1089-7674"
     enabled: true
 
   - id: aplci
     name: Applied Physics Letters
     publisher: aip
     rss: https://pubs.aip.org/rss/site_1000017/1000011.xml
+    issn: "1077-3118"
     enabled: true
 
   - id: aploi
     name: Applied Physics Letters
     publisher: aip
     rss: https://pubs.aip.org/rss/site_1000017/LatestOpenIssueArticles_1000011.xml
+    issn: "1077-3118"
     enabled: true
 
   - id: rsici
     name: Review of Scientific Instruments
     publisher: aip
     rss: https://pubs.aip.org/rss/site_1000041/1000023.xml
+    issn: "1089-7623"
     enabled: true
 
   - id: rsioi
     name: Review of Scientific Instruments
     publisher: aip
     rss: https://pubs.aip.org/rss/site_1000041/LatestOpenIssueArticles_1000023.xml
+    issn: "1089-7623"
     enabled: true
 
   # IOP Series
@@ -129,6 +149,7 @@ publishers:
     name: Plasma Physics and Controlled Fusion
     publisher: iop
     rss: https://iopscience.iop.org/journal/rss/0741-3335
+    issn: "1361-6587"
     enabled: true
 
   # Optica Series
@@ -136,10 +157,12 @@ publishers:
     name: Optica
     publisher: optica
     rss: https://opg.optica.org/rss/optica_feed.xml
+    issn: "2334-2536"
     enabled: false
 
   - id: opex
     name: Optics Express
     publisher: optica
     rss: https://opg.optica.org/rss/opex_feed.xml
+    issn: "1094-4087"
     enabled: false
