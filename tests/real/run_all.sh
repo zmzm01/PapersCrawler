@@ -1,7 +1,7 @@
 #!/bin/bash
 # T3 真实测试运行脚本
 # 使用: bash tests/real/run_all.sh
-# 前置条件: .env 和 configs/email.yaml 已配置
+# 前置条件: .env 已配置（含 SMTP 字段）
 
 set -e
 cd "$(dirname "$0")/../.."
