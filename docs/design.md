@@ -588,7 +588,15 @@ Phase C 采用两级检测：
 | NatureScraper | `<meta name="dc.type">` | `!= "OriginalPaper"` |
 | ScienceScraper | `<meta name="dc.Type">` | `!= "research-article"` |
 
-**二级 — 关键词 + 空摘要检测**（通用兜底，对所有 publisher 生效）：
+**二级 — Science 互补检测：altmetric_type**（覆盖 CrossRef 发现路径的非研究文章）：
+- 条件：`meta[name="altmetric_type"]` 存在（值为 `news`、`blog` 等）
+- 这类页面通常没有 `dc.Type` meta 标签（RSS 路径有，但 CrossRef 路径来的文章没有），
+  因此一级的 dc.Type 检测对它们无效
+- 实现位置：`ScienceScraper.parse_page()` 中，dc.Type 检测之前执行
+- 对应 bug：Science 的 news 文章通过 CrossRef 入库后，Phase C 找不到 dc.Type 标签，
+  报 `PageParseError` 而不是抛 `NonResearchPageError`，导致失败原因不清
+
+**三级 — 关键词 + 空摘要检测**（通用兜底，对所有 publisher 生效）：
 - 条件：`abstract` 为空 `AND` 标题包含以下关键词之一
 - 关键词表：`Erratum`, `Comment on`, `Response to`, `Publisher's Note`
 - 实现位置：`pipeline/phase_c.py` 的 retry 循环内，`parse_page()` 成功后检查
@@ -685,6 +693,74 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 - 页面标题片段（从 HTML `<title>` 提取，前 120 字符）
 - HTML 快照文件路径（`HTML saved to error dir`）
 
+## 11. CLI/WebUI 配置隔离（journal_overrides 加载控制）
+
+**背景**：Data Sources 页面对期刊启停的修改保存到 `data/journal_overrides.json`。
+但这个文件被 Phase A 无条件加载，导致 CLI 运行时也受 WebUI 设置影响，与「CLI 和 WebUI 互不干扰」的设计原则冲突。
+
+**策略**（`src/pipeline/phase_a.py`）：
+- `phase_a_rss()` 和 `phase_a_crossref()` 增加 `use_overrides` 参数
+- CLI（`runner.py` 中 `force=False`）→ `use_overrides=False` → 不加载 overrides，只读 `publishers.yaml`
+- WebUI Pipeline 页（`force=True`）→ `use_overrides=True` → 加载 overrides 叠加到 publishers.yaml
+
+**实现**：`runner.py` 中 Phase A-RSS 和 A-CR 的 args 传入 `force`：
+```python
+"A-RSS": (phase_a_rss, [db, publishers, force], ...),
+"A-CR": (phase_a_crossref, [db, publishers, force], ...),
+```
+
+**`_journal_effective()` 修复**：`rss_enabled` / `cr_enabled` 查询时，在 overrides 中找不到时，
+回退到 `journal.get("enabled", True)`（publishers.yaml 自身的 `enabled` 字段）。
+
+## 12. Phase C Publisher 启停检查（enabled_publishers）
+
+**背景**：`enabled: false` 在 publishers.yaml 中只阻止 Phase A 新增论文，
+但数据库中已有的论文不受影响——Phase C 不检查 `enabled` 状态，状态为 `pending` 就处理。
+这导致禁用 publisher 的旧论文仍会被浏览器抓取，浪费时间和 IP 信誉。
+
+**策略**（`src/pipeline/phase_c.py`）：
+1. `phase_c_publisher()` 签名增加 `publishers` 参数
+2. 入口处构建 `enabled_publishers` 集合：只要有任一期刊 `enabled: true`，该 publisher 就视为启用
+3. 遇到禁用 publisher 的 pending 论文 → 标记 `publisher_page_fetched_status = 'skipped'`，
+   error 写入 `"Publisher disabled in publishers.yaml"`
+4. 下游阶段自然跳过（上游已 skipped）
+
+## 13. AIP PDF 下载三级回退链
+
+**背景**：AIP 的 PDF URL 是直接下载链接（`wget` 可直接下载），但浏览器 JS `fetch()` 被 CSP 拦截。
+此处记录两条最终被弃用的尝试方案。
+
+**主路径：JS fetch**（覆盖 6/7 publisher）：
+```
+page.evaluate(fetch(pdf_url))
+```
+Nature、Science、APS（DOM 扫描后）、Cambridge、IOP 均正常工作。
+
+**v1 回退尝试（已弃用）：`page.goto(pdf_url) + response.body()`**
+- 思路：浏览器原生导航不受 CSP 限制
+- 失败：浏览器 PDF viewer 以 stream 消费响应体，`response.body()` 返回 None
+- 本质：Playwright 对 PDF URL 的 `response.body()` 不可靠——不等 body 缓冲就消费了
+
+**v2 回退尝试（已弃用）：`<a click> + page.expect_download()`**
+- 思路：程序化创建 `<a download>` 并 `click()`，模拟用户点击触发浏览器下载
+- 失败：AIP 不认 `element.click()` 为「用户手势」，不触发下载事件，60s 超时
+- 本质：JS 合成事件（`event.isTrusted=false`）不等于真实用户交互，部分网站据此过滤
+
+**最终回退：`requests` + 浏览器 cookies + User-Agent**：
+```python
+cookies = self.context.cookies()
+session = requests.Session()
+for c in cookies:
+    session.cookies.set(c["name"], c["value"], domain=c.get("domain", ""))
+ua = self.page.evaluate("navigator.userAgent")
+session.headers.update({"User-Agent": ua, "Referer": page_url})
+resp = session.get(pdf_url, timeout=120)
+pdf_body = resp.content
+```
+- AIP 的安全模型是「浏览器 JS 层 CSP + 用户手势检测」，PDF URL 在 HTTP 层无校验
+- 纯 HTTP 请求绕过 CSP、用户手势、TLS 指纹等所有浏览器层防御
+- 提取的 cookies 携带浏览器 session，User-Agent 和 Referer 使请求在 HTTP 层与浏览器导航无异
+
 # 流水线子阶段详解
 
 ## Phase C — Publisher 页面抓取
@@ -694,6 +770,8 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 - cloakbrowser 自动处理浏览器指纹伪装，无需手动注入反检测 JS
 - 页面间随机延迟 `PUBLISHER_PAGE_DELAY_MIN~MAX`（默认 3-5s），publisher 间冷却 15s
 - 失败熔断：连续失败 `PUBLISHER_MAX_CONSECUTIVE_FAILURES`（默认 3）篇后自动中止，避免 IP 封禁
+- **Publisher 启停检查**：运行前从 `publishers.yaml` 构建 `enabled_publishers` 集合，
+  禁用 publisher 的 pending 论文直接标记 `skipped`，不浪费浏览器启动时间（详见「韧性策略 #12」）
 - Cloudflare 拦截检测：检查 HTML 中 `challenge-platform`、`_cf_chl_opt`、`cf-browser-verification` 关键词
 - 按 publisher 分组处理，同一组复用浏览器实例（`SCRAPER_MAP` 管理 7 个 publisher）
 - Session 缓存自动清理：`BasePublisherScraper.close()` 在每次 publisher 组处理完毕后
@@ -703,16 +781,53 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 
 7 个 Scraper 子类各适配不同的页面结构（meta 标签 / JSON-LD / XPath）。
 
+### Optica 反爬注意事项
+
+当前 `configs/publishers.yaml` 中 `optica` 和 `opex` 均为 `enabled: false`（默认禁用）。如需启用，
+请注意以下已知问题：
+
+| 因素 | 详情 |
+|------|------|
+| IP 敏感度 | Optica Publishing Group 对非美国出口 IP 极敏感，必须配置美国代理 |
+| 代理配置 | `config.py` 中 `PUBLISHER_PROXY = {"optica": {"server": "http://127.0.0.1:10808"}}` |
+| 请求频率 | 默认 3-5s 页面间隔低于 Optica 反爬阈值，成功篇数越多越容易触发拦截 |
+| Session 共享 | Optica 和 Optics Express 共用 `publisher: optica` → 同一 browser session + 同一熔断计数器，一个被拦两者皆受影响 |
+| 拦截模式 | 成功爬取一定篇数后触发 CF 拦截，成功率随连续成功数递减，最终完全阻断 |
+
+已知缓解方向（未实现，按需选用）：
+- **独立延迟**：新增 `OPTICA_PAGE_DELAY_MIN/MAX`，Optica 使用更宽松延迟（建议 10-20s）
+- **成功冷却**：每成功 N 篇后强制冷却 60s，在拦截发生前主动降温
+- **Session 分离**：opex 使用独立 `publisher` 标识 + 独立 Scraper 子类，隔离熔断
+- **代理 IP 轮换**：多路代理轮流使用，降低单 IP 请求密度
+
 ## Phase E2 — PDF 下载策略
 
-`BasePublisherScraper.download_pdf()` 处理 PDF 下载：
+`BasePublisherScraper.download_pdf()` 处理 PDF 下载，使用三级回退链：
 
-1. **建立上下文** — `goto(page_url)` 访问文章页，等待 Cloudflare Challenge 通过
-2. **提取同域链接** — 扫描页面 `<a>PDF</a>` 按钮，用 `new URL(href, location.origin)` 提取同域 PDF URL（解决 APS 跨域问题）
-3. **同域 fetch** — 在浏览器上下文中用 `page.evaluate(fetch(url))` 获取 PDF 字节流（继承 cookie/session）
-4. **保存** — 写入临时文件 → MinerU 解析 → 移动到 `data/mineru_output/<doi>/paper.pdf`
+**主路径：同域 JS fetch**
+1. `goto(page_url)` 访问文章页建立上下文
+2. 扫描 DOM 中 `<a>PDF</a>` 提取同域 URL（解决 APS 跨域问题）
+3. `page.evaluate(fetch(url))` 获取 PDF 字节流
+4. 覆盖 6/7 publisher：Nature、Science、APS、Cambridge、IOP、Optica
 
-**APS 跨域问题根因**：APS 使用双域名架构（`link.aps.org` 跳转、`journals.aps.org` 内容），`citation_pdf_url` 短链与文章页不同域。浏览器同源策略（SOP）拦截了跨域 `fetch`。从页面 DOM 中提取的同域路径不受此限制。
+**回退：Python requests + 浏览器 cookies（AIP 等）**
+- 部分 publisher（如 AIP）的 CSP `connect-src` 策略拦截 JS `fetch()` API
+- 从浏览器 context 提取 `cookies` + `navigator.userAgent` → Python `requests` 直连下载
+- AIP 的 PDF URL 在 HTTP 层无校验（`wget` 可直接下载），加上 Cookie/UA/Referer 后
+  请求在 HTTP 层与浏览器导航无异
+- 纯 HTTP 请求绕过 CSP、用户手势检测、TLS 指纹等所有浏览器层限制
+
+**保存**：下载的 PDF 字节写入临时文件 → MinerU 解析 → 移动到 `data/mineru_output/<doi>/paper.pdf`
+
+**APS 跨域问题根因**：APS 使用双域名架构（`link.aps.org` 跳转、`journals.aps.org` 内容），
+`citation_pdf_url` 短链与文章页不同域。同源策略（SOP）拦截了跨域 `fetch`。
+从页面 DOM 中提取的同域路径不受此限制。
+
+**已弃用的尝试**（记录教训）：
+- `page.goto(pdf_url) + response.body()` — 浏览器 PDF viewer 以 stream 消费响应体，
+  `response.body()` 返回 None（不等缓冲就消费了）
+- `<a click> + page.expect_download()` — 程序化 `element.click()` 不被视为"用户手势"，
+  `event.isTrusted=false`，不触发下载事件
 
 ## Phase F — LLM 结构化总结
 

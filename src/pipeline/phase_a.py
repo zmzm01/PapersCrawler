@@ -153,6 +153,7 @@ def phase_a_crossref(db, publishers, use_overrides=False):
 
     client = CrossrefClient(mailto=CROSSREF_MAILTO)
     overrides = _load_journal_overrides() if use_overrides else {}
+    seen_issns = set()    # 去重：相同 ISSN 只请求一次
 
     for journal in publishers:
         if not _journal_effective(journal, overrides, "cr_enabled"):
@@ -162,6 +163,10 @@ def phase_a_crossref(db, publishers, use_overrides=False):
         if not issn:
             logger.debug(f"No ISSN configured for [{journal['id']}], skipping")
             continue
+        if issn in seen_issns:
+            logger.debug(f"ISSN {issn} already queried, skipping [{journal['id']}]")
+            continue
+        seen_issns.add(issn)
 
         journal_name = journal["name"]
         publisher = journal["publisher"]

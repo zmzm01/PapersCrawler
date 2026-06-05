@@ -4,12 +4,19 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
-| **Bug 修复集合** | 5 个线上 bug 修复 + 文档更新 | 06-05 |
 | **Nature 过滤** | `phase_a_crossref()` 补充 `/d41586-` 过滤（双路径覆盖）；增加 `insert_paper_created_date()` 调用 | 06-05 |
 | **APS Accepted Paper** | 新增 `AcceptedPaperError` 异常；`APSScraper.parse_page()` 检测 URL 含 `/accepted/` 或特征标签时抛出；`phase_c.py` 捕获后 cascade skip 下游；不专门适配 selector | 06-05 |
 | **Logger 作用域** | `paper_relevance.py` 中 `logger = logging.getLogger(__name__)` 从 `call_deepseek_api()` 内部移至模块级别，修复 `cannot access local variable 'logger'` 崩溃 | 06-05 |
 | **错误诊断** | `fetch_page()` 异常时保存 HTML 快照到 `data/raw/page/error/`；失败出口增加错误类型、页面标题、HTML 路径汇总日志 | 06-05 |
 | **Session 清理** | `BasePublisherScraper.close()` 新增 `shutil.rmtree()` 自动清理 session 缓存 | 06-05 |
+| **CLI/WebUI 隔离** | `_journal_effective()` 修复 publishers.yaml `enabled` 回退；`phase_a_rss`/`phase_a_crossref` 加 `use_overrides` 参数；runner 传 force，CLI 不加载 journal_overrides.json | 06-05 |
+| **Phase C disbled 跳过** | `phase_c_publisher()` 签名加 `publishers` 参数；构建 `enabled_publishers` 集合；禁用 publisher 的 pending 论文直接标记 `skipped`，不浪费浏览器启动时间 | 06-05 |
+| **ISSN 去重** | `phase_a_crossref()` 加 `seen_issns` 集合，相同 ISSN 只请求一次 CrossRef API | 06-05 |
+| **AIP PDF 回退链** | `download_pdf()` 最终方案：`fetch()` → `requests` + 浏览器 cookie/UA（逃了两条弯路才到）；移除了无效的 `expect_download` + `<a click>` | 06-05 |
+| **Science altmetric** | `ScienceScraper.parse_page()` 增加 `altmetric_type` meta 检测，覆盖 CrossRef 发现的非研究文章（此前只有 RSS 路径的 dc.Type 检测） | 06-05 |
+| **Reset 规范化** | 新增 `reset-relevance` 子命令；全部 6 子命令 `-h` 输出统一格式（影响列/不受影响/级联） | 06-05 |
+| **goto 超时** | `download_pdf()` context-establishing `goto(page_url)` timeout 从 60s 提升到 120s（与 fetch_page 一致） | 06-05 |
+| **MinerU 轮询日志** | `_poll_batch()` 的 3 处 `print()` 改为 `logger.info()`，日志写入文件 | 06-05 |
 | **YAML 注释保留** | `config/save-domain` 改用 `ruamel.yaml` 替代 `pyyaml` 的 `yaml.dump()`，避免 domain_description 编辑时丢失 keywords.yaml 中的注释 | 06-04 |
 | **Web UI 定位** | 明确 Web UI = 监控仪表盘 + 报告工作站，非 CLI 替代；配置隔离（CLI 用 config.py，Web UI 用 skip_overrides.json，互不干扰）；SKIP 切换从"仅影响 CLI"改为"仅影响 Web UI Pipeline 页" | 06-04 |
 | **Web UI 新增** | 新增 Data Sources 页面（期刊启用/禁用 + RSS/CrossRef 独立开关，写入 data/journal_overrides.json）；Config 页增加 domain_description 文本框 + 连通性测试按钮 + MinerU Token 过期色标 | 06-04 |
@@ -1130,4 +1137,78 @@ ryaml.dump(kw, path)         # 写回，注释完好
 | `docs/design.md` | Web UI 定位章节 + 配置隔离规则 + 页面表更新 |
 | `docs/tasks.md` | 本文 |
 
+# 2026-06-05 — AIP PDF 下载回退链演进（两条失败方案）
 
+**背景**：AIP 的 PDF URL 是直接下载链接（`wget` 可下），但 `page.evaluate(fetch)` 被 CSP 拦截。
+当时假设「同域 = fetch 可用」被证伪——同域但 CSP `connect-src` 可单独封锁 JS API。
+
+## v1 尝试（已弃用）：`page.goto(pdf_url) + response.body()`
+
+**思路**：浏览器原生导航不受 CSP 限制，`goto()` 返回的 response 应包含 PDF 字节。
+
+**失败原因**：浏览器以 stream 方式消费 PDF 响应体，将 PDF 流入内置 PDF viewer，
+`response.body()` 返回 None（body 已被消费完）。这是 Playwright 对 PDF URL 的处理特性，
+非 HTTP 层问题。
+
+**教训**：`page.goto(pdf_url)` 的 `response.body()` 对 PDF 不可靠——不等 body 缓冲就消费了。
+这和 `page.on("response")` 监听器中的 `response.body()` 不同——监听器在网络事件分发的
+时间窗口内 body 尚未被消费，而 `goto()` 返回时 PDF 已被 viewer 接受。
+
+## v2 尝试（已弃用）：`<a click> + page.expect_download()`
+
+**思路**：创建 `<a download>` 元素并 `click()`，模拟用户点击触发浏览器下载事件。
+
+**失败原因**：AIP 不认程序化 `element.click()` 为「用户手势」，浏览器不触发下载事件，
+`expect_download` 60s 超时。JS 的 `.click()` 是合成事件（`isTrusted=false`），
+部分网站的 JS 逻辑会检查 `event.isTrusted` 并忽略合成事件。
+
+**教训**：程序化 `<a>.click()` ≠ 真实用户点击。浏览器安全机制通过 `event.isTrusted`
+区分合成事件和真实交互，部分 publisher 前端据此过滤。
+
+## 最终方案：`requests` + 浏览器 cookies + User-Agent
+
+**方案**：从浏览器 context 提取 cookies 和 `navigator.userAgent` → Python `requests` 直连下载。
+
+**为什么可行**：
+- AIP 的安全模型是「浏览器 JS 层 CSP + 用户手势检测」
+- PDF URL 在 HTTP 层完全无校验（`wget` 可直接下载）
+- 纯 HTTP 请求绕过 CSP、用户手势、TLS 指纹等所有浏览器层防御
+- 提取的 cookies 携带浏览器 session，User-Agent 和 Referer 使请求在 HTTP 层与浏览器导航无异
+
+**代码位置**：`src/sources/publisher.py:download_pdf()`
+
+**最终三级回退链**：
+```
+page.evaluate(fetch)                → 主路径，Nature/Science/APS/Cambridge/IOP
+    ↓ CSP 拦截 (AIP)
+requests + 浏览器 cookie/UA/Referer → HTTP 层，绕过所有 JS 层限制
+    ↓ 失败
+RuntimeError                        → 标记 failed（再无登录或更深层问题）
+```
+
+# 2026-06-05 — `page.on("response")` 监听器被移除的教训
+
+**原始设计**（v2，2026-05-24）：
+```
+page.on("response") 监听 → 捕获浏览器网络层 PDF 响应（主路径）
+page.evaluate(fetch) → 兜底
+```
+
+**被移除**（v4，2026-06-01，Playwright→cloakbrowser 重构）：
+理由：「不依赖 response 监听 — 目前版本无需 page.on("response")，
+因为同域 fetch 足以覆盖所有 publisher」。
+
+实际原因：从 `main.py`（1310 行）搬入 `publisher.py` 时简化了代码。
+原 `main.py` 中 Phase E2 的 PDF 下载是三层方案（response 监听主路径 → fetch 兜底 → failed），
+搬入 `download_pdf()` 时只保留了 fetch 层，删除了 response 监听。
+
+**该假设被 AIP 打破**：同域但 CSP `connect-src` 单独拦截 fetch()。
+
+**教训总结**：
+1. 同源策略（SOP）和内容安全策略（CSP）是两个独立的浏览器安全层——
+   SOP 管跨域请求，CSP 管任意 JS API 调用路径。同域 ≠ JS fetch 可用。
+2. `response.body()` 在 `page.goto(pdf_url)` 时不可靠（PDF viewer stream 消费），
+   但在 `page.on("response")` 监听器中可靠——监听器在 body 被消费前拿到数据。
+3. 代码简化不应以丢失回退路径为代价。三层方案（主路径 → 兜底 → failed）应始终保留。
+4. 不同 publisher 的网络层行为差异巨大——CSP 策略、用户手势检测、WAF 级别各不相同。
+   单一下载机制无法覆盖所有场景。

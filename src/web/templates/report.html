@@ -75,7 +75,17 @@ function renderReportContent(markdown) {
     container.innerHTML = '<p class="text-muted">(empty report)</p>';
     return;
   }
-  const html = marked.parse(markdown, { breaks: true, gfm: true });
+  // Protect LaTeX formulas from being eaten by marked's escape handling
+  const placeholders = {};
+  let pid = 0;
+  const protected_md = markdown.replace(
+    /\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g,
+    function(m) { var k = '@@KX' + (pid++) + '@@'; placeholders[k] = m; return k; }
+  );
+  var html = marked.parse(protected_md, { breaks: true, gfm: true });
+  for (var k in placeholders) {
+    html = html.split(k).join(placeholders[k]);
+  }
   container.innerHTML = html;
   try {
     renderMathInElement(container, {
