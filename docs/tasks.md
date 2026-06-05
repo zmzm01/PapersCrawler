@@ -4,6 +4,12 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **Bug 修复集合** | 5 个线上 bug 修复 + 文档更新 | 06-05 |
+| **Nature 过滤** | `phase_a_crossref()` 补充 `/d41586-` 过滤（双路径覆盖）；增加 `insert_paper_created_date()` 调用 | 06-05 |
+| **APS Accepted Paper** | 新增 `AcceptedPaperError` 异常；`APSScraper.parse_page()` 检测 URL 含 `/accepted/` 或特征标签时抛出；`phase_c.py` 捕获后 cascade skip 下游；不专门适配 selector | 06-05 |
+| **Logger 作用域** | `paper_relevance.py` 中 `logger = logging.getLogger(__name__)` 从 `call_deepseek_api()` 内部移至模块级别，修复 `cannot access local variable 'logger'` 崩溃 | 06-05 |
+| **错误诊断** | `fetch_page()` 异常时保存 HTML 快照到 `data/raw/page/error/`；失败出口增加错误类型、页面标题、HTML 路径汇总日志 | 06-05 |
+| **Session 清理** | `BasePublisherScraper.close()` 新增 `shutil.rmtree()` 自动清理 session 缓存 | 06-05 |
 | **YAML 注释保留** | `config/save-domain` 改用 `ruamel.yaml` 替代 `pyyaml` 的 `yaml.dump()`，避免 domain_description 编辑时丢失 keywords.yaml 中的注释 | 06-04 |
 | **Web UI 定位** | 明确 Web UI = 监控仪表盘 + 报告工作站，非 CLI 替代；配置隔离（CLI 用 config.py，Web UI 用 skip_overrides.json，互不干扰）；SKIP 切换从"仅影响 CLI"改为"仅影响 Web UI Pipeline 页" | 06-04 |
 | **Web UI 新增** | 新增 Data Sources 页面（期刊启用/禁用 + RSS/CrossRef 独立开关，写入 data/journal_overrides.json）；Config 页增加 domain_description 文本框 + 连通性测试按钮 + MinerU Token 过期色标 | 06-04 |
