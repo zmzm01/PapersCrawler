@@ -21,12 +21,15 @@ from sources.publisher import NonResearchPageError, AcceptedPaperError, PagePars
 _NON_RESEARCH_KEYWORDS = ["erratum", "comment on", "response to", "publisher's note"]
 
 
-def phase_c_publisher(db):
+def phase_c_publisher(db, publishers):
     """Scrape publisher pages for abstracts and PDF links.
 
     Parameters
     ----------
     db : DatabaseClient
+    publishers : list of dict
+        Publisher configs from publishers.yaml.
+        Used to check enabled/disabled status per publisher key.
     """
     logger.info("--- Phase C: Publisher page scraping ---")
     if SKIP_PHASE_C:
@@ -42,12 +45,35 @@ def phase_c_publisher(db):
 
     logger.info(f"Phase C: {len(paper_tasks)} papers pending")
 
+    # 构建已启用 publisher 集合：只要有任一期刊 enabled，该 publisher 就算启用
+    enabled_publishers = {
+        j["publisher"] for j in publishers
+        if j.get("enabled", True)
+    }
+
     paper_tasks_grouped = defaultdict(list)
     for paper_task in paper_tasks:
         key = paper_task["publisher"] or "unknown"
         paper_tasks_grouped[key].append(paper_task)
 
     for publisher, papers in paper_tasks_grouped.items():
+        # 跳过已禁用的 publisher（不浪费浏览器启动时间）
+        if publisher not in enabled_publishers:
+            logger.info(f"Publisher {publisher} is disabled, skipping {len(papers)} papers")
+            timestamp = str(datetime.now())
+            for paper in papers:
+                try:
+                    db.update_error_message(
+                        paper["doi"], "publisher_page_fetched_status",
+                        FetchStatus.SKIPPED.value,
+                        "publisher_page_fetched_error",
+                        "Publisher disabled in publishers.yaml",
+                        "publisher_page_fetched_date", timestamp,
+                    )
+                except Exception:
+                    pass
+            continue
+
         logger.info(f"Processing publisher: {publisher} ({len(papers)} papers)")
 
         scraper = None
@@ -70,6 +96,7 @@ def phase_c_publisher(db):
 
         try:
             consecutive_failures = 0
+            is_first_in_group = True
             for paper in papers:
                 paperDOI = paper["doi"]
                 page_url = paper["page_url"]
@@ -84,11 +111,21 @@ def phase_c_publisher(db):
                     )
                     continue
 
+                # First paper in publisher group: CF challenge needs long
+                # initial verification, so skip 5s/15s attempts and go
+                # straight to 45s + 2min cooldown.
+                if is_first_in_group:
+                    retry_attempts = [2]
+                    logger.debug(f"First-in-group, extended timeout [{paperDOI}]")
+                else:
+                    retry_attempts = range(3)
+                is_first_in_group = False
+
                 paper_succeeded = False
                 paper_skipped = False
                 last_error = None
 
-                for attempt in range(3):
+                for attempt in retry_attempts:
                     try:
                         if attempt == 0:
                             timeout = 5000
