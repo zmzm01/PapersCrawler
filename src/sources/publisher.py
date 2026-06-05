@@ -43,12 +43,15 @@ Cloudflare 反爬对抗策略：
 import re
 import json
 import logging
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from parsel import Selector
 from cloakbrowser import launch_persistent_context
 
 from common import Paper
+from config import RAW_PAGE_DIR, DATA_DIR
 
 
 # ──────────────────────────────────────────────────────────
@@ -133,13 +136,20 @@ class BasePublisherScraper:
             PageParseError: 如果提供了 html_path 但文件不存在。
         """
         if url:
+            self.page_url = url
             try:
                 self.page.goto(url, wait_until="domcontentloaded", timeout=120000)
             except Exception:
                 # Navigation may be interrupted by fast 302 redirect (e.g. APS
                 # link.aps.org → journals.aps.org).  Retry with final URL.
                 self.page.wait_for_timeout(3000)
-                self.page.goto(self.page.url, wait_until="domcontentloaded", timeout=120000)
+                try:
+                    self.page.goto(self.page.url, wait_until="domcontentloaded", timeout=120000)
+                except Exception as e2:
+                    self._save_error_html(url, "goto_retry_failed")
+                    raise PageParseError(
+                        f"Navigation failed after retry: {e2}"
+                    ) from e2
             # 等待 timeout ms，给 Cloudflare Challenge 足够时间自动通过
             self.page.wait_for_timeout(timeout)
             self.html = self.page.content()
@@ -175,6 +185,32 @@ class BasePublisherScraper:
         html = self.page.content()
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
+
+    def _save_error_html(self, url_or_doi: str, tag: str = ""):
+        """保存出错时的页面 HTML 快照到 data/raw/page/ 目录。
+
+        用于诊断抓取失败原因（Cloudflare 拦截、页面结构变更、网络超时等）。
+        文件命名格式: error_{doi}_{timestamp}.html
+
+        Args:
+            url_or_doi: 论文 URL 或 DOI，用于生成文件名标识。
+            tag:        错误标签（如 "goto_retry_failed"），追加在文件名中。
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = re.sub(r'[^\w\-]', '_', url_or_doi)[:60]
+        tag_part = f"_{tag}" if tag else ""
+        filename = f"error_{safe_name}{tag_part}_{timestamp}.html"
+        error_dir = RAW_PAGE_DIR / "error"
+        error_dir.mkdir(parents=True, exist_ok=True)
+        save_path = error_dir / filename
+        try:
+            html = self.page.content()
+            save_path.write_text(html, encoding="utf-8")
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error HTML saved to {save_path}")
+        except Exception as save_err:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to save error HTML: {save_err}")
 
     def download_pdf(self, pdf_url: str, page_url: str | None = None,
                      timeout: int = 60000) -> bytes:
@@ -242,11 +278,18 @@ class BasePublisherScraper:
         return pdf_body
 
     def close(self):
-        """关闭浏览器上下文。
+        """关闭浏览器上下文并清理 Chromium profile 数据。
 
-        释放所有 Chromium 相关资源，应在爬取完成后调用。
+        释放所有 Chromium 相关资源（浏览器进程、网络连接等），
+        同时清理持久化 Session 数据目录，避免 data/session_cached/
+        目录无限膨胀（单个 publisher 的 Chromium profile 可达数百 MB）。
         """
-        self.context.close()
+        try:
+            self.context.close()
+        except Exception:
+            pass
+        if self.user_data_dir and self.user_data_dir.exists():
+            shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
 
 # ──────────────────────────────────────────────────────────
@@ -269,6 +312,20 @@ class NonResearchPageError(Exception):
           或 Science 中非 research-article 类型的页面。
 
     上层调用方可以捕获此异常并跳过该页面的处理。
+    """
+    pass
+
+
+class AcceptedPaperError(NonResearchPageError):
+    """Accepted Paper 异常，继承自 NonResearchPageError。
+
+    APS 在正式发表前会发布 Accepted Paper 版本（URL 含 /accepted/ 路径，
+    页面含 li.article-feature-tag:contains("Accepted Paper") 标签）。
+    这类页面有摘要但页面结构与正式论文不同（当前选择器无法提取 abstract，
+    且不提供 PDF 链接），无正文内容可供 MinerU 解析和 LLM 总结。
+
+    检测到后标记 skipped 并级联跳过下游所有阶段。
+    不为此类页面编写专门的选择器适配。
     """
     pass
 
@@ -304,8 +361,25 @@ class APSScraper(BasePublisherScraper):
 
         Returns:
             Paper: 包含提取元数据的 Paper 实例。
+
+        Raises:
+            AcceptedPaperError: 当页面是 APS 预发布 Accepter Paper（页面结构不
+                                同，不提供 PDF，无正文）时抛出，上游将标记 skipped。
         """
         sel = Selector(text=self.html)
+
+        # Accepted Paper 检测（页面结构与正式论文不同，不专门适配）
+        # 特征 1: URL 路径含 /accepted/
+        page_url = getattr(self, 'page_url', '') or ''
+        if '/accepted/' in page_url:
+            raise AcceptedPaperError(
+                "AcceptedPaper: page structure differs (Accepted Paper, no full text available)"
+            )
+        # 特征 2: HTML 含 Accepted Paper 特征标签
+        if sel.css('ul.flex.justify-start li.article-feature-tag::text').get() == 'Accepted Paper':
+            raise AcceptedPaperError(
+                "AcceptedPaper: page structure differs (Accepted Paper, no full text available)"
+            )
 
         # ─── 从 <meta> 标签提取元数据 ───
         title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""

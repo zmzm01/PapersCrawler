@@ -128,6 +128,7 @@ def phase_a_crossref(db, publishers):
         return
     logger.info("--- Phase A-CR: CrossRef journal query ---")
 
+    timestamp = datetime.now().strftime("%Y%m%d")
     to_date = date.today().isoformat()
     from_date = (date.today() - timedelta(days=CROSSREF_LOOKBACK_DAYS)).isoformat()
     logger.info(f"Query window: {from_date} ~ {to_date}")
@@ -154,6 +155,9 @@ def phase_a_crossref(db, publishers):
             for paper in papers:
                 if not paper.doi:
                     continue
+                if SKIP_NATURE_NEWS and "/d41586-" in (paper.doi or ""):
+                    logger.debug(f"Skipping Nature news from CrossRef: {paper.doi}")
+                    continue
                 if db.paper_doi_exists(paper.doi):
                     db.append_discovery_source(paper.doi, "crossref")
                 else:
@@ -166,6 +170,7 @@ def phase_a_crossref(db, publishers):
                         date=paper.published,
                         source="crossref",
                     )
+                    db.insert_paper_created_date(paper.doi, timestamp)
 
         except Exception as e:
             logger.error(f"CrossRef journal query failed [{journal['id']}]: {e}")

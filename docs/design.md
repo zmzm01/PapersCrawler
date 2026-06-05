@@ -611,6 +611,80 @@ NonResearchPageError 触发后，Phase C 会：
 
 合法空摘要论文与全空页的区别：前者有 title + doi，后者三项全空。
 
+## 7. Nature 非研究文章过滤（SKIP_NATURE_NEWS）
+
+**范围**：Nature 旗下期刊（Nature、Nature Physics、Nature Photonics、Nature Communications）的
+RSS Feed 和 CrossRef 数据源中均可能包含非研究文章——News、News & Views、Comments、Editorials、
+Research Briefings、Books & Arts、Obituaries、Careers、Podcasts 等。
+
+**过滤依据**：Nature 使用 `d41586` DOI 前缀标识所有非研究内容（如 `10.1038/d41586-026-01741-z`），
+而研究论文使用其他前缀（`s41586-`、`s41567-`、`s41566-`、`s41467-` 等）。因此 `SKIP_NATURE_NEWS`
+通过检测 DOI 字符串中是否包含 `/d41586-` 来判断，而非逐个枚举文章类型。这种方式覆盖了 Nature 所有
+非研究内容，且无需随 Nature 的文章类型变化而更新。
+
+**双路径覆盖**：
+
+| 数据源路径 | 过滤位置 | 实现 |
+|-----------|---------|------|
+| A-RSS（RSS） | `phase_a_rss()` | `if SKIP_NATURE_NEWS and "/d41586-" in paperDOI: continue` |
+| A-CR（CrossRef） | `phase_a_crossref()` | `if SKIP_NATURE_NEWS and "/d41586-" in (paper.doi or ""): continue` |
+
+**Config 开关**：`src/config.py` 中 `SKIP_NATURE_NEWS = True`（默认开启）。关闭后 Nature 新闻类文章
+将进入流水线。不推荐关闭——非研究文章在 Phase B 会因为作者数据缺失而标记 failed，但仍会消耗 API 配额。
+
+## 8. APS Accepted Paper 跳过（AcceptedPaperError）
+
+**背景**：APS 在论文正式发表前会发布 Accepted Paper（预接受版本）。这类页面可通过 CrossRef 发现
+（DOI 形如 `10.1103/27t3-61j2`），其访问 URL 路径含 `/accepted/`（例如
+`https://journals.aps.org/prl/accepted/10.1103/27t3-61j2`）。
+
+**页面特征**：
+1. URL 路径含 `/accepted/`
+2. HTML 中含有 `<ul class="flex justify-start"><li class="article-feature-tag">Accepted Paper</li></ul>`
+
+**处理策略**：不为此类页面编写专用选择器。Accepted Paper 有摘要但页面结构与正式论文不同
+（当前 `#abstract-section-content` 选择器无法提取 abstract），且不提供 PDF 链接。由于
+无正文内容可供 MinerU 解析和 LLM 总结（Phase F 需要全文），整篇论文在 Phase C 阶段即被跳过。
+
+**Phase C 行为**（`pipeline/phase_c.py`）：
+1. `APSScraper.parse_page()` 检测到 Accepted Paper 特征 → 抛出 `AcceptedPaperError`
+2. 捕获后标记 `publisher_page_fetched_status = 'skipped'`，error 信息：
+   `"AcceptedPaper: no full text available"`
+3. 级联跳过 Phase D（语义过滤）和 Phase E（LLM 相关性）——判定其相关性无意义，因为即使相关也无法总结
+4. 后续阶段（Phase E2/F/G/H）自然跳过
+
+## 9. Session 缓存自动清理
+
+**背景**：每个 publisher 使用独立的 Chromium profile 目录（`data/session_cached/<publisher>/`），
+cloakbrowser 的 `launch_persistent_context()` 在其中存储 cookies、localStorage、浏览器缓存等。
+若不清理，单个 publisher 的 profile 可达数百 MB，长期积累会占用大量磁盘空间。
+
+**策略**：`BasePublisherScraper.close()` 在关闭浏览器上下文后自动执行 `shutil.rmtree()` 清理
+profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/phase_c.py`），
+确保无论抓取成功或失败，session 数据都会被移除。
+
+**Session 目录仅存活于一次 Phase C 运行期间**——每次重新运行都会重新创建干净的 profile。
+
+## 10. 抓取错误诊断：HTML 快照保存
+
+**背景**：当 Phase C 抓取失败时，仅凭错误消息难以区分根因（Cloudflare 拦截、页面结构变更、
+网络超时、APS 302 导航中断）。`fetch_page()` 的异常分支会保存页面 HTML 快照到
+`data/raw/page/error/` 目录。
+
+**文件命名格式**：`error_{doi}_{timestamp}.html`
+- `doi`：失败的论文 DOI（特殊字符替换为 `_`，截断至 60 字符）
+- `timestamp`：精确到秒的时间戳（`YYYYMMDD_HHMMSS`）
+
+**触发条件**：
+1. `fetch_page()` 中首次 `goto()` 异常后的重试再次失败
+2. Cloudflare 拦截确认后（通过 CF 关键词检测）
+3. `parse_page()` 抛出 `PageParseError`
+
+**错误汇总日志**（`pipeline/phase_c.py` 失败出口）：
+- 错误类型（`error_type`）
+- 页面标题片段（从 HTML `<title>` 提取，前 120 字符）
+- HTML 快照文件路径（`HTML saved to error dir`）
+
 # 流水线子阶段详解
 
 ## Phase C — Publisher 页面抓取
@@ -622,6 +696,10 @@ NonResearchPageError 触发后，Phase C 会：
 - 失败熔断：连续失败 `PUBLISHER_MAX_CONSECUTIVE_FAILURES`（默认 3）篇后自动中止，避免 IP 封禁
 - Cloudflare 拦截检测：检查 HTML 中 `challenge-platform`、`_cf_chl_opt`、`cf-browser-verification` 关键词
 - 按 publisher 分组处理，同一组复用浏览器实例（`SCRAPER_MAP` 管理 7 个 publisher）
+- Session 缓存自动清理：`BasePublisherScraper.close()` 在每次 publisher 组处理完毕后
+  执行 `shutil.rmtree()` 清理 Chromium profile 目录（详见「韧性策略 #9」）
+- 错误诊断：`fetch_page()` 异常时自动保存 HTML 快照到 `data/raw/page/error/`
+  （详见「韧性策略 #10」）
 
 7 个 Scraper 子类各适配不同的页面结构（meta 标签 / JSON-LD / XPath）。
 
