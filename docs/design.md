@@ -741,20 +741,23 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 
 # reset 工具族
 
-`tools/reset_pipeline.py` 提供 5 个子命令，每个支持 `--publisher` 过滤：
+`tools/reset_pipeline.py` 提供 6 个子命令，每个支持 `--publisher` 过滤：
 
-| 命令 | 重置范围 | 典型用途 |
-|------|---------|---------|
-| `reset-semantic` | Phase D | 修改 sub_domains 后 |
-| `reset-publisher` | Phase C failed/skipped | 重试被 Cloudflare 拦截的论文 |
-| `reset-mineru` | Phase E2 failed/skipped | 重试 PDF 解析失败的论文 |
-| `reset-summary` | Phase F failed/skipped（`--all` 含 success） | 修改 prompt 后重新生成总结 |
-| `reset-report` | Phase G reported | 重新汇入下次报告 |
+| 命令 | 重置范围 | 默认条件 | 级联 | 典型用途 |
+|------|---------|---------|------|---------|
+| `reset-semantic` | `semantic_filter_*`, `semantic_similarity_score`, `semantic_best_subdomain`（5 列） | **全部**（无 status 过滤） | 无 | 修改 sub_domains 后 |
+| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 domain_description 后 |
+| `reset-publisher` | `publisher_page_fetched_status/error`（2 列） | `failed`/`skipped`（跳过 NonResearchPageError） | 无 | 重试被 CF 拦截的论文 |
+| `reset-mineru` | `mineru_parse_*`（5 列） | `failed`/`skipped` | 无 | 重试 PDF 解析失败的论文 |
+| `reset-summary` | `llm_summary_*`（4 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 prompt 后重生成总结 |
+| `reset-report` | `report_status/date`（2 列） | `reported`（`--today`/`--days` 按日期） | 无 | 重新汇入下次报告 |
 
 关键设计：
-- `reset-semantic` **不重置** MinerU 和 LLM Summary 结果（语义修改不影响已解析 PDF 和总结）
+- `reset-semantic` **不重置** LLM 相关性、MinerU 和 LLM Summary（语义分仅用于排序参考，不影响判断结果）
+- `reset-relevance` **不级联** E2/F/G（相关性结果不影响已有 MinerU 全文和 LLM 总结）
 - `reset-publisher` **跳过** `NonResearchPageError` 条目（非论文页面重试无意义）
-- 所有命令执行前打印 SQL + 行数，交互确认后才执行
+- `reset-mineru` / `reset-summary` 重新解析/总结后，下游状态为 pending 的被自动拾取（无需显式级联）
+- 所有命令执行前打印影响行数，交互确认后才执行
 
 # 调试工具
 

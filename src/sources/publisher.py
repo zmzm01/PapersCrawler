@@ -186,19 +186,24 @@ class BasePublisherScraper:
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
 
-    def _save_error_html(self, url_or_doi: str, tag: str = ""):
+    def _save_error_html(self, url_or_doi: str, tag: str = "") -> bool:
         """保存出错时的页面 HTML 快照到 data/raw/page/ 目录。
 
         用于诊断抓取失败原因（Cloudflare 拦截、页面结构变更、网络超时等）。
-        文件命名格式: error_{doi}_{timestamp}.html
+        文件命名格式: error_{safe_name}[_{safe_tag}]_{timestamp}.html
+        url_or_doi 和 tag 中的特殊字符（/ 等）会被替换为 _ 以确保文件名合法。
 
         Args:
             url_or_doi: 论文 URL 或 DOI，用于生成文件名标识。
             tag:        错误标签（如 "goto_retry_failed"），追加在文件名中。
+
+        Returns:
+            bool: 保存成功返回 True，失败返回 False。
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = re.sub(r'[^\w\-]', '_', url_or_doi)[:60]
-        tag_part = f"_{tag}" if tag else ""
+        safe_tag = re.sub(r'[^\w\-]', '_', tag)[:40] if tag else ""
+        tag_part = f"_{safe_tag}" if safe_tag else ""
         filename = f"error_{safe_name}{tag_part}_{timestamp}.html"
         error_dir = RAW_PAGE_DIR / "error"
         error_dir.mkdir(parents=True, exist_ok=True)
@@ -208,9 +213,11 @@ class BasePublisherScraper:
             save_path.write_text(html, encoding="utf-8")
             logger = logging.getLogger(__name__)
             logger.warning(f"Error HTML saved to {save_path}")
+            return True
         except Exception as save_err:
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to save error HTML: {save_err}")
+            return False
 
     def download_pdf(self, pdf_url: str, page_url: str | None = None,
                      timeout: int = 60000) -> bytes:
@@ -598,8 +605,19 @@ class ScienceScraper(BasePublisherScraper):
         """
         sel = Selector(text=self.html)
 
-        # ─── 页面类型过滤：通过 dc.Type 排除非论文页面 ───
-        # Science 的 dc.Type 值为 "research-article" 时才是正规论文
+        # ─── 页面类型过滤 ───
+        # 一级：altmetric_type 检测（覆盖 CrossRef 发现的非研究文章，如 news/blog）
+        # 这类页面通常没有 dc.Type meta，但仍可被识别为非研究文章
+        altmetric_type = sel.css(
+            'meta[name="altmetric_type"]::attr(content)'
+        ).get()
+        if altmetric_type is not None:
+            raise NonResearchPageError(
+                f"Science page has altmetric_type='{altmetric_type}', "
+                "not a research article"
+            )
+
+        # 二级：dc.Type 检测（覆盖 RSS 来源的标准页面）
         dctype = sel.css('meta[name="dc.Type"]::attr(content)').get() or ""
         if dctype == "":
             raise PageParseError(
