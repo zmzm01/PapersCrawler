@@ -15,7 +15,7 @@ from config import (
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import logger, create_scraper
-from sources.publisher import NonResearchPageError, PageParseError
+from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
 
 # Keywords to detect non-research articles (Erratum, etc.)
 _NON_RESEARCH_KEYWORDS = ["erratum", "comment on", "response to", "publisher's note"]
@@ -147,6 +147,30 @@ def phase_c_publisher(db):
                         logger.info(f"Publisher page OK: {paperDOI}")
                         break
 
+                    except AcceptedPaperError:
+                        consecutive_failures = 0
+                        logger.info(f"Accepted Paper (no full text), skipped: {paperDOI}")
+                        db.update_error_message(
+                            paperDOI, "publisher_page_fetched_status",
+                            FetchStatus.SKIPPED.value,
+                            "publisher_page_fetched_error",
+                            "AcceptedPaper: no full text available",
+                            "publisher_page_fetched_date", timestamp,
+                        )
+                        db.update_process_status(
+                            paperDOI, "semantic_filter_status",
+                            FetchStatus.SKIPPED.value,
+                            "semantic_filter_date", timestamp,
+                        )
+                        db.update_process_status(
+                            paperDOI, "llm_relevance_status",
+                            FetchStatus.SKIPPED.value,
+                            "llm_relevance_date", timestamp,
+                        )
+                        paper_skipped = True
+                        logger.info(f"Accepted Paper, downstream phases cascaded: {paperDOI}")
+                        break
+
                     except NonResearchPageError:
                         consecutive_failures = 0
                         logger.info(f"Non-research page, skipped: {paperDOI}")
@@ -179,10 +203,26 @@ def phase_c_publisher(db):
 
                 if not paper_succeeded and not paper_skipped:
                     error_msg = str(last_error) if last_error else "Unknown error"
+                    error_type = type(last_error).__name__ if last_error else "N/A"
+                    page_title_snippet = ""
+                    try:
+                        if scraper and hasattr(scraper, 'html') and scraper.html:
+                            import re as _re
+                            mt = _re.search(r'<title>(.*?)</title>', scraper.html, _re.IGNORECASE | _re.DOTALL)
+                            if mt:
+                                page_title_snippet = mt.group(1).strip()[:120]
+                    except Exception:
+                        pass
+                    html_saved = ""
+                    if scraper and hasattr(scraper, 'page_url') and scraper.page_url:
+                        scraper._save_error_html(scraper.page_url, f"phaseC_fail_{paperDOI}")
+                        html_saved = f" | HTML saved to error dir"
                     if isinstance(last_error, PageParseError):
-                        logger.warning(f"Phase C page parse error [{paperDOI}]: {error_msg}")
+                        logger.warning(f"Phase C page parse error [{paperDOI}]: {error_msg} | type={error_type}{html_saved}")
                     else:
-                        logger.warning(f"Phase C scrape failed after 3 attempts [{paperDOI}]: {error_msg}")
+                        logger.warning(f"Phase C scrape failed after 3 attempts [{paperDOI}]: {error_msg} | type={error_type}{html_saved}")
+                    if page_title_snippet:
+                        logger.debug(f"Phase C page title [{paperDOI}]: {page_title_snippet}")
                     db.update_error_message(
                         paperDOI, "publisher_page_fetched_status",
                         FetchStatus.FAILED.value,

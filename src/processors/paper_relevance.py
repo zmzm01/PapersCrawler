@@ -27,6 +27,8 @@ import requests  # 用于 LLM API 调用；也可改用 openai 库
 
 from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError
 
+logger = logging.getLogger(__name__)
+
 
 class PaperRelevanceChecker:
     """
@@ -267,7 +269,6 @@ class PaperRelevanceChecker:
                             fixed, 0
                         )
 
-                logger = logging.getLogger(__name__)
                 logger.info(
                     f"DeepSeek API 响应耗时 {t1-t0:.1f}s, "
                     f"输入 {len(prompt)} 字符, 输出 {len(content)} 字符"
