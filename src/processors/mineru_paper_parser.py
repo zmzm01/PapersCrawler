@@ -21,11 +21,14 @@ MinerU PDF 论文解析模块
 import os
 import sys
 import time
+import logging
 import zipfile
 import tempfile
 from pathlib import Path
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 # ---------- 常量 ----------
 BASE_URL = "https://mineru.net/api/v4"     # MinerU API 基础地址
@@ -218,7 +221,7 @@ class MinerUParser:
                     elapsed = int(time.time() - start)
 
                     if state == "done":
-                        print(f"  [{elapsed}s] 解析完成")
+                        logger.debug(f"[{elapsed}s] MinerU 解析完成")
                         return item["full_zip_url"]
 
                     if state == "failed":
@@ -231,7 +234,7 @@ class MinerUParser:
                     pages_info = ""
                     if progress:
                         pages_info = f" (已解析 {progress.get('extracted_pages', 0)}/{progress.get('total_pages', 0)} 页)"
-                    print(f"  [{elapsed}s] 状态: {state}{pages_info}")
+                    logger.debug(f"[{elapsed}s] MinerU 状态: {state}{pages_info}")
                     break
 
             time.sleep(POLL_INTERVAL)
