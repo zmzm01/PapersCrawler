@@ -93,32 +93,49 @@ python tests/real/real_email.py      # SMTP 邮件发送测试
 
 ### 5. 重置流水线状态
 
-```bash
-# 语义判断 + 下游重置（更新 domain_description/keywords 后使用）
-python tools/reset_pipeline.py reset-semantic [--publisher aps]
+所有子命令支持 `--publisher` 过滤，执行前打印影响行数，需输入 `y` 确认。
 
-# Publisher 抓取重试（仅 failed + skipped）
+| 命令 | 重置范围 | 默认条件 | 级联 | 典型用途 |
+|------|---------|---------|------|---------|
+| `reset-semantic` | `semantic_filter_*`, `semantic_similarity_score`, `semantic_best_subdomain`（5 列） | **全部**（无 status 过滤） | 无 | 修改 sub_domains 后重算语义分 |
+| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 domain_description 后重判 |
+| `reset-publisher` | `publisher_page_fetched_status/error`（2 列） | `failed`/`skipped`（跳过 NonResearchPageError） | 无 | Phase C 被 CF 拦截后重试 |
+| `reset-mineru` | `mineru_parse_*`（5 列） | `failed`/`skipped` | 无 | MinerU 超时后重试 |
+| `reset-summary` | `llm_summary_*`（4 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 prompt 后重生成总结 |
+| `reset-report` | `report_status/date`（2 列） | `reported`（`--today`/`--days` 按日期） | 无 | 重新汇入下次报告 |
+
+**常用示例：**
+```bash
+# 修改 domain_description 后重新判断所有论文相关性（含已成功的）
+python tools/reset_pipeline.py reset-relevance --all
+
+# 仅重置历史判断失败/跳过的论文（修正遗留问题）
+python tools/reset_pipeline.py reset-relevance
+
+# 修改 sub_domains 后重算语义相似度分数
+python tools/reset_pipeline.py reset-semantic
+
+# Publisher 页面抓取重试
 python tools/reset_pipeline.py reset-publisher [--publisher aps]
 
 # MinerU PDF 解析重试
 python tools/reset_pipeline.py reset-mineru [--publisher aps]
 
-# LLM 总结重试
-python tools/reset_pipeline.py reset-summary [--publisher aps]
+# LLM 总结重试（仅 failed/skipped）
+python tools/reset_pipeline.py reset-summary
 
-# 重置报告状态，使已报告论文重新出现在下次报告中
-python tools/reset_pipeline.py reset-report [--publisher aps]
+# LLM 总结重试（含已成功的）
+python tools/reset_pipeline.py reset-summary --all
 
-# 仅重置今天（当前自然日）被报告的论文（同一天重试时使用，避免报告碎片化）
+# 重置所有已报告论文
+python tools/reset_pipeline.py reset-report
+
+# 仅重置今天被报告的论文（同一天重试时使用）
 python tools/reset_pipeline.py reset-report --today
 
-# 按日历日重置最近 N 天的报告
+# 按日历日重置最近 3 天的报告
 python tools/reset_pipeline.py reset-report --days 3
 ```
-
-所有子命令支持 `--publisher` 过滤，执行前打印 SQL 和影响行数，需输入 `y` 确认。
-
-> **关于报告日期**：`get_papers_for_report()` 以 `report_date IS NULL` 作为过滤条件。论文首次被报告后写入 `report_date`，不再出现在后续报告中。通过 `reset-report --today` 或 `--days N` 可重置指定范围内被报告的论文，适用于当天重试需要合并报告的场景。
 
 ### 6. 修复 LLM 总结中的 LaTeX 公式格式
 

@@ -80,8 +80,8 @@ def run_phases(phase_list=None, force=False):
     overrides = _load_skip_overrides() if force else {}
     effective_skip = _get_effective_skip(overrides)
     phase_map = {
-        "A-RSS": (phase_a_rss, [db, publishers], not effective_skip["A_RSS"]),
-        "A-CR": (phase_a_crossref, [db, publishers], not effective_skip["A_CR"]),
+        "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A_RSS"]),
+        "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A_CR"]),
         "B": (phase_b_crossref, [db], not effective_skip["B"]),
         "C": (phase_c_publisher, [db], not effective_skip["C"]),
         "D": (phase_d_semantic_filter, [db, keywords], not effective_skip["D"]),

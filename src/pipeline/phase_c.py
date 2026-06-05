@@ -215,8 +215,8 @@ def phase_c_publisher(db):
                         pass
                     html_saved = ""
                     if scraper and hasattr(scraper, 'page_url') and scraper.page_url:
-                        scraper._save_error_html(scraper.page_url, f"phaseC_fail_{paperDOI}")
-                        html_saved = f" | HTML saved to error dir"
+                        if scraper._save_error_html(scraper.page_url, f"phaseC_fail_{paperDOI}"):
+                            html_saved = f" | HTML saved to error dir"
                     if isinstance(last_error, PageParseError):
                         logger.warning(f"Phase C page parse error [{paperDOI}]: {error_msg} | type={error_type}{html_saved}")
                     else:
