@@ -83,7 +83,7 @@ def run_phases(phase_list=None, force=False):
         "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A_RSS"]),
         "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A_CR"]),
         "B": (phase_b_crossref, [db], not effective_skip["B"]),
-        "C": (phase_c_publisher, [db], not effective_skip["C"]),
+        "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
         "D": (phase_d_semantic_filter, [db, keywords], not effective_skip["D"]),
         "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
         "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
