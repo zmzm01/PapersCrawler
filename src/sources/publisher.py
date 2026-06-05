@@ -266,16 +266,35 @@ class BasePublisherScraper:
                 pdf_url = on_page_url
 
         # 在当前页面上下文中 fetch PDF（继承 referrer / cookie）
+        # 这是主路径，覆盖 6/7 publisher（Nature、Science、APS、Cambridge、IOP、Optica）
         logger.debug(f"下载 PDF: {pdf_url}")
         url_escaped = json.dumps(pdf_url)
-        raw = self.page.evaluate(f"""
-            async () => {{
-                const resp = await fetch({url_escaped});
-                const buf = await resp.arrayBuffer();
-                return Array.from(new Uint8Array(buf));
-            }}
-        """)
-        pdf_body = bytes(raw) if raw else None
+        try:
+            raw = self.page.evaluate(f"""
+                async () => {{
+                    const resp = await fetch({url_escaped});
+                    const buf = await resp.arrayBuffer();
+                    return Array.from(new Uint8Array(buf));
+                }}
+            """)
+            pdf_body = bytes(raw) if raw else None
+        except Exception as fetch_err:
+            # 回退：浏览器原生导航下载
+            # 部分 publisher（如 AIP）的 CSP/WAF 会拦截 JavaScript fetch() API，
+            # 但允许真实的浏览器导航。goto() 模拟用户点击链接，不受 CSP 限制。
+            logger.debug(f"JS fetch failed ({fetch_err}), trying direct navigation to PDF URL")
+            response = self.page.goto(
+                pdf_url, wait_until="commit", timeout=timeout,
+            )
+            if response and response.ok:
+                content_type = response.headers.get("content-type", "")
+                if "application/pdf" in content_type:
+                    pdf_body = response.body()
+                else:
+                    logger.debug(f"PDF URL returned {content_type}, not PDF")
+                    pdf_body = None
+            else:
+                pdf_body = None
 
         if pdf_body is None or pdf_body[:5] != b'%PDF-':
             raise RuntimeError(
