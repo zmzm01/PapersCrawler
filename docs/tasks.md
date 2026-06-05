@@ -4,6 +4,9 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **WebUI 图标美化** | Font Awesome CDN 全局图标；侧边栏导航图标；按钮/卡片/架构图图标；新增 `.icon-mr`/`.icon-left` 样式 | 06-05 |
+| **Home 页重构** | 项目介绍（7 出版社 21 期刊说明）+ 技术栈标签 + 架构概览图（两行 10 阶段流水线）+ Quick Start（3 步卡片）+ 图标装饰 | 06-05 |
+| **订阅管理** | 新增 `subscribers` DB 表（email/name/active/delivery_method）；Phase H 改为 DB 收件人优先、回退 `.env`；WebUI 订阅页（添加/删除/启用停用/测试/从 .env 导入） | 06-05 |
 | **Nature 过滤** | `phase_a_crossref()` 补充 `/d41586-` 过滤（双路径覆盖）；增加 `insert_paper_created_date()` 调用 | 06-05 |
 | **APS Accepted Paper** | 新增 `AcceptedPaperError` 异常；`APSScraper.parse_page()` 检测 URL 含 `/accepted/` 或特征标签时抛出；`phase_c.py` 捕获后 cascade skip 下游；不专门适配 selector | 06-05 |
 | **Logger 作用域** | `paper_relevance.py` 中 `logger = logging.getLogger(__name__)` 从 `call_deepseek_api()` 内部移至模块级别，修复 `cannot access local variable 'logger'` 崩溃 | 06-05 |

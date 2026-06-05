@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions{% endblock %}
+{% block content %}
+<h2><i class="fa-solid fa-bell icon-mr"></i><span data-i18n="subscriptions.title">Email Subscriptions</span></h2>
+<p class="text-muted" data-i18n="subscriptions.desc">Manage email subscribers. Active subscribers receive the daily report when Phase H (Email) runs.</p>
+
+<div class="sub-form">
+  <div class="form-group">
+    <label data-i18n="subscriptions.email">Email</label>
+    <input type="email" id="sub-email" placeholder="email@example.com">
+  </div>
+  <div class="form-group">
+    <label data-i18n="subscriptions.name">Name (optional)</label>
+    <input type="text" id="sub-name" placeholder="Name">
+  </div>
+  <button class="btn btn-primary" onclick="addSubscriber()"><i class="fa-solid fa-plus icon-left"></i><span data-i18n="subscriptions.add_btn">Add</span></button>
+  <button class="btn btn-secondary" onclick="importFromEnv()"><i class="fa-solid fa-file-import icon-left"></i><span data-i18n="subscriptions.import_env">Import from .env</span></button>
+  <span id="sub-action-status" class="save-status"></span>
+</div>
+
+{% if subscribers %}
+<table class="sub-table">
+  <thead><tr>
+    <th data-i18n="subscriptions.table_email">Email</th>
+    <th data-i18n="subscriptions.table_name">Name</th>
+    <th data-i18n="subscriptions.table_status">Status</th>
+    <th data-i18n="subscriptions.table_actions">Actions</th>
+  </tr></thead>
+  <tbody>
+    {% for s in subscribers %}
+    <tr>
+      <td>{{ s.email }}</td>
+      <td>{{ s.name or '—' }}</td>
+      <td>
+        {% if s.active %}
+        <span class="active-badge on"></span><span data-i18n="subscriptions.active">Active</span>
+        {% else %}
+        <span class="active-badge off"></span><span data-i18n="subscriptions.inactive">Inactive</span>
+        {% endif %}
+      </td>
+      <td class="td-actions">
+        <button class="btn btn-sm btn-secondary" onclick="testSubscriber('{{ s.email }}')"><i class="fa-solid fa-vial icon-left"></i><span data-i18n="subscriptions.test">Test</span></button>
+        {% if s.active %}
+        <button class="btn btn-sm btn-secondary" onclick="toggleSubscriber('{{ s.email }}', false)"><i class="fa-solid fa-pause icon-left"></i><span data-i18n="subscriptions.disable">Disable</span></button>
+        {% else %}
+        <button class="btn btn-sm btn-secondary" onclick="toggleSubscriber('{{ s.email }}', true)"><i class="fa-solid fa-play icon-left"></i><span data-i18n="subscriptions.enable">Enable</span></button>
+        {% endif %}
+        <button class="btn btn-sm btn-secondary" onclick="removeSubscriber('{{ s.email }}')" style="color:var(--failed);"><i class="fa-solid fa-trash-can icon-left"></i><span data-i18n="subscriptions.delete">Delete</span></button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted" data-i18n="subscriptions.empty">No subscribers yet. Add one or import from .env.</p>
+{% endif %}
+
+<script>
+async function addSubscriber() {
+  const email = document.getElementById('sub-email').value.trim();
+  const name = document.getElementById('sub-name').value.trim();
+  const status = document.getElementById('sub-action-status');
+  if (!email || email.indexOf('@') === -1) { status.textContent = 'Invalid email'; status.className = 'save-status error'; return; }
+  const r = await fetch('/subscriptions/add', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email, name}),
+  });
+  const data = await r.json();
+  if (data.ok) { location.reload(); }
+  else { status.textContent = 'Duplicate or invalid email'; status.className = 'save-status error'; }
+}
+
+async function removeSubscriber(email) {
+  showModal(
+    getI18n('subscriptions.delete'),
+    getI18n('subscriptions.delete_confirm', {email: email}),
+    getI18n('subscriptions.delete'),
+    async () => {
+    await fetch('/subscriptions/remove', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email}),
+    });
+    location.reload();
+  });
+}
+
+async function toggleSubscriber(email, active) {
+  await fetch('/subscriptions/toggle', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email, active}),
+  });
+  location.reload();
+}
+
+async function testSubscriber(email) {
+  const status = document.getElementById('sub-action-status');
+  status.textContent = 'Sending...';
+  status.className = 'save-status';
+  const r = await fetch('/subscriptions/test/' + encodeURIComponent(email), { method: 'POST' });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = getI18n('subscriptions.test_sent', {email});
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = getI18n('subscriptions.test_failed', {msg: data.error || 'Unknown'});
+    status.className = 'save-status error';
+  }
+}
+
+async function importFromEnv() {
+  const status = document.getElementById('sub-action-status');
+  status.textContent = 'Importing...';
+  status.className = 'save-status';
+  const r = await fetch('/subscriptions/import-from-env', { method: 'POST' });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = getI18n('subscriptions.import_env_done', {n: data.imported});
+    status.className = 'save-status ok';
+    if (data.imported > 0) setTimeout(() => location.reload(), 1000);
+  } else {
+    status.textContent = getI18n('config.syntax_error', {msg: data.error || 'Failed'});
+    status.className = 'save-status error';
+  }
+}
+</script>
+{% endblock %}

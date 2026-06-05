@@ -2,84 +2,131 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 <div class="hero">
-  <h2>PapersCrawler</h2>
+  <h2><i class="fa-solid fa-graduation-cap icon-mr"></i>PapersCrawler</h2>
   <p class="hero-subtitle" data-i18n="home.subtitle">Academic paper auto‑tracking &amp; push system</p>
 
   <div class="hero-cards">
     <div class="hero-card">
+      <div class="qs-step" style="text-align:center;font-size:2rem;color:var(--primary);margin-bottom:0.5rem;"><i class="fa-solid fa-diagram-project"></i></div>
       <h3 data-i18n="nav.pipeline">Pipeline</h3>
-      <p data-i18n="home.pipeline_desc">Control each phase independently — run, reset, watch live logs.</p>
-      <a href="/pipeline" class="btn btn-primary"><span data-i18n="home.visit">Go to</span> Pipeline &rarr;</a>
+      <p data-i18n="home.pipeline_desc">Run each phase independently, watch live logs, reset states.</p>
+      <a href="/pipeline" class="btn btn-primary"><i class="fa-solid fa-arrow-right icon-left"></i><span data-i18n="home.visit">Go to</span></a>
     </div>
     <div class="hero-card">
+      <div class="qs-step" style="text-align:center;font-size:2rem;color:var(--primary);margin-bottom:0.5rem;"><i class="fa-solid fa-book-open"></i></div>
       <h3 data-i18n="nav.papers">Papers</h3>
-      <p data-i18n="home.papers_desc">Browse papers sorted by semantic similarity to your research domain.</p>
-      <a href="/papers" class="btn btn-primary"><span data-i18n="home.visit">Go to</span> Papers &rarr;</a>
+      <p data-i18n="home.papers_desc">Browse papers, sort by date, check relevance and semantic score.</p>
+      <a href="/papers" class="btn btn-primary"><i class="fa-solid fa-arrow-right icon-left"></i><span data-i18n="home.visit">Go to</span></a>
     </div>
     <div class="hero-card">
+      <div class="qs-step" style="text-align:center;font-size:2rem;color:var(--primary);margin-bottom:0.5rem;"><i class="fa-solid fa-file-lines"></i></div>
       <h3 data-i18n="nav.report">Report</h3>
-      <p data-i18n="home.report_desc">Select papers with summaries, generate Markdown reports, preview &amp; download.</p>
-      <a href="/report" class="btn btn-primary"><span data-i18n="home.visit">Go to</span> Report &rarr;</a>
+      <p data-i18n="home.report_desc">Select papers with summaries, generate preview &amp; download.</p>
+      <a href="/report" class="btn btn-primary"><i class="fa-solid fa-arrow-right icon-left"></i><span data-i18n="home.visit">Go to</span></a>
+    </div>
+  </div>
+
+  <div class="home-section">
+    <h3><i class="fa-solid fa-circle-info icon-mr"></i><span data-i18n="home.intro_title">About</span></h3>
+    <p data-i18n="home.intro_text">PapersCrawler automatically tracks <span class="intro-highlight">21 journals from 7 publishers</span> through an <span class="intro-highlight">8-phase pipeline</span> — discovery, metadata enrichment, page scraping, relevance filtering, PDF parsing, structured summarization, report generation, and email delivery.</p>
+    <div class="tech-stack">
+      <span class="tag"><i class="fa-brands fa-python icon-left"></i>Python</span>
+      <span class="tag"><i class="fa-solid fa-brain icon-left"></i>DeepSeek API</span>
+      <span class="tag"><i class="fa-solid fa-file-pdf icon-left"></i>MinerU</span>
+      <span class="tag"><i class="fa-solid fa-chart-simple icon-left"></i>sentence-transformers</span>
+      <span class="tag"><i class="fa-solid fa-globe icon-left"></i>cloakbrowser</span>
+      <span class="tag"><i class="fa-solid fa-database icon-left"></i>SQLite</span>
+      <span class="tag"><i class="fa-solid fa-bolt icon-left"></i>FastAPI</span>
+      <span class="tag"><i class="fa-solid fa-envelope icon-left"></i>SMTP</span>
+    </div>
+  </div>
+
+  <div class="home-section">
+    <h3><i class="fa-solid fa-rocket icon-mr"></i><span data-i18n="home.quickstart">Quick Start</span></h3>
+    <p data-i18n="home.quickstart_desc">Copy .env → install Python deps → start Web UI</p>
+    <div class="qs-grid">
+      <div class="qs-card">
+        <div class="qs-step"><i class="fa-solid fa-key icon-left"></i>Step 1</div>
+        <div class="qs-title">Configure Secrets</div>
+        <code>cp .env.example .env</code>
+      </div>
+      <div class="qs-card">
+        <div class="qs-step"><i class="fa-solid fa-download icon-left"></i>Step 2</div>
+        <div class="qs-title">Install Dependencies</div>
+        <code>pip install -r requirements.txt</code>
+      </div>
+      <div class="qs-card">
+        <div class="qs-step"><i class="fa-solid fa-play icon-left"></i>Step 3</div>
+        <div class="qs-title">Start Web UI</div>
+        <code>PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080</code>
+      </div>
     </div>
   </div>
 
   <div class="hero-stats">
     <div class="stat-card">
-      <div class="stat-value">{{ publisher_count }}</div>
+      <div class="stat-value"><i class="fa-solid fa-building-columns icon-left" style="font-size:1.5rem;"></i>{{ publisher_count }}</div>
       <div class="stat-label" data-i18n="home.publishers">Publishers</div>
     </div>
     <div class="stat-card">
-      <div class="stat-value">{{ paper_count }}</div>
+      <div class="stat-value"><i class="fa-solid fa-file-lines icon-left" style="font-size:1.5rem;"></i>{{ paper_count }}</div>
       <div class="stat-label" data-i18n="home.papers_count">Papers in DB</div>
     </div>
     <div class="stat-card">
-      <div class="stat-value">9</div>
+      <div class="stat-value"><i class="fa-solid fa-list-check icon-left" style="font-size:1.5rem;"></i>{{ phase_count }}</div>
       <div class="stat-label" data-i18n="home.phases_count">Pipeline Phases</div>
     </div>
   </div>
 
-  <h2 data-i18n="home.guide">Quick Guide</h2>
-  <table class="config-table">
-    <thead><tr>
-      <th data-i18n="home.guide_page">Page</th>
-      <th data-i18n="home.guide_what">What you can do</th>
-      <th data-i18n="home.guide_notes">Notes</th>
-    </tr></thead>
-    <tbody>
-      <tr>
-        <td><a href="/pipeline"><span data-i18n="nav.pipeline">Pipeline</span></a></td>
-        <td data-i18n="home.pipeline_desc">Run individual phases, watch live logs with level filter, reset phase states, view progress charts</td>
-        <td data-i18n="home.pipeline_notes">Buttons always run phases regardless of <code>SKIP_PHASE</code> config. Reset shows confirmation with impact details.</td>
-      </tr>
-      <tr>
-        <td><a href="/papers"><span data-i18n="nav.papers">Papers</span></a></td>
-        <td data-i18n="home.papers_desc">Browse papers sorted by semantic similarity to your research domain</td>
-        <td data-i18n="home.papers_notes">Only shows papers that have been processed by Phase D (Semantic Filter).</td>
-      </tr>
-      <tr>
-        <td><a href="/report"><span data-i18n="nav.report">Report</span></a></td>
-        <td data-i18n="home.report_desc">Select papers with LLM summaries, generate Markdown reports, preview in-browser and download</td>
-        <td data-i18n="home.report_notes">Only papers with <code>llm_summary_status = success</code> appear in the list. Use checkboxes to select specific papers.</td>
-      </tr>
-      <tr>
-        <td><a href="/logs"><span data-i18n="nav.logs">Logs</span></a></td>
-        <td data-i18n="home.logs_desc">View the pipeline log file (<code>data/PaperCrawler.log</code>), filter by severity level</td>
-        <td data-i18n="home.logs_notes">Shows the most recent ~200 KB. New log lines arrive in real time via SSE.</td>
-      </tr>
-      <tr>
-        <td><a href="/datasources"><span data-i18n="nav.datasources">Data Sources</span></a></td>
-        <td data-i18n="home.datasources_desc">Enable or disable journals and their RSS / CrossRef data sources</td>
-        <td data-i18n="home.config_notes_yaml">Changes saved to a separate override file, does not modify publishers.yaml.</td>
-      </tr>
-      <tr>
-        <td><a href="/config"><span data-i18n="nav.config">Config</span></a></td>
-        <td data-i18n="home.config_desc">Toggle SKIP switches, edit domain description, test connectivity, edit publishers.yaml and keywords.yaml</td>
-        <td>
-          <span data-i18n="home.config_notes_skip"><strong>SKIP toggles</strong> affect Web UI Pipeline buttons; CLI uses config.py defaults.</span><br>
-          <span data-i18n="home.config_notes_yaml"><strong>YAML editors</strong> validate syntax on save and require a second confirmation.</span>
-        </td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="home-section">
+    <h3><i class="fa-solid fa-compass icon-mr"></i><span data-i18n="home.guide">Quick Guide</span></h3>
+    <table class="config-table">
+      <thead><tr>
+        <th data-i18n="home.guide_page">Page</th>
+        <th data-i18n="home.guide_what">What you can do</th>
+        <th data-i18n="home.guide_notes">Notes</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td><a href="/pipeline"><i class="fa-solid fa-gears icon-left"></i><span data-i18n="nav.pipeline">Pipeline</span></a></td>
+          <td data-i18n="home.pipeline_desc">Run individual phases, watch live logs with level filter, reset phase states</td>
+          <td data-i18n="home.pipeline_notes">Config SKIP toggles disable Pipeline buttons. Reset shows impact details.</td>
+        </tr>
+        <tr>
+          <td><a href="/papers"><i class="fa-solid fa-file-lines icon-left"></i><span data-i18n="nav.papers">Papers</span></a></td>
+          <td data-i18n="home.papers_desc">Browse papers, sort by created or published date.</td>
+          <td data-i18n="home.papers_notes">Semantic scores shown if Phase D ran; LLM relevance status shown for all.</td>
+        </tr>
+        <tr>
+          <td><a href="/report"><i class="fa-solid fa-newspaper icon-left"></i><span data-i18n="nav.report">Report</span></a></td>
+          <td data-i18n="home.report_desc">Select papers with LLM summaries, generate Markdown reports, preview and download</td>
+          <td data-i18n="home.report_notes">Only papers with <code>llm_summary_status = success</code> appear. Use checkboxes to select.</td>
+        </tr>
+        <tr>
+          <td><a href="/datasources"><i class="fa-solid fa-database icon-left"></i><span data-i18n="nav.datasources">Data Sources</span></a></td>
+          <td data-i18n="home.datasources_desc">Enable or disable journals and their RSS / CrossRef data sources per-journal</td>
+          <td data-i18n="home.config_notes_yaml">Saved to separate override file, does not modify publishers.yaml.</td>
+        </tr>
+        <tr>
+          <td><a href="/subscriptions"><i class="fa-solid fa-bell icon-left"></i><span data-i18n="nav.subscriptions">Subscriptions</span></a></td>
+          <td data-i18n="home.config_desc">Manage email subscribers, add/remove/test, import from .env</td>
+          <td><span data-i18n="home.config_notes_skip">Active subscribers receive the daily report when Phase H runs.</span></td>
+        </tr>
+        <tr>
+          <td><a href="/logs"><i class="fa-solid fa-terminal icon-left"></i><span data-i18n="nav.logs">Logs</span></a></td>
+          <td data-i18n="home.logs_desc">View pipeline log file, filter by severity level</td>
+          <td data-i18n="home.logs_notes">Shows most recent ~200 KB. New log lines via SSE.</td>
+        </tr>
+        <tr>
+          <td><a href="/config"><i class="fa-solid fa-sliders icon-left"></i><span data-i18n="nav.config">Config</span></a></td>
+          <td data-i18n="home.config_desc">Toggle SKIP switches, edit domain description, test connectivity, edit YAML configs</td>
+          <td>
+            <span data-i18n="home.config_notes_skip"><strong>SKIP toggles</strong> affect Pipeline buttons; CLI unaffected.</span><br>
+            <span data-i18n="home.config_notes_yaml"><strong>YAML editors</strong> validate syntax before saving.</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}

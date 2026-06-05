@@ -167,7 +167,11 @@ async def home_page(request: Request):
     db.init_db_papers()
     total = len(db.get_all_papers())
     return templates.TemplateResponse(
-        request, "home.html", {"publisher_count": p_count, "paper_count": total}
+        request, "home.html", {
+            "publisher_count": p_count,
+            "paper_count": total,
+            "phase_count": len(PHASE_ORDER),
+        }
     )
 
 
@@ -633,3 +637,102 @@ async def datasources_save(request: Request):
     overrides = {"journals": journals}
     JOURNAL_OVERRIDES_PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
     return JSONResponse({"ok": True, "path": str(JOURNAL_OVERRIDES_PATH)})
+
+
+# ── Subscriptions ─────────────────────────────────────────────────────────────
+
+@app.get("/subscriptions", response_class=HTMLResponse)
+async def subscriptions_page(request: Request):
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
+    subscribers = db.get_subscribers(active_only=False)
+    subs_list = []
+    for s in subscribers:
+        subs_list.append({
+            "email": s["email"],
+            "name": s["name"] or "",
+            "active": bool(s["active"]),
+            "created_date": s["created_date"] or "",
+        })
+    return templates.TemplateResponse(request, "subscriptions.html", {
+        "subscribers": subs_list,
+    })
+
+
+@app.post("/subscriptions/add")
+async def subscriptions_add(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip().lower()
+    name = body.get("name", "").strip()
+    if not email or "@" not in email:
+        return JSONResponse({"ok": False, "error": "Invalid email"})
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
+    ok = db.add_subscriber(email, name)
+    return JSONResponse({"ok": ok, "error": None if ok else "Duplicate email"})
+
+
+@app.post("/subscriptions/remove")
+async def subscriptions_remove(request: Request):
+    body = await request.json()
+    email = body.get("email", "")
+    if not email:
+        return JSONResponse({"ok": False, "error": "Missing email"})
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
+    db.remove_subscriber(email)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/subscriptions/toggle")
+async def subscriptions_toggle(request: Request):
+    body = await request.json()
+    email = body.get("email", "")
+    active = body.get("active", True)
+    if not email:
+        return JSONResponse({"ok": False, "error": "Missing email"})
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
+    db.toggle_subscriber(email, 1 if active else 0)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/subscriptions/import-from-env")
+async def subscriptions_import_env():
+    from config import load_email_config
+    cfg = load_email_config()
+    to_addrs = cfg.get("to_addrs", []) if cfg else []
+    db = DatabaseClient(DB_PATH)
+    db.init_db_papers()
+    imported = 0
+    for addr in to_addrs:
+        if db.add_subscriber(addr.strip().lower()):
+            imported += 1
+    return JSONResponse({"ok": True, "imported": imported})
+
+
+@app.post("/subscriptions/test/{email}")
+async def subscriptions_test(email: str):
+    from config import load_email_config
+    from processors.email_sender import EmailSender
+    cfg = load_email_config()
+    if not cfg:
+        return JSONResponse({"ok": False, "error": "SMTP not configured"})
+    try:
+        sender = EmailSender(
+            smtp_host=cfg["smtp_host"],
+            smtp_port=cfg["smtp_port"],
+            username=cfg["username"],
+            password=cfg["password"],
+            from_addr=cfg["from_addr"],
+            to_addrs=[email],
+            use_tls=cfg.get("use_tls", True),
+        )
+        sender.send(
+            subject="PapersCrawler Test",
+            body="This is a test message from PapersCrawler.\n\nIf you received this, SMTP configuration is working.",
+            body_type="plain",
+        )
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
