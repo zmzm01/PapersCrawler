@@ -39,6 +39,11 @@ def _journal_effective(journal, overrides, field):
     Priority: journal_overrides.json > publishers.yaml.
     ``field`` is one of 'enabled', 'rss_enabled', 'cr_enabled'.
     For 'rss_enabled'/'cr_enabled', falls back to 'enabled' if not specified.
+
+    Notes
+    -----
+    - CLI (overrides={}): 只读 publishers.yaml 的 enabled 字段
+    - WebUI (overrides 有值): overrides > publishers.yaml 的 enabled
     """
     jid = journal["id"]
     ov = overrides.get("journals", {}).get(jid, {})
@@ -46,10 +51,15 @@ def _journal_effective(journal, overrides, field):
         return ov[field]
     if field in ("rss_enabled", "cr_enabled") and "enabled" in ov:
         return ov["enabled"]
+    # publishers.yaml 回退：rss_enabled/cr_enabled 不存在时取 enabled
+    if field in ("rss_enabled", "cr_enabled"):
+        if field in journal:
+            return journal[field]
+        return journal.get("enabled", True)
     return journal.get(field, True)
 
 
-def phase_a_rss(db, publishers):
+def phase_a_rss(db, publishers, use_overrides=False):
     """Fetch new papers from configured RSS feeds and store in database.
 
     Parameters
@@ -57,6 +67,10 @@ def phase_a_rss(db, publishers):
     db : DatabaseClient
     publishers : list of dict
         Publisher configs from publishers.yaml.
+    use_overrides : bool
+        是否从 journal_overrides.json 加载覆写。
+        CLI (force=False) 时 False，只读 publishers.yaml。
+        WebUI (force=True) 时 True，叠加 journal_overrides.json。
     """
     if SKIP_PHASE_A_RSS:
         logger.info("Phase A-RSS: SKIP_PHASE_A_RSS=True, skipping")
@@ -64,7 +78,7 @@ def phase_a_rss(db, publishers):
     logger.info("--- Phase A-RSS: RSS Feed fetch ---")
     rsspro = RSSProcessor()
     timestamp = datetime.now().strftime("%Y%m%d")
-    overrides = _load_journal_overrides()
+    overrides = _load_journal_overrides() if use_overrides else {}
 
     for journal in publishers:
         if not _journal_effective(journal, overrides, "rss_enabled"):
@@ -110,7 +124,7 @@ def phase_a_rss(db, publishers):
     logger.info("Phase A-RSS done")
 
 
-def phase_a_crossref(db, publishers):
+def phase_a_crossref(db, publishers, use_overrides=False):
     """Fetch papers from CrossRef by journal ISSN + date range.
 
     Daily incremental mode: queries from (today - CROSSREF_LOOKBACK_DAYS) to today.
@@ -122,6 +136,10 @@ def phase_a_crossref(db, publishers):
     db : DatabaseClient
     publishers : list of dict
         Publisher configs from publishers.yaml.
+    use_overrides : bool
+        是否从 journal_overrides.json 加载覆写。
+        CLI (force=False) 时 False，只读 publishers.yaml。
+        WebUI (force=True) 时 True，叠加 journal_overrides.json。
     """
     if SKIP_PHASE_A_CR:
         logger.info("Phase A-CR: SKIP_PHASE_A_CR=True, skipping")
@@ -134,7 +152,7 @@ def phase_a_crossref(db, publishers):
     logger.info(f"Query window: {from_date} ~ {to_date}")
 
     client = CrossrefClient(mailto=CROSSREF_MAILTO)
-    overrides = _load_journal_overrides()
+    overrides = _load_journal_overrides() if use_overrides else {}
 
     for journal in publishers:
         if not _journal_effective(journal, overrides, "cr_enabled"):
