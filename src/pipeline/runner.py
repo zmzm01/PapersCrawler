@@ -89,7 +89,7 @@ def run_phases(phase_list=None, force=False):
         "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
         "F": (phase_f_llm_summary, [db], not effective_skip["F"]),
         "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], not effective_skip["G"]),
-        "H": (phase_h_email, [AUTO_REPORT_DIR], not effective_skip["H"]),
+        "H": (phase_h_email, [db, AUTO_REPORT_DIR], not effective_skip["H"]),
     }
 
     if phase_list is None:

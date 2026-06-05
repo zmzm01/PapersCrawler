@@ -595,3 +595,42 @@ h3 {
 }
 
 .text-muted { color: var(--text-muted); }
+
+/* ── Icon helpers ─────────────────────────────────────────────────── */
+.icon-mr { margin-right: 0.8rem; width: 1.2rem; text-align: center; }
+.icon-left { margin-right: 0.6rem; }
+
+/* Sidebar icons */
+.sidebar-nav li a i { width: 1.5rem; text-align: center; margin-right: 1rem; }
+
+/* ── Home: intro section ─────────────────────────────────────────── */
+.home-section { margin-bottom: 2.5rem; }
+.home-section h3 { font-size: 1.3rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--primary); display: inline-block; }
+.home-section p { font-size: 1.05rem; line-height: 1.8; color: var(--text); margin-bottom: 0.75rem; max-width: 720px; }
+.home-section .intro-highlight { font-size: 1.15rem; color: var(--primary); font-weight: 700; }
+
+.tech-stack { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+.tech-stack .tag { background: #eef2ff; color: #4338ca; padding: 0.35rem 0.85rem; border-radius: 20px; font-size: 0.9rem; font-weight: 500; }
+
+/* ── Home: quick start ───────────────────────────────────────────── */
+.qs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
+.qs-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
+.qs-card .qs-step { font-size: 0.75rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+.qs-card .qs-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.5rem; }
+.qs-card code { display: block; background: #f1f5f9; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.8rem; color: var(--text); word-break: break-all; margin-top: 0.5rem; }
+
+/* ── Subscriptions page ──────────────────────────────────────────── */
+.sub-form { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+.sub-form .form-group { margin-bottom: 0; }
+.sub-form label { font-size: 0.8rem; font-weight: 600; margin-bottom: 0.25rem; display: block; color: var(--text-muted); }
+.sub-form input { padding: 0.45rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; }
+.sub-form input[type="email"] { min-width: 220px; }
+.sub-form input[type="text"] { min-width: 140px; }
+
+.sub-table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; overflow: hidden; }
+.sub-table th, .sub-table td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+.sub-table th { background: #f8fafc; font-weight: 600; font-size: 0.8rem; color: var(--text-muted); }
+.sub-table .td-actions { white-space: nowrap; display: flex; gap: 0.4rem; }
+.sub-table .active-badge { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.4rem; }
+.sub-table .active-badge.on { background: var(--success); }
+.sub-table .active-badge.off { background: var(--failed); }

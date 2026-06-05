@@ -66,9 +66,10 @@ def test_phase_g_signature():
 
 
 def test_phase_h_signature():
-    """phase_h_email should accept (auto_dir)."""
+    """phase_h_email should accept (db, auto_dir)."""
     from pipeline.phase_h import phase_h_email
     import inspect
     sig = inspect.signature(phase_h_email)
     param_names = list(sig.parameters.keys())
+    assert "db" in param_names
     assert "auto_dir" in param_names

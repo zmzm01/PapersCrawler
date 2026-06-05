@@ -11,13 +11,18 @@ from pathlib import Path
 from config import SKIP_PHASE_H, load_email_config
 from pipeline.base import logger
 from processors.email_sender import EmailSender
+from db.database import DatabaseClient
 
 
-def phase_h_email(auto_dir):
+def phase_h_email(db, auto_dir):
     """Send today's auto report or a no-update notification via email.
+
+    Recipients are read from the subscribers table in DB first,
+    falling back to .env SMTP_TO_ADDRS if no subscribers are configured.
 
     Parameters
     ----------
+    db : DatabaseClient
     auto_dir : Path
         Directory containing auto-generated daily reports.
     """
@@ -41,10 +46,14 @@ def phase_h_email(auto_dir):
         logger.info("Phase H: email credentials not configured, skipping")
         return
 
-    to_addrs = email_cfg.get("to_addrs", [])
+    # 优先从 DB 订阅者表获取收件人，无订阅者时回退 .env 配置
+    to_addrs = db.get_active_emails()
     if not to_addrs:
-        logger.info("Phase H: no recipients, skipping")
+        to_addrs = email_cfg.get("to_addrs", [])
+    if not to_addrs:
+        logger.info("Phase H: no recipients (DB nor .env), skipping")
         return
+    logger.info(f"Phase H: {len(to_addrs)} recipient(s) ({'DB subscribers' if db.get_active_emails() else '.env config'})")
 
     auto_dir = Path(auto_dir)
     today_str = datetime.now().strftime("%Y%m%d")
