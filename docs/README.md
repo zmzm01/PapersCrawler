@@ -190,12 +190,13 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 **页面功能：**
 | 页面 | 功能 |
 |------|------|
-| **Home** | 项目介绍、出版社/论文统计、快速入门指南 |
+| **Home** | 项目介绍、技术栈标签、架构概览图、Quick Start 三步卡片、出版社/论文统计、快速入门指南 |
 | **Pipeline** | 10 阶段（A-RSS / A-CR 独立）Run/Reset 按钮 + 状态柱状图 + SSE 实时日志。Config 页跳过的阶段按钮灰显不可点击 |
 | **Papers** | 论文列表，默认按入库日期排序，可选按发表日期排序（含精度警告）。展示语义相似度分（可选）和 LLM 相关性状态 ✓/✗ |
 | **Report** | 勾选有 LLM 总结的论文 → 生成 Markdown 报告 → 浏览器预览 + 下载（写入 `data/reports/user/`） |
 | **Data Sources** | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源。写入 `data/journal_overrides.json` |
 | **Logs** | 流水线日志（`data/PaperCrawler.log`），支持按级别过滤 |
+| **Subscriptions** | 邮件订阅者管理（添加/删除/启用停用/测试/从 .env 导入），Phase H 优先使用 DB 订阅者列表 |
 | **Config** | SKIP 开关切换（影响 Pipeline 页按钮）、研究领域描述编辑、连通性测试（DeepSeek/CrossRef/MinerU）、MinerU Token 过期色标、YAML 编辑器 |
 
 ### 9. 调试与辅助工具

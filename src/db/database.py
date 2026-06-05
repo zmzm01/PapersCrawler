@@ -277,6 +277,28 @@ class DatabaseClient:
         except sqlite3.OperationalError:
             pass  # 列已存在则跳过
 
+        # ---- subscribers 表（邮件订阅者） ----
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS subscribers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            delivery_method TEXT DEFAULT 'email',
+            created_date TEXT,
+            updated_date TEXT
+        )
+        """)
+        self.conn.commit()
+        # 迁移: 为旧数据库添加订阅者列（预留扩展）
+        for col in ["delivery_method"]:
+            try:
+                self.conn.execute(
+                    f"ALTER TABLE subscribers ADD COLUMN {col} TEXT DEFAULT 'email'"
+                )
+            except sqlite3.OperationalError:
+                pass
+
     # ==================================================================
     # 基本查询方法
     # ==================================================================
@@ -988,5 +1010,94 @@ class DatabaseClient:
             WHERE doi = ?
             """,
             (status_code, message, timestamp, doi),
+        )
+        self.conn.commit()
+
+    # ==================================================================
+    # 订阅者管理 (subscribers 表)
+    # ==================================================================
+
+    def get_subscribers(self, active_only=True):
+        """获取订阅者列表。
+
+        Parameters
+        ----------
+        active_only : bool
+            为 True 时只返回启用状态的订阅者。
+
+        Returns
+        -------
+        list[sqlite3.Row]
+        """
+        if active_only:
+            cur = self.conn.execute(
+                "SELECT * FROM subscribers WHERE active = 1 ORDER BY created_date DESC"
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM subscribers ORDER BY created_date DESC"
+            )
+        return cur.fetchall()
+
+    def get_active_emails(self):
+        """获取所有启用订阅者的邮箱列表。
+
+        Returns
+        -------
+        list[str]
+        """
+        cur = self.conn.execute(
+            "SELECT email FROM subscribers WHERE active = 1 ORDER BY id"
+        )
+        return [row["email"] for row in cur.fetchall()]
+
+    def add_subscriber(self, email, name=""):
+        """添加订阅者。重复邮箱静默忽略。
+
+        Parameters
+        ----------
+        email : str
+        name : str
+
+        Returns
+        -------
+        bool
+            新增成功返回 True，已存在返回 False。
+        """
+        from datetime import datetime
+        ts = str(datetime.now())
+        try:
+            self.conn.execute(
+                "INSERT INTO subscribers (email, name, created_date, updated_date) VALUES (?, ?, ?, ?)",
+                (email, name, ts, ts),
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def remove_subscriber(self, email):
+        """删除订阅者。
+
+        Parameters
+        ----------
+        email : str
+        """
+        self.conn.execute("DELETE FROM subscribers WHERE email = ?", (email,))
+        self.conn.commit()
+
+    def toggle_subscriber(self, email, active):
+        """启用或停用订阅者。
+
+        Parameters
+        ----------
+        email : str
+        active : int
+            1 = 启用，0 = 停用
+        """
+        from datetime import datetime
+        self.conn.execute(
+            "UPDATE subscribers SET active = ?, updated_date = ? WHERE email = ?",
+            (active, str(datetime.now()), email),
         )
         self.conn.commit()

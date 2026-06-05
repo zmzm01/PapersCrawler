@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PapersCrawler - {% block title %}Home{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" defer></script>
@@ -18,13 +19,14 @@
         <button id="lang-toggle" class="lang-toggle" onclick="switchLanguage(currentLang === 'zh' ? 'en' : 'zh')">EN</button>
       </div>
       <ul class="sidebar-nav">
-        <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><span data-i18n="nav.home">Home</span></a></li>
-        <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}"><span data-i18n="nav.pipeline">Pipeline</span></a></li>
-        <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><span data-i18n="nav.papers">Papers</span></a></li>
-        <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><span data-i18n="nav.report">Report</span></a></li>
-        <li><a href="/datasources" class="{% if request.url.path == '/datasources' %}active{% endif %}"><span data-i18n="nav.datasources">Data Sources</span></a></li>
-        <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}"><span data-i18n="nav.logs">Logs</span></a></li>
-        <li><a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}"><span data-i18n="nav.config">Config</span></a></li>
+        <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><i class="fa-solid fa-house"></i><span data-i18n="nav.home">Home</span></a></li>
+        <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}"><i class="fa-solid fa-gears"></i><span data-i18n="nav.pipeline">Pipeline</span></a></li>
+        <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><i class="fa-solid fa-file-lines"></i><span data-i18n="nav.papers">Papers</span></a></li>
+        <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><i class="fa-solid fa-newspaper"></i><span data-i18n="nav.report">Report</span></a></li>
+        <li><a href="/datasources" class="{% if request.url.path == '/datasources' %}active{% endif %}"><i class="fa-solid fa-database"></i><span data-i18n="nav.datasources">Data Sources</span></a></li>
+        <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}"><i class="fa-solid fa-terminal"></i><span data-i18n="nav.logs">Logs</span></a></li>
+        <li><a href="/subscriptions" class="{% if request.url.path == '/subscriptions' %}active{% endif %}"><i class="fa-solid fa-bell"></i><span data-i18n="nav.subscriptions">Subscriptions</span></a></li>
+        <li><a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}"><i class="fa-solid fa-sliders"></i><span data-i18n="nav.config">Config</span></a></li>
       </ul>
     </nav>
     <main class="content">
@@ -40,7 +42,7 @@
       <div class="modal-body" id="modal-body"></div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" id="modal-confirm" onclick="closeModal()">Confirm</button>
+        <button class="btn btn-primary" id="modal-confirm">Confirm</button>
       </div>
     </div>
   </div>

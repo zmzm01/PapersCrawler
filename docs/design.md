@@ -198,6 +198,21 @@ Phase B: CrossRef 元数据
 
 **状态值**：`FetchStatus` 枚举 (`pending` → `success` / `failed` / `skipped`)
 
+### subscribers 表（邮件订阅者）
+
+```
+subscribers:
+  id              INTEGER PRIMARY KEY AUTOINCREMENT
+  email           TEXT UNIQUE NOT NULL      -- 订阅邮箱
+  name            TEXT DEFAULT ''           -- 订阅者姓名（可选）
+  active          INTEGER DEFAULT 1         -- 1=启用, 0=停用
+  delivery_method TEXT DEFAULT 'email'      -- 投递方式 (预留: email/webhook/wechat)
+  created_date    TEXT                      -- 创建时间
+  updated_date    TEXT                      -- 更新时间
+```
+
+Phase H（邮件推送）优先使用 `subscribers` 表中 `active=1` 的邮箱列表作为收件人。当表中无订阅者时，回退到 `.env` 的 `SMTP_TO_ADDRS` 配置，保证向后兼容。
+
 # 关键设计决策
 
 ## 1. Phase D 作为参考排序（不再参与过滤）
@@ -439,6 +454,7 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 | Report | `GET /report` | 勾选有 LLM 总结的论文 → 生成 Markdown 报告（写入 user/ 目录）→ 浏览器预览 + 下载 |
 | Data Sources | `GET /datasources` | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源开关。更改保存到 `data/journal_overrides.json`，不修改 publishers.yaml |
 | Logs | `GET /logs` | 日志查看（支持级别过滤，修复 innerHTML bug） |
+| Subscriptions | `GET /subscriptions` | 邮件订阅者管理（添加/删除/启用停用/发送测试邮件/从 .env 导入），Phase H 优先使用 DB 订阅者列表 |
 | Config | `GET /config` | SKIP 开关切换（影响 Pipeline 页按钮）+ 研究领域描述文本框 + 连通性测试（DeepSeek/CrossRef/MinerU 一键测试）+ MinerU Token 过期色标 + YAML 编辑器（语法校验 + 二次确认） |
 
 ## 任务执行模型
