@@ -47,6 +47,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+import requests as py_requests
 from parsel import Selector
 from cloakbrowser import launch_persistent_context
 
@@ -246,7 +247,7 @@ class BasePublisherScraper:
         if page_url:
             logger.debug(f"访问论文页面建立上下文: {page_url}")
             self.page.goto(page_url, wait_until="domcontentloaded",
-                           timeout=timeout)
+                           timeout=max(timeout, 120000))
             self.page.wait_for_timeout(5000)
 
             # 从页面提取同域 PDF 链接（解决 APS link.aps.org 跨域问题）
@@ -266,7 +267,7 @@ class BasePublisherScraper:
                 pdf_url = on_page_url
 
         # 在当前页面上下文中 fetch PDF（继承 referrer / cookie）
-        # 这是主路径，覆盖 6/7 publisher（Nature、Science、APS、Cambridge、IOP、Optica）
+        # 这是主路径，覆盖 6/7 publisher（Nature、Science、APS、Cambridge、IOP）
         logger.debug(f"下载 PDF: {pdf_url}")
         url_escaped = json.dumps(pdf_url)
         try:
@@ -279,22 +280,26 @@ class BasePublisherScraper:
             """)
             pdf_body = bytes(raw) if raw else None
         except Exception as fetch_err:
-            # 回退：浏览器原生导航下载
-            # 部分 publisher（如 AIP）的 CSP/WAF 会拦截 JavaScript fetch() API，
-            # 但允许真实的浏览器导航。goto() 模拟用户点击链接，不受 CSP 限制。
-            logger.debug(f"JS fetch failed ({fetch_err}), trying direct navigation to PDF URL")
-            response = self.page.goto(
-                pdf_url, wait_until="commit", timeout=timeout,
-            )
-            if response and response.ok:
-                content_type = response.headers.get("content-type", "")
-                if "application/pdf" in content_type:
-                    pdf_body = response.body()
-                else:
-                    logger.debug(f"PDF URL returned {content_type}, not PDF")
-                    pdf_body = None
-            else:
-                pdf_body = None
+            # 回退：Python requests + 浏览器 cookies
+            # 部分 publisher（如 AIP）的 CSP 拦截 JS fetch() API，
+            # 但 PDF URL 本身在 HTTP 层不设防（wget 可直接下载）。
+            # 从浏览器提取 cookies + User-Agent，用 Python requests 直连下载。
+            logger.debug(f"JS fetch failed ({fetch_err}), trying HTTP download with browser cookies")
+            cookies = self.context.cookies()
+            session = py_requests.Session()
+            for c in cookies:
+                session.cookies.set(
+                    c["name"], c["value"],
+                    domain=c.get("domain", ""),
+                )
+            ua = self.page.evaluate("navigator.userAgent")
+            session.headers.update({
+                "User-Agent": ua,
+                "Referer": page_url or "",
+            })
+            resp = session.get(pdf_url, timeout=120)
+            resp.raise_for_status()
+            pdf_body = resp.content
 
         if pdf_body is None or pdf_body[:5] != b'%PDF-':
             raise RuntimeError(
@@ -931,6 +936,12 @@ class OpticaScraper(BasePublisherScraper):
         - Optica 网站对非美国 IP 较为敏感，可能触发额外的反爬检测。
           建议通过 start_browser 的 proxy 参数配置美国代理，例如：
           proxy={"server": "http://127.0.0.1:10808"}
+        - Optica / Optics Express 的反爬策略具有"积累效应"：短时间连续成功
+          爬取一定篇数后会触发 CF 拦截，且成功率随连续成功数递减。
+          默认的 3-5s 页面间隔偏低，如需高频抓取建议放宽到 10-20s。
+        - optica 和 opex 都映射到 publisher: optica，共享同一 browser session
+          和连续失败熔断计数器。一个期刊被拦会连带影响另一个。
+          如两者都启用，考虑拆分为独立 publisher 标识。
     """
 
     def parse_page(self):
