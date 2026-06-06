@@ -31,10 +31,8 @@ def phase_e_llm_relevance(db):
         return
 
     domain_config = load_keywords()
-    keywords = domain_config.get("keywords", [])
-    domain_description = domain_config.get("domain_description", "")
-    if not keywords and not domain_description:
-        logger.info("Phase E: no keywords/domain config, skipping")
+    if not domain_config.get("scope_definition"):
+        logger.info("Phase E: no scope_definition config, skipping")
         return
 
     paper_tasks = db.get_pendings("llm_relevance_status")
@@ -46,7 +44,7 @@ def phase_e_llm_relevance(db):
 
     logger.info(f"Phase E: {len(paper_tasks)} papers pending")
 
-    checker = PaperRelevanceChecker(keywords, domain_description)
+    checker = PaperRelevanceChecker(domain_config)
 
     tasks = []
     skipped_no_abstract = 0
@@ -62,7 +60,9 @@ def phase_e_llm_relevance(db):
             )
             skipped_no_abstract += 1
             continue
-        prompt = checker.build_default_prompt(paper["title"] or "", abstract)
+        prompt = checker.build_default_prompt(
+            paper["title"] or "", abstract, doi=doi,
+        )
         tasks.append((paper, prompt))
 
     if skipped_no_abstract:
@@ -88,12 +88,13 @@ def phase_e_llm_relevance(db):
             try:
                 result_str = future.result()
                 result = json.loads(result_str)
-                relevant = 1 if result.get("relevant", False) else 0
-                confidence = result.get("confidence", "low")
-                reason = result.get("reason", "")
+                category = result.get("PredictedCategory", "D")
+                subfields = json.dumps(result.get("MatchedSubfields", []), ensure_ascii=False)
+                confidence = result.get("Confidence", "low")
+                notes = result.get("Notes", "")
 
                 db.update_llm_relevance(
-                    doi, relevant, confidence, reason,
+                    doi, category, subfields, confidence, notes,
                     FetchStatus.SUCCESS.value, timestamp,
                 )
                 success_count += 1
