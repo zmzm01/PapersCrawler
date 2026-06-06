@@ -4,6 +4,8 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **Review Bug 修复** | 修复 review 指出的 5 个问题：config_save_prompt 缺参数、fix_json_invalid_escapes 双重调用、Phase E2 无代理、DOI 路径穿越、Phase B 重复代码分支 | 06-06 |
+|------|------|------|
 | **WebUI 图标美化** | Font Awesome CDN 全局图标；侧边栏导航图标；按钮/卡片/架构图图标；新增 `.icon-mr`/`.icon-left` 样式 | 06-05 |
 | **Home 页重构** | 项目介绍（7 出版社 21 期刊说明）+ 技术栈标签 + 架构概览图（两行 10 阶段流水线）+ Quick Start（3 步卡片）+ 图标装饰 | 06-05 |
 | **订阅管理** | 新增 `subscribers` DB 表（email/name/active/delivery_method）；Phase H 改为 DB 收件人优先、回退 `.env`；WebUI 订阅页（添加/删除/启用停用/测试/从 .env 导入） | 06-05 |
@@ -1215,3 +1217,20 @@ page.evaluate(fetch) → 兜底
 3. 代码简化不应以丢失回退路径为代价。三层方案（主路径 → 兜底 → failed）应始终保留。
 4. 不同 publisher 的网络层行为差异巨大——CSP 策略、用户手势检测、WAF 级别各不相同。
    单一下载机制无法覆盖所有场景。
+
+# 2026-06-06 — Review Bug 修复
+
+**背景**：`docs/reviews/2026-06-06-review-suggestions.md` 提交了项目架构与代码审查报告，
+包含 5 个优先级较高的 Bug 和安全隐患。
+
+**修复清单**：
+
+| # | 问题 | 优先级 | 文件 | 修复 |
+|---|------|--------|------|------|
+| 1 | `config_save_prompt` 缺少 `request` 参数 | P0 🔴 | `src/web/app.py` | 函数签名添加 `request: Request` 参数 |
+| 2 | `fix_json_invalid_escapes` 双重调用 | P0 🔴 | `src/pipeline/phase_e.py`, `phase_f.py` | 移除 Phase E/F 中的二次修复调用；删除 `from common import fix_json_invalid_escapes` |
+| 3 | Phase E2 PDF 下载无代理 | P1 🟡 | `src/pipeline/phase_e2.py` | 按 publisher 分组，对 SCRAPER_MAP 中存在的 publisher 使用 `create_scraper(publisher)` 创建浏览器实例（含代理）；其余回退 BasePublisherScraper |
+| 4 | DOI 路径穿越 | P2 🟡 | `src/pipeline/phase_e2.py` | `safe_doi` 清洗增加 `.replace("..", "_")` |
+| 5 | Phase B 重复代码分支 | P2 🟢 | `src/pipeline/phase_b.py` | 提取通用 DB 更新到 if/else 外部，`if` 分支仅保留 warning 日志 |
+
+**测试结果**：`pytest tests/` → **99 passed**（保持不变）
