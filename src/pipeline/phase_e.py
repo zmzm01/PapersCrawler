@@ -3,10 +3,10 @@ Phase E: LLM relevance judgement.
 """
 
 import json
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+from common import fix_json_invalid_escapes
 from config import (
     SKIP_PHASE_E, MAX_PAPERS_PER_PHASE,
     load_keywords, LLM_API_CONFIG_DICT_RELE, LLM_CONCURRENT_MAX,
@@ -88,7 +88,7 @@ def phase_e_llm_relevance(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
-                result_str = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', result_str)
+                result_str = fix_json_invalid_escapes(result_str)
                 result = json.loads(result_str)
                 relevant = 1 if result.get("relevant", False) else 0
                 confidence = result.get("confidence", "low")

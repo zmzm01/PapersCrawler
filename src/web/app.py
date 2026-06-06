@@ -32,8 +32,8 @@ from fastapi.templating import Jinja2Templates
 
 from config import (
     DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
-    LOG_FILE_PATH, DATA_DIR, CONFIG_DIR,
-    load_publishers, load_keywords,
+    LOG_FILE_PATH, DATA_DIR, CONFIG_DIR, PROMPTS_DIR,
+    load_publishers, load_keywords, load_settings,
     SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
     SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
     SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
@@ -78,26 +78,29 @@ def _get_effective_skip():
 
 def _pipeline_status():
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    papers = db.get_all_papers()
-    total = len(papers)
-    cols = [
-        ("cr_metadata_fetched", "cr_metadata_fetched_status"),
-        ("publisher_page", "publisher_page_fetched_status"),
-        ("semantic_filter", "semantic_filter_status"),
-        ("llm_relevance", "llm_relevance_status"),
-        ("mineru_parse", "mineru_parse_status"),
-        ("llm_summary", "llm_summary_status"),
-    ]
-    phases = {}
-    for label, col in cols:
-        counts = {"success": 0, "failed": 0, "skipped": 0, "pending": 0}
-        for p in papers:
-            status = p[col] if p[col] else "pending"
-            counts[status] = counts.get(status, 0) + 1
-        phases[label] = counts
-    effective_skip = {k: _get_effective_skip().get(k, False) for k in PHASE_ORDER}
-    return {"total": total, "phases": phases, "effective_skip": effective_skip}
+    try:
+        db.init_db_papers()
+        papers = db.get_all_papers()
+        total = len(papers)
+        cols = [
+            ("cr_metadata_fetched", "cr_metadata_fetched_status"),
+            ("publisher_page", "publisher_page_fetched_status"),
+            ("semantic_filter", "semantic_filter_status"),
+            ("llm_relevance", "llm_relevance_status"),
+            ("mineru_parse", "mineru_parse_status"),
+            ("llm_summary", "llm_summary_status"),
+        ]
+        phases = {}
+        for label, col in cols:
+            counts = {"success": 0, "failed": 0, "skipped": 0, "pending": 0}
+            for p in papers:
+                status = p[col] if p[col] else "pending"
+                counts[status] = counts.get(status, 0) + 1
+            phases[label] = counts
+        effective_skip = {k: _get_effective_skip().get(k, False) for k in PHASE_ORDER}
+        return {"total": total, "phases": phases, "effective_skip": effective_skip}
+    finally:
+        db.conn.close()
 
 
 # Reset definitions: (columns_to_pending, cascade_info, extra_where)
@@ -237,6 +240,7 @@ def _count_reset_impact(phase: str, reset_cols: list[str]) -> dict[str, int]:
                    if c not in ("semantic_similarity_score", "semantic_best_subdomain")]
     impact = {}
     for c in status_cols:
+        db._validate_column(c)
         cur = db.conn.execute(
             f"SELECT COUNT(*) FROM papers WHERE {c} IN ('success','failed','skipped')"
         )
@@ -418,15 +422,27 @@ async def config_page(request: Request):
     keywords = load_keywords()
     skip_config = _get_effective_skip()
     overrides_raw = json.dumps(_load_skip_overrides(), indent=2)
-    config_dir = CONFIG_DIR
-    publishers_raw = (config_dir / "publishers.yaml").read_text(encoding="utf-8")
-    keywords_raw = (config_dir / "keywords.yaml").read_text(encoding="utf-8")
+    publishers_raw = (CONFIG_DIR / "publishers.yaml").read_text(encoding="utf-8")
+    keywords_raw = (CONFIG_DIR / "keywords.yaml").read_text(encoding="utf-8")
     domain_description = keywords.get("domain_description", "")
+
+    # 加载 settings.yaml
+    settings_path = CONFIG_DIR / "settings.yaml"
+    settings_raw = settings_path.read_text(encoding="utf-8") if settings_path.exists() else ""
+
+    # 加载 prompts
+    prompts = {}
+    for pname in ["summary", "relevance", "fix"]:
+        ppath = PROMPTS_DIR / f"{pname}.yaml"
+        prompts[pname] = ppath.read_text(encoding="utf-8") if ppath.exists() else ""
+
     return templates.TemplateResponse(request, "config.html", {
         "publishers": publishers, "keywords": keywords,
         "skip_config": skip_config, "overrides_raw": overrides_raw,
         "publishers_raw": publishers_raw, "keywords_raw": keywords_raw,
         "domain_description": domain_description,
+        "settings_raw": settings_raw,
+        "prompts_raw": prompts,
     })
 
 
@@ -469,6 +485,34 @@ async def config_save_keywords(request: Request):
     return JSONResponse({"ok": True, "path": str(path)})
 
 
+@app.post("/config/save-settings")
+async def config_save_settings(request: Request):
+    body = await request.json()
+    content = body.get("content", "")
+    try:
+        import yaml
+        parsed = yaml.safe_load(content)
+    except Exception as e:
+        return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
+    path = CONFIG_DIR / "settings.yaml"
+    path.write_text(content, encoding="utf-8")
+    return JSONResponse({"ok": True, "path": str(path)})
+
+
+@app.post("/config/save-prompt/{name}")
+async def config_save_prompt(name: str):
+    body = await request.json()
+    content = body.get("content", "")
+    try:
+        import yaml
+        parsed = yaml.safe_load(content)
+    except Exception as e:
+        return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
+    path = PROMPTS_DIR / f"{name}.yaml"
+    path.write_text(content, encoding="utf-8")
+    return JSONResponse({"ok": True, "path": str(path)})
+
+
 @app.get("/config/mineru-token")
 async def config_mineru_token_status():
     import base64, time
@@ -480,8 +524,7 @@ async def config_mineru_token_status():
         if len(parts) != 3:
             return JSONResponse({"ok": True, "valid": False, "error": "Invalid JWT format"})
         payload = parts[1]
-        payload += "=" * (4 - len(payload) % 4)
-        data = json.loads(base64.b64decode(payload))
+        data = json.loads(base64.urlsafe_b64decode(payload + "=="))
         exp = data.get("exp", 0)
         if not exp:
             return JSONResponse({"ok": True, "valid": True, "days_left": None})

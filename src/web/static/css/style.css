@@ -634,3 +634,9 @@ h3 {
 .sub-table .active-badge { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.4rem; }
 .sub-table .active-badge.on { background: var(--success); }
 .sub-table .active-badge.off { background: var(--failed); }
+
+/* ── Prompt cards ──────────────────────────────────────────────── */
+.prompt-tabs { display: flex; flex-direction: column; gap: 1.25rem; }
+.prompt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+.prompt-card h4 { margin: 0 0 0.5rem 0; font-size: 1rem; color: var(--primary); }
+.prompt-card .yaml-editor { min-height: 180px; }

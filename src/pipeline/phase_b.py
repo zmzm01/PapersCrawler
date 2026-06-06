@@ -50,10 +50,9 @@ def phase_b_crossref(db):
                     authors_json, crossrefPaper.published,
                     crossrefPaper.abstract or "",
                 )
-                db.update_error_message(
+                db.update_process_status(
                     paperDOI, "cr_metadata_fetched_status",
-                    FetchStatus.FAILED.value,
-                    "cr_metadata_fetched_error", "CrossRef author data missing",
+                    FetchStatus.SUCCESS.value,
                     "cr_metadata_fetched_date", timestamp,
                 )
             else:
