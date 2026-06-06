@@ -500,7 +500,7 @@ async def config_save_settings(request: Request):
 
 
 @app.post("/config/save-prompt/{name}")
-async def config_save_prompt(name: str):
+async def config_save_prompt(request: Request, name: str):
     body = await request.json()
     content = body.get("content", "")
     try:
