@@ -38,10 +38,13 @@ def phase_f_llm_summary(db):
         logger.info("Phase F: no pending papers")
         return
 
-    relevant_papers = [p for p in papers if p["llm_relevance_result"]]
+    relevant_papers = [
+        p for p in papers
+        if p.get("llm_relevance_category", "") in ("A", "B")
+    ]
 
     domain_config = load_keywords()
-    if not domain_config.get("keywords") and not domain_config.get("domain_description"):
+    if not domain_config.get("scope_definition"):
         relevant_papers = papers
 
     skipped_count = len(papers) - len(relevant_papers)

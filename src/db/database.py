@@ -107,7 +107,9 @@ class DatabaseClient:
         "mineru_parse_status", "mineru_parse_error", "mineru_parse_date",
         "report_status", "report_date",
         "semantic_similarity_score", "semantic_best_subdomain",
-        "llm_relevance_result", "llm_relevance_confidence",
+        "llm_relevance_result",  # deprecated — use llm_relevance_category
+        "llm_relevance_category", "llm_relevance_subfields",
+        "llm_relevance_confidence",
         "llm_relevance_reason", "llm_summary_result",
         "mineru_fulltext", "mineru_output_dir",
     })
@@ -218,7 +220,9 @@ class DatabaseClient:
 
             -- LLM 相关性判断
             llm_relevance_status TEXT DEFAULT 'pending',
-            llm_relevance_result INTEGER DEFAULT 0,
+            llm_relevance_result INTEGER DEFAULT 0,  -- deprecated, use category
+            llm_relevance_category TEXT,              -- A/B/C/D
+            llm_relevance_subfields TEXT,             -- JSON array of matched sub-domains
             llm_relevance_confidence TEXT,
             llm_relevance_reason TEXT,
             llm_relevance_error TEXT,
@@ -313,6 +317,16 @@ class DatabaseClient:
             self.conn.execute("ALTER TABLE papers ADD COLUMN discovery_source TEXT")
         except sqlite3.OperationalError:
             pass  # 列已存在则跳过
+
+        # ---- 迁移: 为旧数据库添加 LLM 相关性分类列 ----
+        for col_def in [
+            "llm_relevance_category TEXT",
+            "llm_relevance_subfields TEXT",
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass  # 列已存在则跳过
 
         # ---- subscribers 表（邮件订阅者） ----
         self.conn.execute("""
@@ -583,15 +597,16 @@ class DatabaseClient:
     # Phase E: LLM 相关性判断结果
     # ==================================================================
 
-    def update_llm_relevance(self, doi, result, confidence, reason, status, status_date):
+    def update_llm_relevance(self, doi, category, subfields, confidence, notes, status, status_date):
         """
         Phase E 专用: 记录 LLM 相关性判断结果。
 
         Args:
             doi:        论文 DOI
-            result:     1 表示相关, 0 表示不相关 (对应 llm_relevance_result 列)
+            category:   "A" / "B" / "C" / "D" — LLM 判定的相关性类别
+            subfields:  JSON 字符串，匹配的子领域列表
             confidence: "high" / "medium" / "low" — LLM 的置信度
-            reason:     判断理由简述 (LLM 返回的 reason 字段)
+            notes:      判断依据说明 (LLM 返回的 Notes 字段)
             status:     FetchStatus 状态值
             status_date: 处理日期时间字符串
         """
@@ -602,14 +617,15 @@ class DatabaseClient:
         self.conn.execute(
             """
             UPDATE papers
-            SET llm_relevance_result = ?,
+            SET llm_relevance_category = ?,
+                llm_relevance_subfields = ?,
                 llm_relevance_confidence = ?,
                 llm_relevance_reason = ?,
                 llm_relevance_status = ?,
                 llm_relevance_date = ?
             WHERE doi = ?
             """,
-            (result, confidence, reason, status, status_date, doi),
+            (category, subfields, confidence, notes, status, status_date, doi),
         )
         self.conn.commit()
 
@@ -805,9 +821,9 @@ class DatabaseClient:
 
     def get_relevant_papers(self):
         """
-        获取 LLM 判定为相关的论文。
+        获取 LLM 判定为相关的论文（A/B 类）。
 
-        查询条件: llm_relevance_result = 1
+        查询条件: llm_relevance_category IN ('A', 'B')
         排序: 按 RSS 日期倒序
 
         Returns:
@@ -815,7 +831,7 @@ class DatabaseClient:
         """
         cur = self.conn.execute("""
         SELECT * FROM papers
-        WHERE llm_relevance_result = 1
+        WHERE llm_relevance_category IN ('A', 'B')
           AND llm_relevance_status = 'success'
         ORDER BY paperdate_rss DESC
         """)

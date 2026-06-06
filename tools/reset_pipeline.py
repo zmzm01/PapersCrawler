@@ -48,7 +48,9 @@ RELEVANCE_RESET = [
     "llm_relevance_status = 'pending'",
     "llm_relevance_error = NULL",
     "llm_relevance_date = NULL",
-    "llm_relevance_result = NULL",
+    "llm_relevance_category = NULL",
+    "llm_relevance_subfields = NULL",
+    "llm_relevance_result = NULL",       # deprecated
     "llm_relevance_confidence = NULL",
     "llm_relevance_reason = NULL",
 ]
@@ -261,7 +263,9 @@ def cmd_reset_relevance(publisher=None, reset_all=False):
     print("    llm_relevance_status      → pending")
     print("    llm_relevance_error       → NULL")
     print("    llm_relevance_date        → NULL")
-    print("    llm_relevance_result      → NULL")
+    print("    llm_relevance_category    → NULL")
+    print("    llm_relevance_subfields   → NULL")
+    print("    llm_relevance_result      → NULL  (deprecated)")
     print("    llm_relevance_confidence  → NULL")
     print("    llm_relevance_reason      → NULL")
     print("  不受影响（保持不变）:")

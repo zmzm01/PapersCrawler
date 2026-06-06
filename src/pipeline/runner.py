@@ -66,8 +66,8 @@ def run_phases(phase_list=None, force=False):
     publishers = load_publishers()
     keywords = load_keywords()
     logger.info(f"Loaded {len(publishers)} publishers")
-    logger.info(f"Keywords: {len(keywords['keywords'])} items, "
-                f"domain: {len(keywords['domain_description'])} chars")
+    logger.info(f"Scope definition: {len(keywords.get('scope_definition', {}))} sub-domains, "
+                f"embedding: {len(keywords.get('sub_domains_embedding', {}))} items")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     AUTO_REPORT_DIR.mkdir(parents=True, exist_ok=True)
