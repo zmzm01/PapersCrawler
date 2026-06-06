@@ -19,13 +19,11 @@ llm_summarize_deepseek.py
 
 import os
 from pathlib import Path
-import sys
 import json
 import re
-import time
 import logging
 import requests
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError, LLMContextLengthExceed
 
@@ -63,93 +61,46 @@ class DeepSeekPaperSummarizer:
 
 
     # ------------------------------------------------------------------
-    # API 调用
+    # API 调用 (委托给 common.call_llm_api_with_retry)
     # ------------------------------------------------------------------
     def call_deepseek_api(self, article_text, system_prompt: str) -> str:
-        """
-        调用 DeepSeek API 生成论文结构化总结。
+        """调用 DeepSeek API 生成论文结构化总结。
 
-        DeepSeek API 关键特性说明：
+        委托给 ``common.call_llm_api_with_retry``，该函数封装了重试、
+        状态码友好提示和 JSON 转义修复逻辑。
 
-        1. Thinking Mode（思考模式）：
-           - DeepSeek-V4 的思考模式让模型在输出最终答案前进行内部推理（类似 chain-of-thought）。
-           - 在复杂的学术论文总结任务中，thinking mode 能显著提升总结质量和对物理内容的把握。
-           - 注意：开启 thinking mode 后，temperature、top_p、presence_penalty、frequency_penalty 参数不可用，
-             因为这些参数引入的随机性与思考模式的确定性推理逻辑冲突。
-           - 配置方式：payload 中设置 "thinking": {"type": "enabled"}。
-
-        2. JSON Output（JSON 模式 / 结构化输出）：
-           - DeepSeek 原生支持强制 JSON 输出，无需在 prompt 中反复强调格式要求。
-           - 配置方式：payload 中设置 "response_format": {"type": "json_object"}。
-           - 开启后，模型会确保输出为合法 JSON 对象，极大降低下游解析失败的概率。
-           - 注：部分 API 将此功能称为 "json_mode" 或 "structured output"。
-
-        API 请求 payload 结构（以 DeepSeek Chat Completions 端点为例）：
-        {
-            "model": "deepseek-v4-pro",           // 模型名（flash 更快，pro 更强）
-            "messages": [
-                {"role": "system", "content": "..."},  // 系统提示词，定义总结格式和要求
-                {"role": "user", "content": "..."},    // 用户消息，包含论文全文
-            ],
-            "thinking": {"type": "enabled"},       // 开启思考模式
-            "response_format": {"type": "json_object"}  // 强制 JSON 输出
-        }
-
-        调用流程：
-        1. 估算输入文本的 token 数（_estimate_tokens）。
-        2. 如果 force_chunk=True → 抛错（未实现），如果超限 → 抛 LLMContextLengthExceed。
-        3. 构造请求头（Bearer Token 认证）和 payload，发送 POST 请求。
-        4. 检查 HTTP 状态码，解析响应 JSON，提取 content 字段返回。
-
-        异常处理策略：
-        - 网络失败（DNS、超时、连接拒绝、HTTP 错误） → LLMAPICallError
-        - 响应数据缺少预期字段（choices[0].message.content 不存在） → LLMResponseParseError
+        本方法在此基础上增加了 token 估算和分块检查。
 
         Parameters
         ----------
         article_text : str
             文章全文（通常是 Markdown 或纯文本格式）
         system_prompt : str
-            系统提示词，包含总结格式要求、字段定义、输出规范等。详见模块底部的 SUMMARIES_PROMPT 示例。
+            系统提示词。
 
         Returns
         -------
         content : str
-            API 返回的 JSON 字符串，结构为：
-            {
-                "one_sentence": str,              // 一句话概述
-                "motivation_and_goal": str,       // 研究动机与目标
-                "key_setup_and_method": str,      // 关键方法与设置
-                "main_results_and_physics": str,  // 主要结果与物理内涵（Markdown 格式）
-                "take_home_message": str          // 要点总结
-            }
-        ---
+            API 返回的 JSON 字符串。
         """
+        from common import call_llm_api_with_retry
+
         config = self.llm_api_config
         text = article_text
 
-        # 估算 token 数，用于判断是否超过限制
         total_tokens = self._estimate_tokens(text)
-
-        # 不强制分块且全文在单块容量内 → 一次性总结
         if self.force_chunk:
-            # 分块逻辑尚未实现，强制分块时直接报错
             raise ValueError("此方法未实现.")
         if total_tokens > self.max_chunk_tokens:
-            # 文本超出单块容量，提醒用户文本可能超过模型上下文窗口
-            raise LLMContextLengthExceed(f"估计文本长度达到 {total_tokens} tokens 可能超过 DeepSeek-V4 上下文长度限制.")
+            raise LLMContextLengthExceed(
+                f"估计文本长度达到 {total_tokens} tokens "
+                f"可能超过上下文长度限制."
+            )
 
-        # 构造 HTTP 请求头
-        # 使用 Bearer Token 认证——这是 DeepSeek API 的标准认证方式
         headers = {
             "Authorization": f"Bearer {config['api_key']}",
             "Content-Type": "application/json",
         }
-        # 构造 API 请求 payload
-        # - model: 默认 "deepseek-v4-pro"（增强推理能力，适合复杂的论文总结任务）
-        # - messages: system 角色定义任务，user 角色提供论文全文
-        # - thinking: 启用思考模式（默认 "enabled"），提升总结质量
-        # - response_format: json_object 模式，强制输出合法 JSON
         payload = {
             "model": config.get("model", "deepseek-v4-pro"),
             "messages": [
@@ -159,76 +110,7 @@ class DeepSeekPaperSummarizer:
             "thinking": {"type": config.get("thinking", "enabled")},
             "response_format": {"type": "json_object"},
         }
-
-        last_error = None
-        for attempt in range(2):
-            try:
-                t0 = time.time()
-                resp = requests.post(
-                    config["api_url"],
-                    headers=headers,
-                    json=payload,
-                    timeout=config.get("timeout", 300),
-                )
-                t1 = time.time()
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-
-                logger = logging.getLogger(__name__)
-
-                # 验证 inner JSON 是否合法，尝试正则修复
-                try:
-                    json.loads(content)
-                except json.JSONDecodeError:
-                    fixed = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', content)
-                    try:
-                        json.loads(fixed)
-                        content = fixed
-                        logger.debug("正则修复 inner JSON 成功")
-                    except json.JSONDecodeError:
-                        # 修复后仍非法，交给重试循环
-                        raise json.JSONDecodeError(
-                            f"Invalid escape after fix: {fixed[-200:]}",
-                            fixed, 0
-                        )
-
-                logger.info(
-                    f"DeepSeek Summarize API 响应耗时 {t1-t0:.1f}s, "
-                    f"输入 {len(article_text)} 字符, 输出 {len(content)} 字符"
-                )
-                return content
-            except requests.exceptions.RequestException as e:
-                last_error = e
-                status_code = getattr(e.response, 'status_code', None)
-                if status_code == 401:
-                    msg = f"DeepSeek API Key 错误 (401)，请检查 .env 中的 DEEPSEEK_API_KEY"
-                elif status_code == 402:
-                    msg = f"DeepSeek 账号余额不足 (402)，请前往 platform.deepseek.com 充值"
-                elif status_code == 429:
-                    msg = f"DeepSeek 请求速率上限 (429)，可降低 LLM_CONCURRENT_MAX"
-                elif status_code == 503:
-                    msg = f"DeepSeek 服务器繁忙 (503)"
-                elif status_code:
-                    msg = f"DeepSeek API HTTP {status_code}"
-                else:
-                    msg = str(e)
-                if attempt == 0:
-                    logger.debug(f"API 失败 ({msg})，{2**attempt}s 后重试")
-                    time.sleep(2 ** attempt)
-                    continue
-            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
-                last_error = e
-                if attempt == 0:
-                    logger.debug(f"API 响应异常，{2**attempt}s 后重试: {e}")
-                    time.sleep(2 ** attempt)
-                    continue
-        if isinstance(last_error, requests.exceptions.RequestException):
-            status_code = getattr(last_error.response, 'status_code', '?')
-            raise LLMAPICallError(
-                f"DeepSeek API 失败 (HTTP {status_code}): {last_error}"
-            ) from last_error
-        else:
-            raise LLMResponseParseError(f"API 返回结构异常: {last_error}") from last_error
+        return call_llm_api_with_retry(config, headers, payload)
 
 
     # ------------------------------------------------------------------
@@ -314,26 +196,31 @@ class FormulaFixer:
     修复失败时回退原内容，不抛异常。
     """
 
-    FIX_PROMPT = r"""你是一个 LaTeX 公式格式修正助手。下面是一段学术文本，请检查并修复其中的 LaTeX 公式格式问题。
+    _FIX_PROMPT_FALLBACK = (
+        "你是一个 LaTeX 公式格式修正助手。下面是一段学术文本，"
+        "请检查并修复其中的 LaTeX 公式格式问题。\n\n"
+        "【转换规则】\n"
+        "1. 将所有 Unicode 数学符号转换为对应的 LaTeX 命令\n"
+        "2. 修复裸露的 LaTeX 命令\n"
+        "3. 修复缺少反斜杠的分隔符\n\n"
+        "【修正规则】\n"
+        "- 行内公式必须用 \\(...\\) 包裹，独立公式必须用 \\[...\\] 包裹\n"
+        "- 不要改变文本内容、语序、标点\n"
+        "- 输出中不应保留任何数学类 Unicode 字符\n\n"
+        "只输出修正后的文本，不要包含任何额外解释："
+    )
 
-【转换规则】
-1. 将所有 Unicode 数学符号转换为对应的 LaTeX 命令：
-   - 希腊字母: α→\alpha, β→\beta, γ→\gamma, δ→\delta, ε→\varepsilon, 及对应大写
-   - 上标/下标: ²→^2, ³→^3, ⁰→^0, ₀→_0, ₙ→_n, ₓ→_x
-   - 关系运算符: ≈→\approx, ≠→\neq, ≤→\leq, ≥→\geq, ≡→\equiv
-   - 二元运算符: ±→\pm, ×→\times, ÷→\div, ·→\cdot
-   - 箭头: →→\rightarrow, ←→\leftarrow, ⇒→\Rightarrow, ⇔→\leftrightarrow
-   - 其他常用: ∂→\partial, ∇→\nabla, ∞→\infty, ℏ→\hbar, ∈→\in, ∉→\notin, ∀→\forall, ∃→\exists, √→\sqrt, ∝→\propto, ∠→\angle, ⊥→\perp
+    def _get_fix_prompt(self) -> str:
+        """获取公式修正提示词。
 
-2. 修复裸露的 LaTeX 命令：缺少分隔符的 \alpha 应改为 \(\alpha\)
-3. 修复缺少反斜杠的分隔符：(\alpha) 应改为 \(\alpha\)，[E=mc^2] 应改为 \[E=mc^2\]
-
-【修正规则】
-- 行内公式必须用 \(...\) 包裹，独立公式必须用 \[...\] 包裹
-- 不要改变文本内容、语序、标点
-- 输出中不应保留任何数学类 Unicode 字符，仅允许普通 ASCII 文本和 LaTeX 命令
-
-只输出修正后的文本，不要包含任何额外解释："""
+        优先从 configs/prompts/fix.yaml 加载，失败时使用内嵌后备值。
+        结果缓存在类属性中以减少文件 I/O。
+        """
+        if not hasattr(FormulaFixer, '_fix_prompt_cache'):
+            from config import load_prompt
+            loaded = load_prompt("fix")
+            FormulaFixer._fix_prompt_cache = loaded if loaded else self._FIX_PROMPT_FALLBACK
+        return FormulaFixer._fix_prompt_cache
 
     def __init__(self, llm_api_config: Dict[str, Any], force: bool = False):
         self.config = llm_api_config
@@ -411,7 +298,7 @@ class FormulaFixer:
         payload = {
             "model": self.config.get("model", "deepseek-v4-flash"),
             "messages": [
-                {"role": "user", "content": self.FIX_PROMPT + "\n\n" + text},
+                {"role": "user", "content": self._get_fix_prompt() + "\n\n" + text},
             ],
             "thinking": {"type": "disabled"},
         }
@@ -441,33 +328,24 @@ if __name__ == "__main__":
         "timeout": 300,
     }
 
-    # 系统提示词：定义总结的 JSON 格式、字段含义、内容要求和 Markdown 转义规则
-    SUMMARIES_PROMPT = """
-    你是一位专业的理论/实验物理学家，尤其擅长激光等离子体物理。请根据提供的论文全文，生成一个 JSON 格式的结构化总结。
-
-    【输出格式】
-    严格输出合法 JSON 对象，不包含任何额外文字或注释。JSON 对象的格式与字段内容要求如下：
-
-    {
-    "one_sentence": "用一句话说明：本文采用什么方法/装置，研究了什么物理问题，得到了什么核心结论",
-    "motivation_and_goal": "研究动机、要解决的具体物理问题、前人工作的缺口或争议，以及本文的明确目标",
-    "key_setup_and_method": "详细描述实验/理论/模拟方法与关键参数。例如激光参数（波长、能量、脉宽、焦斑）、靶型、诊断设备，或模拟代码（PIC、流体）与网格设置。如有核心公式，请用 LaTeX 呈现，并解释符号含义",
-    "main_results_and_physics": "Markdown 格式字符串，描述 2-4 个主要结果及其背后的物理机制。每个结果应包含：观测到的现象、关键定量数据（如能量、转换效率、标度律指数），以及物理解释或支持的理论模型",
-    "take_home_message": "本文对领域的主要贡献或启示，并至少指出 1 条明确局限"
-    }
-
-    【内容要求】
-    1. 所有字段必须用中文学术语言，信息密度高，不遗漏关键物理内涵。
-    2. 如果某项信息在论文中未提及，对应字段的值必须设为 "未提供"。绝不编造内容。
-    3. 反斜杠转义规则：JSON 字符串中，每个反斜杠必须双写。行内公式必须用 \\\\(...\\\\) 包裹，禁止用 $...$。独立公式必须用 \\\\\\[...\\\\\\] 包裹，禁止用 $$...$$。
-    4. 禁止使用复杂 LaTeX 环境：禁止 \\begin{} / \\end{}（如 cases、aligned 等），禁止 \\\\ 换行。公式仅限 \\frac、\\sqrt、\\int、\\sum、\\partial 等基本命令及上标/下标/希腊字母。
-    5. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
-
-    【main_results_and_physics 字段的 Markdown 要求】
-    - 使用标准 Markdown 语法：二级标题 ##，粗体 **，斜体 *，行内代码 `，列表 -，引用 >。
-    - 每个结果建议自成一段，用标题或列表区分。
-    - 转义规则同上：反斜杠写双反斜杠，换行写 \\n。
-    """
+    # 从配置加载系统提示词（如文件不存在则使用内嵌后备值）
+    from config import load_prompt
+    _prompt = load_prompt("summary")
+    if not _prompt:
+        # 内嵌后备值（不含 Python 转义干扰）
+        _prompt = (
+            "你是一位专业的理论/实验物理学家，尤其擅长激光等离子体物理。"
+            "请根据提供的论文全文，生成一个 JSON 格式的结构化总结。\n\n"
+            "【输出格式】\n"
+            '严格输出合法 JSON 对象，不包含任何额外文字或注释。\n'
+            "【内容要求】\n"
+            "1. 所有字段必须用中文学术语言\n"
+            "2. 未提及的信息设为 '未提供'\n"
+            "3. 反斜杠必须双写\n"
+            "4. 禁止 \\begin{} / \\end{} 等复杂环境\n"
+            "5. 换行用 \\n 表示"
+        )
+    SUMMARIES_PROMPT = _prompt
     # 示例：请先设置 export DEEPSEEK_API_KEY="your-key"
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT)
     paperMDpath = Path("/home/user/Code/PapersCrawler/TEST/MinerU_Paper_Parser/qdgp-tydj/full.md")

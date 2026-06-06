@@ -19,7 +19,7 @@ from processors.paper_report_generator import (
     generate_report,
     generate_markdown,
     generate_html,
-    _fix_latex_backslashes,
+    _fix_latex_backslashes_for_display,
     _adjust_headings,
     _process_results_markdown,
     _authors_str,
@@ -51,14 +51,14 @@ def _sample_paper():
 def test_fix_latex_backslashes():
     """双反斜杠应转为单反斜杠。"""
     text = "\\\\omega = 2\\\\pi f"
-    fixed = _fix_latex_backslashes(text)
+    fixed = _fix_latex_backslashes_for_display(text)
     assert fixed == "\\omega = 2\\pi f"
 
 
 def test_fix_latex_no_backslashes():
     """无反斜杠的文本应保持不变。"""
     text = "No special chars"
-    assert _fix_latex_backslashes(text) == text
+    assert _fix_latex_backslashes_for_display(text) == text
 
 
 # ---- 标题调整 ----

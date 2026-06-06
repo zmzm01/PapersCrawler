@@ -3,10 +3,10 @@ Phase F: LLM paper summarization.
 """
 
 import json
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+from common import fix_json_invalid_escapes
 from config import (
     SKIP_PHASE_F, MAX_PAPERS_PER_PHASE,
     load_keywords, LLM_API_CONFIG_DICT_SUMM, LLM_API_CONFIG_DICT_RELE,
@@ -45,9 +45,13 @@ def phase_f_llm_summary(db):
     if not domain_config.get("keywords") and not domain_config.get("domain_description"):
         relevant_papers = papers
 
+    skipped_count = len(papers) - len(relevant_papers)
     if not relevant_papers:
-        logger.info("Phase F: no relevant papers to summarize")
+        logger.info(f"Phase F: no relevant papers to summarize ({skipped_count} skipped)")
         return
+
+    if skipped_count:
+        logger.info(f"Phase F: {skipped_count} papers skipped (not relevant)")
 
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
     fixer = None
@@ -89,7 +93,7 @@ def phase_f_llm_summary(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
-                result_str = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', result_str)
+                result_str = fix_json_invalid_escapes(result_str)
                 parsed = json.loads(result_str)
                 if fixer:
                     logger.debug(f"FormulaFixer: [{doi}] 检查 5 个字段")

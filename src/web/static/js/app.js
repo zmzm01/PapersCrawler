@@ -141,6 +141,11 @@ const I18N = {
     'subscriptions.test_failed': '测试邮件发送失败: {msg}',
     'subscriptions.delete_confirm': '确定要删除 {email} 吗？',
     'subscriptions.empty': '暂无订阅者。添加一个或从 .env 导入。',
+
+    'config.settings_title': 'settings.yaml',
+    'config.settings_hint': '运行参数：流水线、爬虫、LLM API、FormulaFixer 等设置。修改后需重启流水线。',
+    'config.prompts_title': 'LLM 提示词',
+    'config.prompts_hint': 'LLM 各阶段的提示词模板。格式必须包含 system_prompt 键。修改后下次运行生效。',
   },
 
   en: {
@@ -223,6 +228,10 @@ const I18N = {
     'config.save_confirm': 'Save to {file}? This will overwrite the file.',
     'config.syntax_error': 'YAML syntax error: {msg}',
     'config.saved': 'Saved to {path}',
+    'config.settings_title': 'settings.yaml',
+    'config.settings_hint': 'Runtime parameters: pipeline, publisher, LLM API, FormulaFixer. Changes require restart.',
+    'config.prompts_title': 'LLM Prompts',
+    'config.prompts_hint': 'Prompt templates for each LLM phase. Must contain a <code>system_prompt</code> key.',
 
     'home.subtitle': 'Academic paper auto-tracking &amp; push system',
     'home.intro_title': 'About',
