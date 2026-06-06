@@ -108,12 +108,12 @@ def test_update_publisher_page(db):
 # ---- Phase E: LLM 相关性 ----
 
 def test_update_llm_relevance(db):
-    """验证 LLM 相关性结果更新。"""
+    """验证 LLM 相关性结果更新（新 A/B/C/D 格式）。"""
     db.insert_rss_basicinfo("10.0000/e", "T", "http://e", "J", "pub", "2025")
-    db.update_llm_relevance("10.0000/e", 1, "high", "Very relevant",
+    db.update_llm_relevance("10.0000/e", "A", '["test"]', "high", "Very relevant",
                             FetchStatus.SUCCESS.value, "2025")
     papers = db.get_all_papers()
-    assert papers[0]["llm_relevance_result"] == 1
+    assert papers[0]["llm_relevance_category"] == "A"
     assert papers[0]["llm_relevance_confidence"] == "high"
     assert papers[0]["llm_relevance_status"] == "success"
 
@@ -156,12 +156,12 @@ def test_get_pendings(db):
 
 
 def test_get_relevant_papers(db):
-    """验证 get_relevant_papers 只返回判定为相关的论文。"""
+    """验证 get_relevant_papers 只返回 A/B 类论文。"""
     db.insert_rss_basicinfo("10.0000/r1", "R1", "http://r1", "J", "pub", "2025-01")
     db.insert_rss_basicinfo("10.0000/r2", "R2", "http://r2", "J", "pub", "2025-02")
-    db.update_llm_relevance("10.0000/r1", 1, "high", "Yes",
+    db.update_llm_relevance("10.0000/r1", "A", '["LWFA"]', "high", "Yes",
                             FetchStatus.SUCCESS.value, "2025")
-    db.update_llm_relevance("10.0000/r2", 0, "high", "No",
+    db.update_llm_relevance("10.0000/r2", "D", '[]', "high", "No",
                             FetchStatus.SUCCESS.value, "2025")
     relevant = db.get_relevant_papers()
     assert len(relevant) == 1

@@ -23,12 +23,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from processors.paper_relevance import PaperRelevanceChecker
 
 
+# ---- Helper: minimal keywords dict ----
+
+def _make_keywords(keyword_list):
+    """Build a minimal keywords dict for PaperRelevanceChecker."""
+    return {
+        "scope_definition": {
+            "test_domain": {
+                "description": "A test research domain.",
+                "topics": keyword_list,
+            }
+        },
+        "irrelevant_fields": {"description": "", "topics": []},
+        "sub_domains_embedding": {},
+    }
+
+
 # ---- Keyword match counting ----
 
 def test_keyword_match_count_full_match():
     """All keywords should be counted when found in title+abstract."""
-    keywords = ["laser plasma", "wakefield", "proton acceleration"]
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(_make_keywords(
+        ["laser plasma", "wakefield", "proton acceleration"]
+    ))
 
     title = "Laser Plasma Wakefield Acceleration for Proton Generation"
     abstract = "We study laser plasma interactions with proton acceleration."
@@ -39,8 +56,7 @@ def test_keyword_match_count_full_match():
 
 def test_keyword_match_count_partial_no_match():
     """Partial word match should not count (word boundary protection)."""
-    keywords = ["plasma"]
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(_make_keywords(["plasma"]))
 
     title = "Plasmonic resonance in nanostructures"
     count = checker.keyword_match_count(title, "")
@@ -49,8 +65,7 @@ def test_keyword_match_count_partial_no_match():
 
 def test_keyword_match_count_case_insensitive():
     """Matching should be case-insensitive."""
-    keywords = ["laser"]
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(_make_keywords(["laser"]))
 
     count = checker.keyword_match_count("LASER cooling", "")
     assert count == 1
@@ -58,8 +73,7 @@ def test_keyword_match_count_case_insensitive():
 
 def test_keyword_match_count_no_match():
     """Unrelated paper should return 0."""
-    keywords = ["laser", "plasma"]
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(_make_keywords(["laser", "plasma"]))
 
     count = checker.keyword_match_count(
         "Gravitational waves from binary systems",
@@ -70,15 +84,14 @@ def test_keyword_match_count_no_match():
 
 def test_keyword_match_count_empty_keywords():
     """Empty keyword list should return 0."""
-    checker = PaperRelevanceChecker([])
+    checker = PaperRelevanceChecker(_make_keywords([]))
     count = checker.keyword_match_count("Laser plasma", "Abstract")
     assert count == 0
 
 
 def test_keyword_match_count_unique_keywords():
     """Duplicate keyword hits should only count once."""
-    keywords = ["laser"]
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(_make_keywords(["laser"]))
 
     count = checker.keyword_match_count("Laser Laser LASER",
                                          "the laser experiment laser")
@@ -88,23 +101,28 @@ def test_keyword_match_count_unique_keywords():
 # ---- Prompt construction ----
 
 def test_build_default_prompt():
-    """Verify LLM prompt construction includes keywords, title, abstract."""
-    keywords = ["laser plasma", "wakefield"]
-    checker = PaperRelevanceChecker(keywords)
+    """Verify LLM prompt construction includes scope, title, abstract."""
+    checker = PaperRelevanceChecker(_make_keywords(
+        ["laser plasma", "wakefield"]
+    ))
 
-    prompt = checker.build_default_prompt("Laser Wakefield", "Acceleration physics")
+    prompt = checker.build_default_prompt(
+        "Laser Wakefield", "Acceleration physics", doi="10.1234/test"
+    )
 
-    assert "laser plasma" in prompt
-    assert "wakefield" in prompt
+    assert "test_domain" in prompt
     assert "Laser Wakefield" in prompt
     assert "Acceleration physics" in prompt
-    assert "relevant" in prompt
+    assert "PredictedCategory" in prompt
+    assert "MatchedSubfields" in prompt
+    assert "10.1234/test" in prompt
 
 
 def test_init_with_whitespace_keywords():
     """Keywords with whitespace should be trimmed and deduplicated."""
-    keywords = ["  laser  ", "plasma", "", "  wakefield  "]
-    checker = PaperRelevanceChecker(keywords)
+    checker = PaperRelevanceChecker(_make_keywords(
+        ["  laser  ", "plasma", "", "  wakefield  "]
+    ))
     assert len(checker.keywords) == 3
     assert "laser" in checker.keywords
 
@@ -112,12 +130,14 @@ def test_init_with_whitespace_keywords():
 # ---- DeepSeek API call (mocked) ----
 
 def test_call_deepseek_api_mocked():
-    """Mock DeepSeek API response and verify JSON parsing."""
-    keywords = ["laser plasma", "wakefield acceleration"]
-    checker = PaperRelevanceChecker(keywords)
+    """Mock DeepSeek API response and verify JSON parsing with new format."""
+    checker = PaperRelevanceChecker(_make_keywords(
+        ["laser plasma", "wakefield acceleration"]
+    ))
     prompt = checker.build_default_prompt(
         "Laser wakefield acceleration of electrons",
-        "We demonstrate electron acceleration to GeV energies using laser wakefields."
+        "We demonstrate electron acceleration to GeV energies using laser wakefields.",
+        doi="10.1103/PhysRevLett.136.123456",
     )
     config = {
         "api_url": "https://api.deepseek.com/chat/completions",
@@ -134,9 +154,10 @@ def test_call_deepseek_api_mocked():
             "choices": [{
                 "message": {
                     "content": json.dumps({
-                        "relevant": True,
-                        "confidence": "high",
-                        "reason": "Directly matches research focus on laser-plasma acceleration"
+                        "PredictedCategory": "A",
+                        "MatchedSubfields": ["Laser Wakefield Acceleration"],
+                        "Confidence": "high",
+                        "Notes": "Direct LWFA experiment with GeV electron acceleration.",
                     })
                 }
             }]
@@ -146,9 +167,10 @@ def test_call_deepseek_api_mocked():
         result_str = checker.call_deepseek_api(prompt, config)
         result = json.loads(result_str)
 
-        assert result["relevant"] is True
-        assert result["confidence"] == "high"
-        assert "laser-plasma" in result["reason"]
+        assert result["PredictedCategory"] == "A"
+        assert result["MatchedSubfields"] == ["Laser Wakefield Acceleration"]
+        assert result["Confidence"] == "high"
+        assert "GeV" in result["Notes"]
 
 
 # ---- Semantic similarity filter ----
@@ -166,9 +188,17 @@ def semantic_filter():
         sf = SemanticFilter(
             model_name=SEMANTIC_MODEL_PATH,
             sub_domains={
-                "ion_acceleration": "Laser-driven ion acceleration using PW-class lasers.",
-                "beam_transport": "High-gradient plasma lens for compact beam transport.",
-                "control_system": "Intelligent accelerator control with machine learning.",
+                "laser_wakefield_acceleration": (
+                    "Laser-driven wakefield acceleration of electrons "
+                    "to GeV energies in plasma channels."
+                ),
+                "laser_driven_ion_acceleration": (
+                    "High-power laser interaction with targets to "
+                    "accelerate ions via TNSA and RPA mechanisms."
+                ),
+                "beam_transport": (
+                    "High-gradient plasma lens for compact beam transport."
+                ),
             },
         )
         return sf

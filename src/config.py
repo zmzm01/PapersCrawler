@@ -326,42 +326,77 @@ def load_keywords():
     """
     加载研究领域配置。
 
-    从 configs/keywords.yaml 读取关键词和领域描述。
-    支持三种格式:
-      1. 纯列表: ["keyword1", "keyword2", ...]
-         → domain_description 回退为关键词拼接
-      2. 字典 {"keywords": [...], "domain_description": "..."}
-         → 有 domain_description 则使用，无则回退
-      3. 字典 {"keywords": [...], "domain_description": "...", "sub_domains": {...}}
-         → sub_domains 为二维映射（标签 → 段落），供 Phase D 语义相似度使用
+    从 configs/keywords.yaml 读取领域定义和关键词配置。
+    返回结构化字典，包含 scope_definition（各子领域描述+关键词）、
+    irrelevant_fields（不相关领域定义）和 sub_domains_embedding（Phase D 用浓缩英文段落）。
 
     Returns:
-        dict: {"keywords": list[str], "domain_description": str, "sub_domains": dict[str, str]}
-              文件不存在或为空时返回 {"keywords": [], "domain_description": "", "sub_domains": {}}
+        dict: {
+            "scope_definition": dict[str, {"description": str, "topics": list[str]}],
+            "irrelevant_fields": {"description": str, "topics": list[str]},
+            "sub_domains_embedding": dict[str, str],
+        }
+              文件不存在或为空时返回全空结构。
     """
     path = CONFIG_DIR / "keywords.yaml"
+    empty = {
+        "scope_definition": {},
+        "irrelevant_fields": {"description": "", "topics": []},
+        "sub_domains_embedding": {},
+    }
     if not path.exists():
-        return {"keywords": [], "domain_description": "", "sub_domains": {}}
+        return empty
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if data is None:
-        return {"keywords": [], "domain_description": "", "sub_domains": {}}
+        return empty
+    return {
+        "scope_definition": data.get("scope_definition", {}),
+        "irrelevant_fields": data.get("irrelevant_fields", {"description": "", "topics": []}),
+        "sub_domains_embedding": data.get("sub_domains_embedding", {}),
+    }
 
-    # 纯列表格式 → 包装为 dict
-    if isinstance(data, list):
-        keywords = data
-        domain_description = ""
-        sub_domains = {}
-    else:
-        keywords = data.get("keywords", [])
-        domain_description = data.get("domain_description", "")
-        sub_domains = data.get("sub_domains", {})
 
-    # 未提供 domain_description 时回退到关键词拼接
-    if not domain_description and keywords:
-        domain_description = "研究领域涵盖：" + ", ".join(keywords)
+def build_scope_block(scope_definition, irrelevant_fields):
+    """将 scope_definition 格式化为 LLM prompt 中可用的文本块。
 
-    return {"keywords": keywords, "domain_description": domain_description, "sub_domains": sub_domains}
+    Parameters
+    ----------
+    scope_definition : dict
+        key 为子领域标识，value 为 {"description": str, "topics": list[str]}
+    irrelevant_fields : dict
+        {"description": str, "topics": list[str]}
+
+    Returns
+    -------
+    str
+        格式化后的文本块，可直接嵌入 LLM prompt。
+    """
+    lines = [
+        "# Research Scope Definition",
+        "",
+    ]
+    for key, section in scope_definition.items():
+        lines.append(f"# Sub-Domain: {key}")
+        lines.append(section.get("description", "").strip())
+        lines.append("")
+        lines.append("涉及方向包括：")
+        for t in section.get("topics", []):
+            lines.append(f"- {t}")
+        lines.append("")
+
+    irr = irrelevant_fields or {}
+    irr_desc = irr.get("description", "").strip()
+    if irr_desc or irr.get("topics"):
+        lines.append("# Irrelevant Fields")
+        if irr_desc:
+            lines.append(irr_desc)
+            lines.append("")
+        for t in irr.get("topics", []):
+            lines.append(f"- {t}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def load_email_config():
