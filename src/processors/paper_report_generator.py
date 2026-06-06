@@ -11,7 +11,7 @@ paper_report_generator.py (v2)
 模块组成概览：
 
 【辅助函数（private helpers）】
-- _fix_latex_backslashes: 将双反斜杠还原为单反斜杠，修复 LLM 输出中 LaTeX 命令的转义问题。
+- _fix_latex_backslashes_for_display: 将双反斜杠还原为单反斜杠，修复 LLM 输出中 LaTeX 命令的转义问题（单向，仅用于显示）。
 - _process_text_for_markdown: 处理普通文本字段，修复 LaTeX 并将 \n 转为 Markdown 强制换行（行尾两个空格 + 换行）。
 - _process_text_for_html: 处理普通文本字段用于 HTML 输出（修复 LaTeX → HTML 转义 → \n 替换为 <br>）。
 - _adjust_headings: 标题重定级算法——将 Markdown 文本中的内部标题上移/下移若干级别。
@@ -30,14 +30,17 @@ from typing import Dict, List, Union, Optional
 import re
 
 
-def _fix_latex_backslashes(text: str) -> str:
+def _fix_latex_backslashes_for_display(text: str) -> str:
     """
-    将双反斜杠 \\\\ 替换为单反斜杠 \\，恢复 LaTeX 命令。
+    将双反斜杠 \\\\ 替换为单反斜杠 \\，恢复 LaTeX 命令用于显示。
 
     为什么需要这个函数：
     DeepSeek API 的 JSON Output 模式下，LaTeX 命令中的反斜杠（如 \\omega, \\frac）会被 JSON 序列化
     转义为双反斜杠（\\omega, \\frac）。这是因为 JSON 规范要求字符串中的反斜杠用 \\ 表示。
     在生成可读报告时，需要将这些双反斜杠还原为正常的 LaTeX 语法。
+
+    警告：此转换是单向（lossy）的——还原后的文本无法再安全地通过 JSON 序列化往返。
+    仅用于最终报告渲染显示场景。
 
     示例：
     - 输入: "电子能量 \\\\(E = \\\\gamma m c^2\\\\)"  →  输出: "电子能量 \\(E = \\gamma m c^2\\)"
@@ -59,7 +62,7 @@ def _process_text_for_markdown(text: str) -> str:
     - 输入: "第一行\\n第二行\\n第三行"  →  输出: "第一行  \\n第二行  \\n第三行"
     （注意：每行末尾增加了两个空格，配合换行符形成 Markdown hard break）
     """
-    text = _fix_latex_backslashes(text)
+    text = _fix_latex_backslashes_for_display(text)
     lines = text.split('\n')
     return '  \n'.join(lines)
 
@@ -153,7 +156,7 @@ def _process_results_markdown(text: str, base_heading_level: int = 4) -> str:
     专门处理 main_results_and_physics 字段：
 
     处理步骤（按顺序）：
-    1. _fix_latex_backslashes: 修复 LLM JSON 输出中的双反斜杠
+    1. _fix_latex_backslashes_for_display: 修复 LLM JSON 输出中的双反斜杠
     2. _adjust_headings: 调整内部标题层级，使其适配报告的主体结构
     3. 将 \\n 转换为 Markdown 强制换行（行尾两个空格 + 换行符）
 
@@ -174,7 +177,7 @@ def _process_results_markdown(text: str, base_heading_level: int = 4) -> str:
     str
         处理后的 Markdown 文本
     """
-    text = _fix_latex_backslashes(text)
+    text = _fix_latex_backslashes_for_display(text)
     text = _adjust_headings(text, base_level=base_heading_level)
     lines = text.split('\n')
     text = '  \n'.join(lines)
@@ -195,7 +198,7 @@ def _process_text_for_html(text: str) -> str:
     如需 HTML 格式的标题层次，建议使用 Markdown → HTML 转换器（如 markdown 库）。
     """
     import html
-    text = _fix_latex_backslashes(text)
+    text = _fix_latex_backslashes_for_display(text)
     text = html.escape(text)     # HTML 实体转义，防止注入
     text = text.replace('\n', '<br>\n')
     return text

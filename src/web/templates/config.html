@@ -66,6 +66,30 @@
   <span id="keywords-status" class="save-status"></span>
 </div>
 
+<h3><i class="fa-solid fa-gear icon-mr"></i><span data-i18n="config.settings_title">settings.yaml</span></h3>
+<p class="text-muted" data-i18n="config.settings_hint">Runtime parameters: pipeline, publisher, LLM API, FormulaFixer settings. Changes require pipeline restart to take effect.</p>
+<textarea class="yaml-editor" id="settings-editor" rows="20">{{ settings_raw }}</textarea>
+<div class="editor-actions">
+  <button class="btn btn-sm btn-primary" onclick="saveYaml('settings')" data-i18n="config.save">Save</button>
+  <span id="settings-status" class="save-status"></span>
+</div>
+
+<h3><i class="fa-solid fa-message icon-mr"></i><span data-i18n="config.prompts_title">LLM Prompts</span></h3>
+<p class="text-muted" data-i18n="config.prompts_hint">Prompt templates for LLM phases. Edit with caution — format must be valid YAML with a <code>system_prompt</code> key. Changes take effect on next pipeline run.</p>
+
+<div class="prompt-tabs">
+  {% for pname in ['summary', 'relevance', 'fix'] %}
+  <div class="prompt-card">
+    <h4>{{ pname }}.yaml</h4>
+    <textarea class="yaml-editor prompt-editor" id="prompt-{{ pname }}" rows="12">{{ prompts_raw[pname] }}</textarea>
+    <div class="editor-actions">
+      <button class="btn btn-sm btn-primary" onclick="savePrompt('{{ pname }}')" data-i18n="config.save">Save</button>
+      <span id="prompt-{{ pname }}-status" class="save-status"></span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
 <script>
 async function toggleSkip(phase) {
   const r = await fetch('/config/skip-toggle/' + phase, { method: 'POST' });
@@ -78,13 +102,21 @@ async function toggleSkip(phase) {
   }
 }
 
+const SETTINGS_ENDPOINTS = {
+  'publishers': '/config/save-publishers',
+  'keywords': '/config/save-keywords',
+  'settings': '/config/save-settings',
+};
+
 async function saveYaml(name) {
   const editorId = name + '-editor';
   const statusId = name + '-status';
   const content = document.getElementById(editorId).value;
   const status = document.getElementById(statusId);
 
-  const validateR = await fetch('/config/save-' + name, {
+  const endpoint = SETTINGS_ENDPOINTS[name] || '/config/save-' + name;
+
+  const validateR = await fetch(endpoint, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({content: content}),
@@ -98,7 +130,26 @@ async function saveYaml(name) {
 
   if (!confirm(getI18n('config.save_confirm', {file: name + '.yaml'}))) return;
 
-  const r = await fetch('/config/save-' + name, {
+  const r = await fetch(endpoint, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content: content}),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = getI18n('config.saved', {path: data.path});
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = getI18n('config.syntax_error', {msg: data.error});
+    status.className = 'save-status error';
+  }
+}
+
+async function savePrompt(name) {
+  const content = document.getElementById('prompt-' + name).value;
+  const status = document.getElementById('prompt-' + name + '-status');
+  if (!confirm(getI18n('config.save_confirm', {file: name + '.yaml'}))) return;
+  const r = await fetch('/config/save-prompt/' + name, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({content: content}),

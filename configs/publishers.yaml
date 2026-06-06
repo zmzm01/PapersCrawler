@@ -93,6 +93,20 @@ publishers:
     issn: "2331-7019"
     enabled: true
 
+  - id: prr
+    name: Physical Review Research
+    publisher: aps
+    rss: https://feeds.aps.org/rss/recent/prresearch.xml
+    issn: "2643-1564"
+    enabled: true
+
+  - id: prx
+    name: Physical Review X
+    publisher: aps
+    rss: https://feeds.aps.org/rss/recent/prx.xml
+    issn: "2160-3308"
+    enabled: true
+
   # HPLSE
   - id: hplse
     name: High Power Laser Science and Engineering

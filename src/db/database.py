@@ -93,6 +93,43 @@ class DatabaseClient:
         db.update_crossref_metadata(doi, title, ...)     # Phase B 更新
     """
 
+    # ---- 可安全用于动态 SQL 拼接的列名白名单 (防止 SQL 注入) ----
+    _VALID_STATUS_COLUMNS = frozenset({
+        "cr_metadata_fetched_status", "cr_metadata_fetched_error",
+        "cr_metadata_fetched_date",
+        "publisher_page_fetched_status", "publisher_page_fetched_error",
+        "publisher_page_fetched_date",
+        "semantic_filter_status", "semantic_filter_error",
+        "semantic_filter_date",
+        "llm_relevance_status", "llm_relevance_error",
+        "llm_relevance_date",
+        "llm_summary_status", "llm_summary_error", "llm_summary_date",
+        "mineru_parse_status", "mineru_parse_error", "mineru_parse_date",
+        "report_status", "report_date",
+        "semantic_similarity_score", "semantic_best_subdomain",
+        "llm_relevance_result", "llm_relevance_confidence",
+        "llm_relevance_reason", "llm_summary_result",
+        "mineru_fulltext", "mineru_output_dir",
+    })
+
+    @classmethod
+    def _validate_column(cls, col_name):
+        """检查列名是否在白名单中。
+
+        Parameters
+        ----------
+        col_name : str
+
+        Raises
+        ------
+        ValueError
+            列名不在白名单中。
+        """
+        if col_name not in cls._VALID_STATUS_COLUMNS:
+            raise ValueError(
+                f"Invalid column name '{col_name}' — not in allowed whitelist"
+            )
+
     def __init__(self, dbPath):
         """
         打开数据库连接。
@@ -330,6 +367,7 @@ class DatabaseClient:
         Returns:
             list[sqlite3.Row]: 可以使用 row["doi"], row["title"] 等方式访问字段
         """
+        self._validate_column(status_field)
         cur = self.conn.execute(f"""
         SELECT * FROM papers
         WHERE {status_field} = 'pending'
@@ -347,6 +385,7 @@ class DatabaseClient:
         Returns:
             list[sqlite3.Row]
         """
+        self._validate_column(status_field)
         cur = self.conn.execute(f"""
         SELECT * FROM papers
         WHERE {status_field} = ?
@@ -918,6 +957,7 @@ class DatabaseClient:
         """
         result = {}
         for col, cond in columns_where:
+            self._validate_column(col)
             sql = f"SELECT COUNT(*) FROM papers WHERE {cond}" if cond else f"SELECT COUNT(*) FROM papers"
             cur = self.conn.execute(sql)
             result[col] = cur.fetchone()[0]
@@ -930,11 +970,13 @@ class DatabaseClient:
         Args:
             updates: [(列名, 新值), ...] 如 [("llm_relevance_status", "pending")]
             conditions: SQL WHERE 子句片段（不含 WHERE），如 "doi IN (?,?,?)"
-                        或 None 表示全部
+                         或 None 表示全部
 
         Returns:
             int: 受影响行数
         """
+        for col, _ in updates:
+            self._validate_column(col)
         set_clause = ", ".join(f"{col} = ?" for col, _ in updates)
         values = [val for _, val in updates]
         sql = f"UPDATE papers SET {set_clause}"
@@ -961,7 +1003,7 @@ class DatabaseClient:
     # ==================================================================
 
     def update_process_status(self, doi, status_field, status_code,
-                              status_field_date, timestamp):
+                               status_field_date, timestamp):
         """
         通用方法: 更新任意处理阶段的状态和日期。
 
@@ -977,6 +1019,8 @@ class DatabaseClient:
         """
         if not self.paper_doi_exists(doi):
             raise DataBaseDOINotExists(f"DOI {doi} not found in DB.")
+        self._validate_column(status_field)
+        self._validate_column(status_field_date)
         self.conn.execute(f"""
             UPDATE papers
             SET {status_field} = ?, {status_field_date} = ?
@@ -987,7 +1031,7 @@ class DatabaseClient:
         self.conn.commit()
 
     def update_error_message(self, doi, status_field, status_code,
-                             error_field, message, error_field_date, timestamp):
+                              error_field, message, error_field_date, timestamp):
         """
         通用方法: 更新任意处理阶段的错误状态、错误信息和日期。
 
@@ -1004,6 +1048,9 @@ class DatabaseClient:
         """
         if not self.paper_doi_exists(doi):
             raise DataBaseDOINotExists(f"DOI {doi} not found in DB.")
+        self._validate_column(status_field)
+        self._validate_column(error_field)
+        self._validate_column(error_field_date)
         self.conn.execute(f"""
             UPDATE papers
             SET {status_field} = ?, {error_field} = ?, {error_field_date} = ?

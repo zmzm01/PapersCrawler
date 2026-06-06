@@ -241,13 +241,21 @@ class CrossrefClient:
                 raise e
 
             items = data.get("message", {}).get("items", [])
+            parse_errors = 0
             for item in items:
                 try:
                     paper = self.parse_work(item)
                     if paper.doi:
                         papers.append(paper)
                 except Exception:
+                    parse_errors += 1
                     continue
+            if parse_errors:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"CrossRef parse_work: {parse_errors}/{len(items)} items "
+                    f"failed to parse (ISSN={issn}, offset={offset})"
+                )
 
             total = data.get("message", {}).get("total-results", 0)
             offset += rows

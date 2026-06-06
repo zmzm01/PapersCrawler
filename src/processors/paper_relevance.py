@@ -18,12 +18,8 @@ paper_relevance.py
 
 import re
 import json
-import time
 import logging
 from typing import List, Dict, Any
-
-import requests  # 用于 LLM API 调用；也可改用 openai 库
-
 
 from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError
 
@@ -102,10 +98,41 @@ class PaperRelevanceChecker:
     # ------------------------------------------------------------------
     # 方法2：通过 LLM API 判断相关性
     # ------------------------------------------------------------------
+    def _load_relevance_template(self) -> str:
+        """加载相关性判断提示词模板。
+
+        从 configs/prompts/relevance.yaml 加载，失败时使用内嵌后备模板。
+        模板包含 {domain_section}、{title}、{abstract}、{json_example} 占位符，
+        由 build_default_prompt 在运行时填充。
+
+        Returns
+        -------
+        str
+        """
+        if hasattr(self, '_template_cache'):
+            return self._template_cache
+        from config import load_prompt
+        template = load_prompt("relevance")
+        if not template:
+            template = (
+                "你是一个研究领域文献筛选助手。{domain_section}\n\n"
+                "请根据以下论文信息判断其是否属于上述研究方向。\n\n"
+                "标题：{title}\n摘要：{abstract}\n\n"
+                "直接输出一个 JSON 对象，格式如下：\n{json_example}\n\n"
+                "要求：\n"
+                "- relevant: true 表示相关，false 表示不相关\n"
+                "- confidence: high / medium / low\n"
+                "- reason: 一句话说明判断依据\n"
+                "只输出 JSON，不要包含任何其他内容。"
+            )
+        self._template_cache = template
+        return template
+
     def build_default_prompt(self, title: str, abstract: str) -> str:
         """
         构造发给 LLM 的默认提示词。
 
+        使用 configs/prompts/relevance.yaml 中的模板，填充领域描述、论文信息和 JSON 示例。
         提示词设计原则：
         - 明确角色定位：LLM 扮演"研究领域文献筛选助手"，限定其任务范围。
         - 输入结构化：先给出关键词列表，再给出论文信息（标题 + 摘要），让 LLM 有充分的判断依据。
@@ -135,102 +162,49 @@ class PaperRelevanceChecker:
         }, ensure_ascii=False)
 
         if domain_text:
-            return (
-                f"你是一个研究领域文献筛选助手。研究方向描述如下：\n"
-                f"{domain_text}\n\n"
-                f"该领域主要涉及以下关键词：{keywords_str}\n\n"
-                f"请根据以下论文信息判断其是否属于上述研究方向。\n\n"
-                f"标题：{title}\n"
-                f"摘要：{abstract}\n\n"
-                f"直接输出一个 JSON 对象，格式如下：\n"
-                f"{json_example}\n\n"
-                f"要求：\n"
-                f"- relevant: true 表示相关，false 表示不相关\n"
-                f"- confidence: high / medium / low，表示你对判断的把握程度\n"
-                f"- reason: 一句话说明判断依据\n"
-                f"只输出 JSON，不要包含任何其他内容。"
+            domain_section = (
+                f"研究方向描述如下：\n{domain_text}\n\n"
+                f"该领域主要涉及以下关键词：{keywords_str}"
             )
         else:
-            return (
-                f"你是一个研究领域文献筛选助手。给定关键词列表：\n"
-                f"{keywords_str}\n\n"
-                f"请根据以下论文信息判断其与关键词的相关性。\n\n"
-                f"标题：{title}\n"
-                f"摘要：{abstract}\n\n"
-                f"直接输出一个 JSON 对象，格式如下：\n"
-                f"{json_example}\n\n"
-                f"要求：\n"
-                f"- relevant: true 表示相关，false 表示不相关\n"
-                f"- confidence: high / medium / low，表示你对判断的把握程度\n"
-                f"- reason: 一句话说明判断依据\n"
-                f"只输出 JSON，不要包含任何其他内容。"
-            )
+            domain_section = f"给定关键词列表：{keywords_str}"
+
+        template = self._load_relevance_template()
+        return template.format(
+            domain_section=domain_section,
+            title=title,
+            abstract=abstract,
+            json_example=json_example,
+        )
 
     # ------------------------------------------------------------------
-    # API 调用
+    # API 调用 (委托给 common.call_llm_api_with_retry)
     # ------------------------------------------------------------------
     def call_deepseek_api(self, prompt: str, llm_api_config: Dict[str, Any]) -> str:
-        """
-        调用 DeepSeek API 进行相关性判断。
+        """调用 DeepSeek API 进行相关性判断。
 
-        DeepSeek API 关键特性说明：
-        1. Thinking Mode（思考模式）：
-           - 开启后模型会在输出最终答案前进行内部推理（chain-of-thought），提高复杂判断的准确性。
-           - 但开启 thinking mode 后不支持 temperature、top_p、presence_penalty、frequency_penalty 参数，
-             因为这些参数会引入随机性，与思考模式的确定性推理目标冲突。
-           - 通过 payload 中的 "thinking": {"type": "enabled"} 字段控制。
-
-        2. JSON Output（JSON 模式）：
-           - DeepSeek 原生支持结构化 JSON 输出，不再需要在 prompt 中反复强调"只输出 JSON"。
-           - 通过 payload 中的 "response_format": {"type": "json_object"} 字段开启。
-           - 开启后模型会确保输出是合法的 JSON 对象，极大降低解析失败的概率。
-
-        API 请求流程：
-        1. 构造 HTTP 请求头（Authorization Bearer Token + Content-Type）。
-        2. 构造请求 payload：model、messages（system + user）、thinking、response_format。
-        3. 发送 POST 请求到 config["api_url"]，默认超时 300 秒。
-        4. 解析响应：从 resp.json()["choices"][0]["message"]["content"] 中提取 LLM 输出。
-        5. 返回 content 字符串（该字符串应为合法 JSON，由调用方进一步 json.loads 解析）。
-
-        异常处理：
-        - requests.exceptions.RequestException：网络问题，抛出 LLMAPICallError。
-        - KeyError/IndexError/TypeError：响应结构异常，抛出 LLMResponseParseError。
+        委托给 ``common.call_llm_api_with_retry``，该函数封装了重试、
+        状态码友好提示和 JSON 转义修复逻辑。
 
         Parameters
         ----------
         prompt : str
             提示词（由 build_default_prompt 构造）
         llm_api_config : Dict[str, Any]
-            LLM API 配置字典，需包含：
-            - "api_url": API 端点（如 https://api.deepseek.com/chat/completions）
-            - "api_key": 认证密钥（DeepSeek API Key）
-            - "model": 模型名称（默认 "deepseek-v4-flash"，也可用 "deepseek-v4-pro" 获得更强推理能力）
-            - "thinking": thinking 模式，可选 "enabled" 或 "disabled"（默认 "enabled"）
-            - "timeout": 请求超时秒数（默认 300）
+            LLM API 配置字典，需包含 api_url、api_key、model、thinking、timeout。
 
         Returns
         -------
         content : str
-            LLM 返回的 JSON 字符串，需由调用方 json.loads 解析为：
-            {
-                "relevant": bool,       # true=相关, false=不相关
-                "confidence": str,      # "high" / "medium" / "low"
-                "reason": str           # 一句话判断依据
-            }
-        ---
+            LLM 返回的 JSON 字符串。
         """
-        config = llm_api_config
+        from common import call_llm_api_with_retry
 
-        # 构造 HTTP 请求头
+        config = llm_api_config
         headers = {
             "Authorization": f"Bearer {config['api_key']}",
             "Content-Type": "application/json",
         }
-        # 构造 API 请求 payload
-        # - model: 模型名称，默认 "deepseek-v4-flash"（快速版），可改为 "deepseek-v4-pro"（更强推理）
-        # - messages: 包含 system 角色设定和 user 实际提示词
-        # - thinking: 启用思考模式（chain-of-thought），提升判断质量
-        # - response_format: 指定为 json_object，强制模型输出合法 JSON
         payload = {
             "model": config.get("model", "deepseek-v4-flash"),
             "messages": [
@@ -240,73 +214,7 @@ class PaperRelevanceChecker:
             "thinking": {"type": config.get("thinking", "enabled")},
             "response_format": {"type": "json_object"},
         }
-
-        last_error = None
-        for attempt in range(2):
-            try:
-                t0 = time.time()
-                resp = requests.post(
-                    config["api_url"],
-                    headers=headers,
-                    json=payload,
-                    timeout=config.get("timeout", 300),
-                )
-                t1 = time.time()
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-
-                # 验证 inner JSON 是否合法，尝试正则修复
-                try:
-                    json.loads(content)
-                except json.JSONDecodeError:
-                    fixed = re.sub(r'(?<![\x5C])\\(?![\\"/bfnrtu])', r'\\\\', content)
-                    try:
-                        json.loads(fixed)
-                        content = fixed
-                    except json.JSONDecodeError:
-                        raise json.JSONDecodeError(
-                            f"Invalid escape after fix: {fixed[-200:]}",
-                            fixed, 0
-                        )
-
-                logger.info(
-                    f"DeepSeek API 响应耗时 {t1-t0:.1f}s, "
-                    f"输入 {len(prompt)} 字符, 输出 {len(content)} 字符"
-                )
-                return content
-            except requests.exceptions.RequestException as e:
-                last_error = e
-                # 提取状态码，提供针对性错误提示
-                status_code = getattr(e.response, 'status_code', None)
-                if status_code == 401:
-                    msg = f"DeepSeek API Key 错误 (401)，请检查 .env 中的 DEEPSEEK_API_KEY"
-                elif status_code == 402:
-                    msg = f"DeepSeek 账号余额不足 (402)，请前往 platform.deepseek.com 充值"
-                elif status_code == 429:
-                    msg = f"DeepSeek 请求速率上限 (429)，可降低 LLM_CONCURRENT_MAX"
-                elif status_code == 503:
-                    msg = f"DeepSeek 服务器繁忙 (503)"
-                elif status_code:
-                    msg = f"DeepSeek API HTTP {status_code}"
-                else:
-                    msg = str(e)
-                if attempt == 0:
-                    logger.debug(f"API 失败 ({msg})，{2**attempt}s 后重试")
-                    time.sleep(2 ** attempt)
-                    continue
-            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
-                last_error = e
-                if attempt == 0:
-                    logger.debug(f"API 响应异常，{2**attempt}s 后重试: {e}")
-                    time.sleep(2 ** attempt)
-                    continue
-        if isinstance(last_error, requests.exceptions.RequestException):
-            status_code = getattr(last_error.response, 'status_code', '?')
-            raise LLMAPICallError(
-                f"DeepSeek API 失败 (HTTP {status_code}): {last_error}"
-            ) from last_error
-        else:
-            raise LLMResponseParseError(f"API 返回结构异常: {last_error}") from last_error
+        return call_llm_api_with_retry(config, headers, payload)
 
     # ------------------------------------------------------------------
     # 语义相似度（推荐使用 SemanticFilter 类，支持模型一次加载多次复用）
@@ -415,7 +323,7 @@ class SemanticFilter:
         best_score = 0.0
         best_label = None
         for label, emb in self.sub_domain_embeddings.items():
-            score = util.cos_sim(self.sub_domain_embeddings[label], paper_embedding).item()
+            score = util.cos_sim(emb, paper_embedding).item()
             if score > best_score:
                 best_score = score
                 best_label = label
