@@ -4,8 +4,8 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **研究领域定义重构** | `keywords.yaml` 改为 `scope_definition`（6 子领域中文描述+topics）+ `irrelevant_fields` + `sub_domains_embedding`（英文 <300w）；`PaperRelevanceChecker` 改用 scope_definition 构建 prompt；LLM 输出改为四级分类 A/B/C/D；DB 新增 `llm_relevance_category`/`llm_relevance_subfields` 列；`get_relevant_papers()` 查询条件改为 `IN ('A','B')`；**99 passed** | 06-06 |
 | **Review Bug 修复** | 修复 review 指出的 5 个问题：config_save_prompt 缺参数、fix_json_invalid_escapes 双重调用、Phase E2 无代理、DOI 路径穿越、Phase B 重复代码分支 | 06-06 |
-|------|------|------|
 | **WebUI 图标美化** | Font Awesome CDN 全局图标；侧边栏导航图标；按钮/卡片/架构图图标；新增 `.icon-mr`/`.icon-left` 样式 | 06-05 |
 | **Home 页重构** | 项目介绍（7 出版社 21 期刊说明）+ 技术栈标签 + 架构概览图（两行 10 阶段流水线）+ Quick Start（3 步卡片）+ 图标装饰 | 06-05 |
 | **订阅管理** | 新增 `subscribers` DB 表（email/name/active/delivery_method）；Phase H 改为 DB 收件人优先、回退 `.env`；WebUI 订阅页（添加/删除/启用停用/测试/从 .env 导入） | 06-05 |

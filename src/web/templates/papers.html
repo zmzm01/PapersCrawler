@@ -46,11 +46,8 @@
       </td>
       <td>
         {% if p.llm_relevance_status == 'success' %}
-          {% if p.llm_relevance_result == 1 %}
-          <span class="badge badge-success">✓</span>
-          {% else %}
-          <span class="badge badge-failed">✗</span>
-          {% endif %}
+          {% set cat = p.llm_relevance_category or '?' %}
+          <span class="badge badge-{% if cat in ('A','B') %}success{% else %}failed{% endif %}">{{ cat }}</span>
         {% elif p.llm_relevance_status == 'skipped' %}
         <span class="badge badge-skipped" data-i18n="papers.skipped">Skipped</span>
         {% else %}

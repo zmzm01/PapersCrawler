@@ -31,29 +31,32 @@ class PaperRelevanceChecker:
     论文相关性检测器
 
     核心设计：
-    - 初始化时传入研究领域关键词表，所有关键词会被统一转为小写并去首尾空格。
+    - 初始化时传入研究领域定义（scope_definition），包含各子领域的描述和关键词。
     - 关键词正则模式会被预编译（每个关键词加上 \b 单词边界），在后续调用中直接复用，避免重复编译开销。
-    - 三种检测策略可按需组合使用：初筛用关键词匹配，精细判断用 LLM，批量筛选用语义相似度。
+    - LLM 判断使用 scope_definition + irrelevant_fields 构建完整提示词。
 
     Parameters
     ----------
-    keywords : List[str]
-        研究领域关键词表，例如 ["graph neural network", "node classification", ...]
-    ---
+    keywords : dict
+        由 load_keywords() 返回的完整领域定义字典。
+        含 scope_definition、irrelevant_fields、sub_domains_embedding 等字段。
     """
 
-    def __init__(self, keywords: List[str], domain_description: str = "") -> None:
-        # 关键词预处理：统一转小写，去除空字符串
-        self.keywords = [k.strip().lower() for k in keywords if k.strip()]
-        self.domain_description = domain_description or ""
+    def __init__(self, keywords: dict) -> None:
+        self.scope_definition = keywords.get("scope_definition", {})
+        self.irrelevant_fields = keywords.get("irrelevant_fields", {})
+        self.sub_domains_embedding = keywords.get("sub_domains_embedding", {})
+
+        # 从所有 topics 中自动提取关键词列表，用于传统关键词匹配
+        all_keywords = []
+        for sec in self.scope_definition.values():
+            for t in sec.get("topics", []):
+                kw = t.split("—")[0].strip() if "—" in t else t.strip()
+                if kw:
+                    all_keywords.append(kw)
+        self.keywords = [k.strip().lower() for k in all_keywords if k.strip()]
 
         # 预编译关键词正则（忽略大小写，匹配单词边界避免部分命中）
-        #
-        # 正则构造说明：
-        # - \b 表示单词边界，确保 "graph" 不会错误匹配 "paragraph" 或 "graphics" 中的子串。
-        # - re.escape(kw) 对关键词中的特殊正则字符（如括号、加号）进行转义，防止注入攻击或意外匹配。
-        # - re.IGNORECASE 开启大小写不敏感匹配，例如 "Graph Neural Network" 也能匹配关键词 "graph neural network"。
-        # - 预编译为 re.Pattern 对象，后续调用 pattern.search() 时直接使用，避免每次匹配都重新编译。
         self.keyword_patterns = [
             re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE)
             for kw in self.keywords
@@ -83,15 +86,11 @@ class PaperRelevanceChecker:
         -------
         matched_count : int
             完全不含任何关键词返回 0，通常表示不相关。
-        ---
         """
         text = f"{title} {abstract}"
         matched = set()
         for pattern in self.keyword_patterns:
             if pattern.search(text):
-                # 为了返回匹配到的原始关键词，可从 pattern.pattern 恢复
-                # 注：pattern.pattern 返回的是正则字符串（含 \b 和转义），非原始关键词。
-                # 此处仅用于集合去重计数，不关心原始关键词的具体内容。
                 matched.add(pattern.pattern)
         return len(matched)
 
@@ -102,7 +101,7 @@ class PaperRelevanceChecker:
         """加载相关性判断提示词模板。
 
         从 configs/prompts/relevance.yaml 加载，失败时使用内嵌后备模板。
-        模板包含 {domain_section}、{title}、{abstract}、{json_example} 占位符，
+        模板包含 {scope_block}、{title}、{abstract}、{doi}、{json_example} 占位符，
         由 build_default_prompt 在运行时填充。
 
         Returns
@@ -115,30 +114,38 @@ class PaperRelevanceChecker:
         template = load_prompt("relevance")
         if not template:
             template = (
-                "你是一个研究领域文献筛选助手。{domain_section}\n\n"
-                "请根据以下论文信息判断其是否属于上述研究方向。\n\n"
-                "标题：{title}\n摘要：{abstract}\n\n"
-                "直接输出一个 JSON 对象，格式如下：\n{json_example}\n\n"
-                "要求：\n"
-                "- relevant: true 表示相关，false 表示不相关\n"
-                "- confidence: high / medium / low\n"
-                "- reason: 一句话说明判断依据\n"
-                "只输出 JSON，不要包含任何其他内容。"
+                "You are an expert in advanced accelerator physics, "
+                "laser-plasma interactions, and beam instrumentation.\n\n"
+                "Given the following research scope definition, "
+                "classify the paper below.\n\n"
+                "{scope_block}\n\n"
+                "# Task\n\n"
+                "Title: {title}\n"
+                "Abstract: {abstract}\n"
+                "DOI: {doi}\n\n"
+                "1. Determine which sub-domains of the research scope "
+                "the paper belongs to. List all that apply.\n"
+                "2. Assign a relevance category:\n"
+                "   - A: Directly studies the core topics\n"
+                "   - B: Studies related technologies or methods\n"
+                "   - C: Same field but distant from core interests\n"
+                "   - D: Irrelevant\n"
+                "3. Provide a confidence level: high / medium / low\n"
+                "4. Add notes explaining your judgment.\n\n"
+                "Output strictly in JSON with NO additional text. Example:\n"
+                "{json_example}"
             )
         self._template_cache = template
         return template
 
-    def build_default_prompt(self, title: str, abstract: str) -> str:
+    def build_default_prompt(self, title: str, abstract: str, doi: str = "") -> str:
         """
-        构造发给 LLM 的默认提示词。
+        构造发给 LLM 的相关性判断提示词。
 
-        使用 configs/prompts/relevance.yaml 中的模板，填充领域描述、论文信息和 JSON 示例。
-        提示词设计原则：
-        - 明确角色定位：LLM 扮演"研究领域文献筛选助手"，限定其任务范围。
-        - 输入结构化：先给出关键词列表，再给出论文信息（标题 + 摘要），让 LLM 有充分的判断依据。
-        - 输出格式约束：要求输出合法 JSON，并给出示例（json_example），引导 LLM 输出符合预期格式。
-        - 字段语义说明：对 relevant、confidence、reason 三个字段逐一解释含义，避免 LLM 自行发挥。
-        - 强调"只输出 JSON"：防止 LLM 在 JSON 前后添加解释性文字，确保下游解析顺利。
+        使用 configs/prompts/relevance.yaml 中的模板，填充 scope_definition、
+        论文信息和 JSON 示例。
+        输出格式约束：要求输出合法 JSON，包含 PredictedCategory、MatchedSubfields、
+        Confidence、Notes 字段。
 
         Parameters
         ----------
@@ -146,34 +153,29 @@ class PaperRelevanceChecker:
             论文标题
         abstract : str
             论文摘要
+        doi : str
+            论文 DOI
 
         Returns
         -------
         prompt : str
             可直接发送给 LLM API 的完整提示词字符串。
-        ---
         """
-        keywords_str = ", ".join(self.keywords)
-        domain_text = self.domain_description
+        from config import build_scope_block
+        scope_block = build_scope_block(self.scope_definition, self.irrelevant_fields)
         json_example = json.dumps({
-            "relevant": False,
-            "confidence": "low",
-            "reason": "摘要未明确提及核心关键词"
+            "PredictedCategory": "B",
+            "MatchedSubfields": ["Laser Wakefield Acceleration", "Plasma Diagnostics"],
+            "Confidence": "high",
+            "Notes": "The paper directly studies LWFA using capillary discharge waveguide.",
         }, ensure_ascii=False)
-
-        if domain_text:
-            domain_section = (
-                f"研究方向描述如下：\n{domain_text}\n\n"
-                f"该领域主要涉及以下关键词：{keywords_str}"
-            )
-        else:
-            domain_section = f"给定关键词列表：{keywords_str}"
 
         template = self._load_relevance_template()
         return template.format(
-            domain_section=domain_section,
+            scope_block=scope_block,
             title=title,
             abstract=abstract,
+            doi=doi,
             json_example=json_example,
         )
 

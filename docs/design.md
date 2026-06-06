@@ -12,8 +12,12 @@ PapersCrawler/
 ├── .env.example                 # 密钥模板（复制为 .env 后填写）
 ├── configs/
 │   ├── publishers.yaml          # 需要追踪的期刊配置 (RSS Feed + 出版社)
-│   ├── keywords.yaml            # 研究领域关键词表 + 段落描述
-│   └── prompts/                 # LLM Prompt 模板目录 (预留)
+│   ├── keywords.yaml            # 研究领域定义（scope_definition + irrelevant + embedding）
+│   ├── settings.yaml            # 运行参数（阶段开关、LLM 模型、爬虫等）
+│   └── prompts/                 # LLM Prompt 模板目录
+│       ├── summary.yaml         #   Phase F 论文总结 prompt
+│       ├── relevance.yaml       #   Phase E 相关性判断 prompt（含 scope_block 占位符）
+│       └── fix.yaml             #   FormulaFixer 公式修复 prompt
 ├── data/
 │   ├── papers.db                # SQLite 数据库 (自动生成)
 │   ├── PaperCrawler.log         # 运行日志
@@ -137,6 +141,36 @@ Phase A: 双源发现 (RSS + CrossRef 并行)
                       │  两路结果按 DOI 去重合并
                       ▼
 Phase B: CrossRef 元数据
+      │  补充作者 / 出版日期 / 期刊名 / 摘要
+      ▼
+Phase C: Publisher 页面 (cloakbrowser)
+      │  爬取摘要 / PDF 链接 (绕过 Cloudflare)
+      ▼
+Phase D: 语义相似度参考排序 (sentence-transformers, 可选)
+      │  余弦相似度 → 仅存分数供 WebUI 排序，不参与过滤
+      ▼
+Phase E: LLM 相关性判断 (DeepSeek)  ← 四级分类 A/B/C/D
+      │  → 类别 A: 直接相关 (核心方向)
+      │  → 类别 B: 间接相关 (技术/方法可迁移)
+      │  → 类别 C: 同领域但距离较远
+      │  → 类别 D: 基本无关
+      │  仅 A/B 进入下游, C/D 终止
+      ▼
+Phase E2: MinerU PDF 全文解析
+      │  下载 PDF → MinerU API → 提取 Markdown 全文
+      ▼
+Phase F: LLM 论文总结 (DeepSeek)
+      │  生成结构化总结 (优先用 MinerU 全文, 无全文则跳过)
+      ▼
+Phase G: 报告生成
+        │  Markdown 格式输出
+        │  自动模式: 写入 auto/ 目录, 标记已报告
+        │  用户模式: 写入 user/ 目录, 不标记已报告
+      ▼
+Phase H: 邮件推送
+        │  SMTP 发送报告给团队成员
+        │  有今日报告 → 作为附件发送
+        │  无今日报告 → 发送无更新通知
 ```
 
 # 数据库 Schema
@@ -180,7 +214,10 @@ Phase B: CrossRef 元数据
 - `semantic_similarity_score`, `semantic_best_subdomain` (排序参考，不参与过滤)
 
 **LLM 相关性** (Phase E) — 五列：`llm_relevance_status` / `_error` / `_date`
-- `llm_relevance_result` (0/1), `llm_relevance_confidence`, `llm_relevance_reason`
+- `llm_relevance_category` (TEXT: A/B/C/D) — 四级分类，替代已废弃的 `llm_relevance_result`
+- `llm_relevance_subfields` (TEXT: JSON 数组) — 匹配的子领域列表
+- `llm_relevance_confidence`, `llm_relevance_reason`
+- `llm_relevance_result` (INTEGER, **已废弃**) — 旧版二分类 0/1，`reset-relevance --all` 后不再写入
 
 **MinerU 全文** (Phase E2) — 三列：`mineru_parse_status` / `_error` / `_date`
 - `mineru_fulltext`, `mineru_output_dir`
@@ -386,21 +423,52 @@ publishers:
 
 ## keywords.yaml
 
-支持三种格式：
-1. **纯列表** → 自动拼接为 `domain_description`
-2. **字典** — 包含 `domain_description`、`keywords`
-3. **完整字典** — 包含 `domain_description`、`keywords`、`sub_domains`
+使用结构化字典格式（`scope_definition` + `irrelevant_fields` + `sub_domains_embedding`）：
+
+```yaml
+scope_definition:
+  laser_wakefield_acceleration:
+    description: "本方向关注基于等离子体的尾场加速技术..."
+    topics:
+      - "Laser Wakefield Acceleration (LWFA) — ..."
+      - "Plasma Wakefield Acceleration (PWFA) — ..."
+  laser_driven_ion_acceleration:
+    ...
+irrelevant_fields:
+  description: "以下领域即使出现相关关键词，通常也不应视为相关..."
+  topics:
+    - "Fusion: Tokamak, Stellarator, magnetic confinement fusion..."
+    - "Space plasma: Solar wind, Magnetosphere..."
+sub_domains_embedding:
+  laser_wakefield_acceleration: >
+    Plasma-based wakefield acceleration driven by intense laser pulses...
+```
 
 ### 字段分工
 
 | 字段 | 用途 | 语种 | 要求 |
 |------|------|------|------|
-| `domain_description` | Phase E LLM prompt | 中/英均可 | 尽量详细，覆盖全领域 |
-| `sub_domains` | Phase D 语义相似度 | **仅英文** | 每段 < 300 字，简练自然语言，不要公式/缩写罗列 |
-| `keywords` | LLM prompt + 关键词匹配 | — | 精确术语列表 |
+| `scope_definition` | Phase E LLM prompt — 完整领域定义 | 中文 | 每子域含 `description`（段落描述）+ `topics`（展开关键词列表） |
+| `irrelevant_fields` | Phase E LLM prompt — 降低误判 | 中文 | 定义"不相关"边界 |
+| `sub_domains_embedding` | Phase D 语义相似度 | **仅英文** | 每段 < 300 words，简练自然语言，供 sentence-transformers 编码 |
 
-`domain_description` 用于 Phase E（LLM prompt），比纯关键词列表语义信息更丰富。
-`sub_domains` 是 `domain_description` 拆分为若干简短独立子领域的版本，供 sentence-transformers 编码为向量计算余弦相似度。
+`scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释即可。
+
+### Phase E Prompt 构建流程
+
+```
+keywords.yaml:
+  scope_definition (6 sub-domains)
+  irrelevant_fields
+          ↓
+  src/config.py: build_scope_block()
+          ↓
+  Plain text block with ## headers + bullet lists
+          ↓
+  configs/prompts/relevance.yaml template (scope_block placeholder)
+          ↓
+  LLM: classification task with Steps 1-4, JSON output
+```
 
 ## .env
 
@@ -777,6 +845,50 @@ pdf_body = resp.content
 - 纯 HTTP 请求绕过 CSP、用户手势、TLS 指纹等所有浏览器层防御
 - 提取的 cookies 携带浏览器 session，User-Agent 和 Referer 使请求在 HTTP 层与浏览器导航无异
 
+## 14. LLM 相关性四级分类体系（A/B/C/D）
+
+### 背景
+
+旧版 Phase E 使用二分类（relevant=1/0），存在两个问题：
+1. **粒度过粗**：一篇关于激光尾场加速的纯模拟论文、一篇涉及等离子体聚焦技术的方法论文、一篇天文等离子体的文章，在旧体系下分别被标注为 1、1、0，但前两者在质上完全不同。
+2. **Prompt 与领域描述耦合**：`domain_description` 是单一文本段，无法直接包含"不相关领域"的负例边界，导致误判率偏高。
+
+### 四级分类定义
+
+| 类别 | 标签 | 含义 | 后续处理 |
+|------|------|------|---------|
+| **A** | 直接相关 | 直接研究课题组核心方向的理论/实验/模拟 | → E2/F/G/H |
+| **B** | 间接相关 | 相关技术或方法，对课题组有潜在参考价值 | → E2/F/G/H |
+| **C** | 同领域但远 | 同属加速器/等离子体领域，但与核心兴趣距离较远 | 终止，不进入下游 |
+| **D** | 基本无关 | 不属于课题组关注范围 | 终止，不进入下游 |
+
+Phase E2（MinerU PDF 解析）、Phase F（LLM 总结）、Phase G（报告生成）仅在论文被标记为 **A 或 B** 时执行。C 类论文保留在数据库中供人工复核。
+
+### 匹配子领域记录
+
+LLM 同时输出 `MatchedSubfields`（JSON 数组），记录论文命中了 `scope_definition` 中哪些子领域。此信息存储在 `llm_relevance_subfields` 列，供 WebUI Papers 页展示和后续分析。
+
+### Prompt 策略
+
+Prompt 使用 `configs/keywords.yaml` 中的 `scope_definition`（完整的中文领域定义，含 6 个子域的段落描述 + 展开关键词列表）和 `irrelevant_fields`（不相关领域边界），由 `config.build_scope_block()` 格式化为带标题的分节文本块，嵌入 `configs/prompts/relevance.yaml` 模板。
+
+LLM 被要求执行 4 个步骤：
+1. 判断论文属于 scope_definition 中哪些子领域
+2. 分配相关性类别 A/B/C/D
+3. 给出置信度 high/medium/low
+4. 简要说明判断理由
+
+### 旧版到新版的迁移
+
+| 维度 | 旧版 | 新版 |
+|------|------|------|
+| 存储列 | `llm_relevance_result INTEGER (0/1)` | `llm_relevance_category TEXT (A/B/C/D)` + `llm_relevance_subfields TEXT` |
+| 旧列状态 | 主列 | **废弃**，不再写入，择机删除 |
+| 过滤条件 | `llm_relevance_result = 1` | `llm_relevance_category IN ('A', 'B')` |
+| Prompt 数据类型 | `domain_description`（单段中文） | `scope_definition`（6 子域）+ `irrelevant_fields` |
+| LLM 输出 | `{relevant, confidence, reason}` | `{PredictedCategory, MatchedSubfields, Confidence, Notes}` |
+| 关键词匹配源 | `keywords` 列表 | 从 `scope_definition[].topics` 自动抽取 |
+
 # 流水线子阶段详解
 
 ## Phase C — Publisher 页面抓取
@@ -847,7 +959,7 @@ pdf_body = resp.content
 
 ## Phase F — LLM 结构化总结
 
-- 仅处理有 MinerU 全文的论文（无全文直接标记 skipped）
+- 仅处理有 MinerU 全文 **且** Phase E 判定为 A/B 类的论文（无全文或 C/D 类直接标记 skipped）
 - 使用 `ThreadPoolExecutor` 并发调用 DeepSeek API
 - 输出 JSON 包含 5 个字段：`one_sentence`、`motivation_and_goal`、`key_setup_and_method`、`main_results_and_physics`、`take_home_message`
 - 可选后处理：`FormulaFixer`（实验性，`SKIP_FORMULA_FIX = True` 默认关闭），用 flash 模型修复公式格式问题

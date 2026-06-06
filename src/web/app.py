@@ -114,8 +114,8 @@ RESET_DEFS = {
     "D": (["semantic_filter_status", "semantic_filter_error",
            "semantic_similarity_score", "semantic_best_subdomain"],
           "semantic_filter_status IN ('success','failed','skipped')", None),
-    "E": (["llm_relevance_status", "llm_relevance_result", "llm_relevance_confidence",
-           "llm_relevance_reason", "llm_relevance_error"],
+    "E": (["llm_relevance_status", "llm_relevance_category", "llm_relevance_subfields",
+           "llm_relevance_confidence", "llm_relevance_reason", "llm_relevance_error"],
           "llm_relevance_status IN ('success','failed','skipped')", None),
     "E2": (["mineru_parse_status", "mineru_parse_error", "mineru_fulltext",
             "mineru_output_dir",
@@ -424,7 +424,10 @@ async def config_page(request: Request):
     overrides_raw = json.dumps(_load_skip_overrides(), indent=2)
     publishers_raw = (CONFIG_DIR / "publishers.yaml").read_text(encoding="utf-8")
     keywords_raw = (CONFIG_DIR / "keywords.yaml").read_text(encoding="utf-8")
-    domain_description = keywords.get("domain_description", "")
+    domain_description = "\n\n".join(
+        f"## {k}\n{v.get('description','').strip()}"
+        for k, v in keywords.get("scope_definition", {}).items()
+    )
 
     # 加载 settings.yaml
     settings_path = CONFIG_DIR / "settings.yaml"
@@ -582,9 +585,14 @@ async def config_save_domain(request: Request):
         ryaml = YAML()
         kw = ryaml.load(kw_path)
         if kw is None or not isinstance(kw, dict):
-            kw = {"domain_description": content}
+            kw = {"scope_definition": {}}
+        sd = kw.get("scope_definition", {})
+        first_key = next(iter(sd.keys()), None) if sd else None
+        if first_key:
+            sd[first_key]["description"] = content
         else:
-            kw["domain_description"] = content
+            sd["custom"] = {"description": content, "topics": []}
+        kw["scope_definition"] = sd
         ryaml.dump(kw, kw_path)
         return JSONResponse({"ok": True})
     except Exception as e:
