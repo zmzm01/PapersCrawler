@@ -45,27 +45,17 @@ def phase_b_crossref(db):
 
             if not crossrefPaper.authors:
                 logger.warning(f"CrossRef author data missing: {paperDOI}")
-                db.update_crossref_metadata(
-                    paperDOI, crossrefPaper.title,
-                    authors_json, crossrefPaper.published,
-                    crossrefPaper.abstract or "",
-                )
-                db.update_process_status(
-                    paperDOI, "cr_metadata_fetched_status",
-                    FetchStatus.SUCCESS.value,
-                    "cr_metadata_fetched_date", timestamp,
-                )
-            else:
-                db.update_crossref_metadata(
-                    paperDOI, crossrefPaper.title,
-                    authors_json, crossrefPaper.published,
-                    crossrefPaper.abstract or "",
-                )
-                db.update_process_status(
-                    paperDOI, "cr_metadata_fetched_status",
-                    FetchStatus.SUCCESS.value,
-                    "cr_metadata_fetched_date", timestamp,
-                )
+
+            db.update_crossref_metadata(
+                paperDOI, crossrefPaper.title,
+                authors_json, crossrefPaper.published,
+                crossrefPaper.abstract or "",
+            )
+            db.update_process_status(
+                paperDOI, "cr_metadata_fetched_status",
+                FetchStatus.SUCCESS.value,
+                "cr_metadata_fetched_date", timestamp,
+            )
 
         except NotFoundError as e:
             logger.warning(f"CrossRef no record: {paperDOI}")

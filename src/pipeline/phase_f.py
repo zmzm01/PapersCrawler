@@ -6,7 +6,6 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from common import fix_json_invalid_escapes
 from config import (
     SKIP_PHASE_F, MAX_PAPERS_PER_PHASE,
     load_keywords, LLM_API_CONFIG_DICT_SUMM, LLM_API_CONFIG_DICT_RELE,
@@ -93,7 +92,6 @@ def phase_f_llm_summary(db):
             timestamp = str(datetime.now())
             try:
                 result_str = future.result()
-                result_str = fix_json_invalid_escapes(result_str)
                 parsed = json.loads(result_str)
                 if fixer:
                     logger.debug(f"FormulaFixer: [{doi}] 检查 5 个字段")
