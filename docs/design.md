@@ -68,7 +68,8 @@ PapersCrawler/
 │   │   ├── llm_summarize_deepseek.py  # DeepSeek API 论文总结
 │   │   ├── mineru_paper_parser.py     # MinerU API PDF 全文解析
 │   │   ├── paper_report_generator.py  # Markdown/HTML 报告生成
-│   │   ├── pdf_converter.py     # Markdown → PDF 转换
+│   │   ├── pdf_converter.py     # Markdown → PDF 转换 (pandoc + xelatex)
+│   │   ├── md_to_pdf_katex.py   # Markdown → PDF (KaTeX + cloakbrowser, 支持 \(\)/\[\] 公式)
 │   │   └── email_sender.py      # SMTP 邮件发送
 │   └── pipeline/                # 流水线编排 (从 main.py 拆分)
 │       ├── base.py              # 共享上下文 (SCRAPER_MAP, logger)
@@ -213,7 +214,7 @@ Phase H: 邮件推送
 **语义相似度** (Phase D) — 三列：`semantic_filter_status` / `_error` / `_date`
 - `semantic_similarity_score`, `semantic_best_subdomain` (排序参考，不参与过滤)
 
-**LLM 相关性** (Phase E) — 五列：`llm_relevance_status` / `_error` / `_date`
+**LLM 相关性** (Phase E) — 三列：`llm_relevance_status` / `_error` / `_date`
 - `llm_relevance_category` (TEXT: A/B/C/D) — 四级分类，替代已废弃的 `llm_relevance_result`
 - `llm_relevance_subfields` (TEXT: JSON 数组) — 匹配的子领域列表
 - `llm_relevance_confidence`, `llm_relevance_reason`
@@ -657,7 +658,7 @@ abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
 - TLS 模式下 STARTTLS 后显式调用 `ehlo()` 重新协商加密通道能力（RFC 3207）
 - `finally` 中 `server.quit()` 以 `try/except` 保护，且先判断 `server is not None`
 
-## 6. 非论文页面检测（NonResearchPageError）
+## 7. 非论文页面检测（NonResearchPageError）
 
 某些 RSS 抓取的条目不是研究论文（Erratum、Publisher's Note、Comment on、Response to 等），
 这类页面在 Publisher 抓取阶段（Phase C）能正常加载，但缺少有效摘要。
@@ -703,7 +704,7 @@ NonResearchPageError 触发后，Phase C 会：
 
 合法空摘要论文与全空页的区别：前者有 title + doi，后者三项全空。
 
-## 7. Nature 非研究文章过滤（SKIP_NATURE_NEWS）
+## 8. Nature 非研究文章过滤（SKIP_NATURE_NEWS）
 
 **范围**：Nature 旗下期刊（Nature、Nature Physics、Nature Photonics、Nature Communications）的
 RSS Feed 和 CrossRef 数据源中均可能包含非研究文章——News、News & Views、Comments、Editorials、
@@ -724,7 +725,7 @@ Research Briefings、Books & Arts、Obituaries、Careers、Podcasts 等。
 **Config 开关**：`src/config.py` 中 `SKIP_NATURE_NEWS = True`（默认开启）。关闭后 Nature 新闻类文章
 将进入流水线。不推荐关闭——非研究文章在 Phase B 会因为作者数据缺失而标记 failed，但仍会消耗 API 配额。
 
-## 8. APS Accepted Paper 跳过（AcceptedPaperError）
+## 9. APS Accepted Paper 跳过（AcceptedPaperError）
 
 **背景**：APS 在论文正式发表前会发布 Accepted Paper（预接受版本）。这类页面可通过 CrossRef 发现
 （DOI 形如 `10.1103/27t3-61j2`），其访问 URL 路径含 `/accepted/`（例如
@@ -745,7 +746,7 @@ Research Briefings、Books & Arts、Obituaries、Careers、Podcasts 等。
 3. 级联跳过 Phase D（语义过滤）和 Phase E（LLM 相关性）——判定其相关性无意义，因为即使相关也无法总结
 4. 后续阶段（Phase E2/F/G/H）自然跳过
 
-## 9. Session 缓存自动清理
+## 10. Session 缓存自动清理
 
 **背景**：每个 publisher 使用独立的 Chromium profile 目录（`data/session_cached/<publisher>/`），
 cloakbrowser 的 `launch_persistent_context()` 在其中存储 cookies、localStorage、浏览器缓存等。
@@ -757,7 +758,7 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 
 **Session 目录仅存活于一次 Phase C 运行期间**——每次重新运行都会重新创建干净的 profile。
 
-## 10. 抓取错误诊断：HTML 快照保存
+## 11. 抓取错误诊断：HTML 快照保存
 
 **背景**：当 Phase C 抓取失败时，仅凭错误消息难以区分根因（Cloudflare 拦截、页面结构变更、
 网络超时、APS 302 导航中断）。`fetch_page()` 的异常分支会保存页面 HTML 快照到
@@ -777,7 +778,7 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 - 页面标题片段（从 HTML `<title>` 提取，前 120 字符）
 - HTML 快照文件路径（`HTML saved to error dir`）
 
-## 11. CLI/WebUI 配置隔离（journal_overrides 加载控制）
+## 12. CLI/WebUI 配置隔离（journal_overrides 加载控制）
 
 **背景**：Data Sources 页面对期刊启停的修改保存到 `data/journal_overrides.json`。
 但这个文件被 Phase A 无条件加载，导致 CLI 运行时也受 WebUI 设置影响，与「CLI 和 WebUI 互不干扰」的设计原则冲突。
@@ -796,7 +797,7 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 **`_journal_effective()` 修复**：`rss_enabled` / `cr_enabled` 查询时，在 overrides 中找不到时，
 回退到 `journal.get("enabled", True)`（publishers.yaml 自身的 `enabled` 字段）。
 
-## 12. Phase C Publisher 启停检查（enabled_publishers）
+## 13. Phase C Publisher 启停检查（enabled_publishers）
 
 **背景**：`enabled: false` 在 publishers.yaml 中只阻止 Phase A 新增论文，
 但数据库中已有的论文不受影响——Phase C 不检查 `enabled` 状态，状态为 `pending` 就处理。
@@ -809,7 +810,7 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
    error 写入 `"Publisher disabled in publishers.yaml"`
 4. 下游阶段自然跳过（上游已 skipped）
 
-## 13. AIP PDF 下载三级回退链
+## 14. AIP PDF 下载三级回退链
 
 **背景**：AIP 的 PDF URL 是直接下载链接（`wget` 可直接下载），但浏览器 JS `fetch()` 被 CSP 拦截。
 此处记录两条最终被弃用的尝试方案。
@@ -830,13 +831,17 @@ Nature、Science、APS（DOM 扫描后）、Cambridge、IOP 均正常工作。
 - 失败：AIP 不认 `element.click()` 为「用户手势」，不触发下载事件，60s 超时
 - 本质：JS 合成事件（`event.isTrusted=false`）不等于真实用户交互，部分网站据此过滤
 
-**最终回退：`requests` + 浏览器 cookies + User-Agent**：
+**当前主路径：`requests` + 浏览器 cookies + User-Agent**（2026-06-07 优化）：
 ```python
 cookies = self.context.cookies()
 session = requests.Session()
 for c in cookies:
     session.cookies.set(c["name"], c["value"], domain=c.get("domain", ""))
-ua = self.page.evaluate("navigator.userAgent")
+try:
+    ua = self.page.evaluate("navigator.userAgent")
+except Exception:
+    ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 session.headers.update({"User-Agent": ua, "Referer": page_url})
 resp = session.get(pdf_url, timeout=120)
 pdf_body = resp.content
@@ -844,8 +849,11 @@ pdf_body = resp.content
 - AIP 的安全模型是「浏览器 JS 层 CSP + 用户手势检测」，PDF URL 在 HTTP 层无校验
 - 纯 HTTP 请求绕过 CSP、用户手势、TLS 指纹等所有浏览器层防御
 - 提取的 cookies 携带浏览器 session，User-Agent 和 Referer 使请求在 HTTP 层与浏览器导航无异
+- **2026-06-07 改为第一顺序**：原先 JS fetch 主路径在 AIP 上需等 60s 超时才降级，
+  反转后 requests 秒级失败，JS fetch 降为兜底。同时 `navigator.userAgent` 获取加 try/except 保护，
+  防止导航销毁上下文导致崩溃。
 
-## 14. LLM 相关性四级分类体系（A/B/C/D）
+## 15. LLM 相关性四级分类体系（A/B/C/D）
 
 ### 背景
 
@@ -889,6 +897,49 @@ LLM 被要求执行 4 个步骤：
 | LLM 输出 | `{relevant, confidence, reason}` | `{PredictedCategory, MatchedSubfields, Confidence, Notes}` |
 | 关键词匹配源 | `keywords` 列表 | 从 `scope_definition[].topics` 自动抽取 |
 
+## 16. Accepted Paper 生命周期管理（删除策略）
+
+APS Accepted Paper 是正式发表前的预发布版本，URL 含 `/accepted/`，
+页面结构不同于正式论文（无 PDF、无完整摘要选择器）。这些论文后续
+会以正式论文形式（**同 DOI**）发表，因此数据库中的预发布记录必须
+被**删除**，而非标记跳过。
+
+### 问题根因
+
+旧方案将 Accepted Paper 标记为 `skipped` 并 cascade skip 下游阶段，
+但数据库的 `doi UNIQUE` 约束使得正式版发表后流水线无法重新发现和
+处理该论文——`paper_doi_exists()` 返回 True 阻止了一切。
+
+### 检测策略（`APSScraper.parse_page()`）
+
+| 方法 | 检测依据 |
+|------|---------|
+| 精确检测 | URL 路径含 `/accepted/` |
+| 特征标签 | `li.article-feature-tag` 内容为 `Accepted Paper` |
+
+### 触发后的行为
+
+`AcceptedPaperError` 被捕获后，`phase_c.py` 执行：
+1. `db.delete_paper(doi)` — 直接从数据库删除整条记录
+2. 下一篇 Phase A-CR 运行时，正式论文将被重新发现并正常处理
+
+### 处理策略对比
+
+| 类型 | 处理方式 | 原因 |
+|------|---------|------|
+| **Accepted Paper** | **删除** | 同 DOI 正式版会在未来出现 |
+| **Erratum / Comment 等** | **跳过**（保留记录） | 永远不会变成研究论文 |
+| **正常空摘要论文** | **正常处理**（标注 success） | 有标题+DOI，无特殊标记 |
+
+### 工具支持
+
+`tools/delete_accepted_papers.py` 用于清理存量数据：
+```bash
+python tools/delete_accepted_papers.py --dry-run   # 预览
+python tools/delete_accepted_papers.py              # 交互确认
+python tools/delete_accepted_papers.py --force       # 直接执行
+```
+
 # 流水线子阶段详解
 
 ## Phase C — Publisher 页面抓取
@@ -930,28 +981,49 @@ LLM 被要求执行 4 个步骤：
 
 ## Phase E2 — PDF 下载策略
 
-`BasePublisherScraper.download_pdf()` 处理 PDF 下载，使用三级回退链：
+`BasePublisherScraper.download_pdf()` 处理 PDF 下载，使用 requests+cookie 先行的双路径策略。
 
-**主路径：同域 JS fetch**
-1. `goto(page_url)` 访问文章页建立上下文
+### 建立上下文
+
+1. `goto(page_url)` 访问文章页，等待 15s 充分稳定（APS 302 二次导航需要更长时间）
 2. 扫描 DOM 中 `<a>PDF</a>` 提取同域 URL（解决 APS 跨域问题）
-3. `page.evaluate(fetch(url))` 获取 PDF 字节流
-4. 覆盖 6/7 publisher：Nature、Science、APS、Cambridge、IOP、Optica
+   - 二次导航可能销毁执行上下文 → try/except + 3s 重试
+   - 提取失败时保留原始 `pdf_url`（跨域链接），后续下载路径仍可用
+3. 保存到临时文件 → MinerU 解析成功后移动到 `data/mineru_output/<doi>/paper.pdf`
 
-**回退：Python requests + 浏览器 cookies（AIP 等）**
-- 部分 publisher（如 AIP）的 CSP `connect-src` 策略拦截 JS `fetch()` API
-- 从浏览器 context 提取 `cookies` + `navigator.userAgent` → Python `requests` 直连下载
-- AIP 的 PDF URL 在 HTTP 层无校验（`wget` 可直接下载），加上 Cookie/UA/Referer 后
-  请求在 HTTP 层与浏览器导航无异
-- 纯 HTTP 请求绕过 CSP、用户手势检测、TLS 指纹等所有浏览器层限制
+### 下载优先级（2026-06-07 优化）
 
-**保存**：下载的 PDF 字节写入临时文件 → MinerU 解析 → 移动到 `data/mineru_output/<doi>/paper.pdf`
+```
+requests + 浏览器 cookies (主, 秒级失败)
+  └── 失败 → JS fetch (兜底, 完整浏览器上下文)
+```
 
-**APS 跨域问题根因**：APS 使用双域名架构（`link.aps.org` 跳转、`journals.aps.org` 内容），
-`citation_pdf_url` 短链与文章页不同域。同源策略（SOP）拦截了跨域 `fetch`。
-从页面 DOM 中提取的同域路径不受此限制。
+**主路径：requests + 浏览器 cookies**
+从浏览器 context 提取登录态 cookies + User-Agent，用 Python requests 做 HTTP 直连下载。
+比 JS fetch 更快的理由：
+- **不受 CSP 限制** — AIP 的 `connect-src` 策略拦截 JS `fetch()`，但 requests 直接通过
+- **无浏览器 JS 执行开销** — 秒级返回失败状态（vs JS fetch 需等 60s 超时才降级）
+- **User-Agent 降级保护** — `navigator.userAgent` 获取失败时使用硬编码 Chrome 120 UA 兜底
+- **覆盖所有 publisher** — 同域 PDF URL + 浏览器 cookie 认证
 
-**已弃用的尝试**（记录教训）：
+**兜底：JS fetch**
+- 仅当 requests 路径不可用时触发（预期极少发生）
+- 使用 `page.evaluate(fetch(pdf_url))` 继承完整浏览器上下文
+- 保留此路径应对未来可能出现的要求完整 JS 环境才能下载的 publisher
+
+### APS 导航容错
+
+APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的二次导航可能
+在任何时刻销毁执行上下文。`download_pdf()` 包含三层防护：
+
+| 层 | 防护 | 失效时 |
+|----|------|--------|
+| 1 | `wait_for_timeout(15000)` 等待充分稳定 | 进入第 2 层 |
+| 2 | `for _attempt in range(2)` + except 重试 | 保留原始 `pdf_url`（跨域） |
+| 3 | 主路径 requests+cookie 全局兜底（第 2 层非必需——即使没提取到同域链接，requests 也可用原始 URL） | JS fetch 兜底 |
+
+### 已弃用的尝试（记录教训）
+
 - `page.goto(pdf_url) + response.body()` — 浏览器 PDF viewer 以 stream 消费响应体，
   `response.body()` 返回 None（不等缓冲就消费了）
 - `<a click> + page.expect_download()` — 程序化 `element.click()` 不被视为"用户手势"，
@@ -970,14 +1042,27 @@ LLM 被要求执行 4 个步骤：
 
 # PDF 转换路径
 
-`tools/convert_md_to_pdf.py` 提供两种转换策略：
+提供三种转换策略，按推荐优先级排列：
 
-**主路径（推荐）**：pandoc → HTML → cloakbrowser → PDF
+**KaTeX 路径（实验性）**：`src/processors/md_to_pdf_katex.py`
+1. Markdown 嵌入含 KaTeX + marked.js 的 HTML 模板
+2. cloakbrowser 加载 HTML，marked.js 渲染 Markdown → HTML
+3. KaTeX 渲染 `\(...\)` / `\[...\]` 公式为排版数学
+4. `page.pdf()` 输出 PDF
+5. **支持 `\(`/`\[\]` 公式**，渲染结果与 WebUI 完全一致，不依赖 pandoc/texlive
+
+> ⚠️ **已知问题**：标题前间距、分节渲染等细节尚不完善，输出效果可能与预期有差异。
+
+```bash
+python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
+```
+
+**传统路径 A**：`tools/convert_md_to_pdf.py` — pandoc → HTML → cloakbrowser → PDF
 1. `pandoc --mathml --standalone` 生成含 MathML 的 HTML
 2. cloakbrowser 加载 HTML，打印为 PDF
-3. 不再依赖 texlive / xelatex，消除了 LaTeX 编译错误
+3. ⚠️ **已知问题**：`\(`/`\[\]` 公式渲染空白（MathML 无法解析 LaTeX 定界符）
 
-**备用路径**：`src/utils/pdf_converter.py` 通过 pandoc + xelatex 转换
+**传统路径 B**：`src/processors/pdf_converter.py` — pandoc + xelatex
 - 策略 A：自定义 LaTeX 模板（含 `xeCJK`、`Noto Sans CJK SC`、`\times` 兼容宏）
 - 策略 B：无模板回退（适用于纯英文场景）
 - 返回 `None` 表示失败（不抛异常）
@@ -989,7 +1074,7 @@ LLM 被要求执行 4 个步骤：
 | 命令 | 重置范围 | 默认条件 | 级联 | 典型用途 |
 |------|---------|---------|------|---------|
 | `reset-semantic` | `semantic_filter_*`, `semantic_similarity_score`, `semantic_best_subdomain`（5 列） | **全部**（无 status 过滤） | 无 | 修改 sub_domains 后 |
-| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 domain_description 后 |
+| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 scope_definition 后 |
 | `reset-publisher` | `publisher_page_fetched_status/error`（2 列） | `failed`/`skipped`（跳过 NonResearchPageError） | 无 | 重试被 CF 拦截的论文 |
 | `reset-mineru` | `mineru_parse_*`（5 列） | `failed`/`skipped` | 无 | 重试 PDF 解析失败的论文 |
 | `reset-summary` | `llm_summary_*`（4 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 prompt 后重生成总结 |
