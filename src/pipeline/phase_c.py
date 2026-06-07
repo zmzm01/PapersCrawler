@@ -3,6 +3,7 @@ Phase C: Publisher page scraping via cloakbrowser.
 """
 
 import json
+import logging
 import random
 import time
 from collections import defaultdict
@@ -14,8 +15,10 @@ from config import (
     PUBLISHER_MAX_CONSECUTIVE_FAILURES,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger, create_scraper
+from pipeline.base import create_scraper
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
+
+logger = logging.getLogger(__name__)
 
 # Keywords to detect non-research articles (Erratum, etc.)
 _NON_RESEARCH_KEYWORDS = ["erratum", "comment on", "response to", "publisher's note"]
