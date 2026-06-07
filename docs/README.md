@@ -81,6 +81,10 @@ python src/main.py
 
 # 无图形界面服务器（Phase C 需要虚拟显示器）
 xvfb-run -a python src/main.py
+
+# 控制日志级别
+LOG_LEVEL=INFO python src/main.py    # 减少调试信息
+LOG_LEVEL=WARNING python src/main.py # 仅关键信息
 ```
 
 **按调度模式运行：**
@@ -103,6 +107,8 @@ xvfb-run -a python src/main.py
 
 两个调度脚本均尊重 `configs/settings.yaml` 中的 `SKIP_PHASE_*` 配置。
 通过 Web UI Config 页面的 SKIP 切换仅影响 Web UI Pipeline 按钮，不影响 CLI 调度脚本。
+
+**阶段独立运行**：各阶段通过数据库状态列隔离，可单独重跑任一 phase 而不影响已完成的结果（如 Phase E 失败后只需 `reset-relevance` 再重跑，无需重跑 Phase C）。
 
 ### 4. 运行测试
 
@@ -294,4 +300,4 @@ Publisher Page → abstract (补充非 OA 论文摘要)
 - [ ] **热点/趋势分析** — 基于历史论文数据，统计关键词频率变化、新兴研究方向发现
 - [ ] **并发升级** — 当前 Phase E/F 使用 ThreadPoolExecutor，但 DB 写入仍是串行瓶颈。考虑异步架构（asyncio + aiosqlite）
 - [ ] **无摘要兜底** — Phase E 对无摘要论文标记 skipped，将来可尝试用 OCR/title-only 轻度判断
-- [ ] **配置热加载** — 目前配置在 `main()` 入口一次性加载，修改后需重启
+- [x] **配置热加载** — `config.py` 新增 `reload_config()` 函数，Web UI 修改 YAML 后自动调用，无需重启
