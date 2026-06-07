@@ -3,3 +3,11 @@ slides
 __pycache__
 .env
 *.swp
+
+# 配置文件（实际配置从 git 排除，.example 模板保留）
+configs/publishers.yaml
+configs/keywords.yaml
+configs/settings.yaml
+configs/prompts/fix.yaml
+configs/prompts/relevance.yaml
+configs/prompts/summary.yaml

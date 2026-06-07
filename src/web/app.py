@@ -25,6 +25,21 @@ _src_path = Path(__file__).resolve().parent.parent
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
+import logging
+import os as _os
+
+from config import LOG_FILE_PATH
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+file_handler = logging.FileHandler(LOG_FILE_PATH, encoding='utf-8')
+console_handler = logging.StreamHandler()
+logging.basicConfig(
+    level=getattr(logging, _os.getenv("LOG_LEVEL", "DEBUG").upper(), logging.DEBUG),
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[file_handler, console_handler],
+)
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +48,7 @@ from fastapi.templating import Jinja2Templates
 from config import (
     DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
     LOG_FILE_PATH, DATA_DIR, CONFIG_DIR, PROMPTS_DIR,
+    JOURNAL_OVERRIDES_PATH,
     load_publishers, load_keywords, load_settings,
     SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
     SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
@@ -67,6 +83,18 @@ PHASE_DEFAULTS = {
 PHASE_ORDER = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F", "G", "H"]
 
 SKIP_OVERRIDES_PATH = DATA_DIR / "skip_overrides.json"
+
+
+def _atomic_write(path, content):
+    """原子写入文件：先写 .tmp，再 os.replace 原子替换。"""
+    import tempfile as _tempfile
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        _tempfile._os.replace(str(tmp_path), str(path))
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _get_effective_skip():
@@ -143,9 +171,9 @@ def _run_phase_subprocess(phase, is_all=False):
         global _running_phase
         try:
             if is_all:
-                code = ("from pipeline.runner import run_pipeline; run_pipeline(force=True)")
+                code = ("from pipeline.runner import run_pipeline; run_pipeline(run_all=True)")
             else:
-                code = (f"from pipeline.runner import run_phases; run_phases({[phase]!r}, force=True)")
+                code = (f"from pipeline.runner import run_phases; run_phases({[phase]!r}, use_overrides=True)")
             subprocess.run(
                 [sys.executable, "-c", f"import sys; sys.path.insert(0, '{src_dir}'); {code}"],
                 cwd=project_root, capture_output=True, timeout=14400 if is_all else 3600,
@@ -465,7 +493,7 @@ async def config_skip_toggle(phase: str):
     overrides = _load_skip_overrides()
     current = overrides.get(phase, PHASE_DEFAULTS[phase])
     overrides[phase] = not current
-    SKIP_OVERRIDES_PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
+    _atomic_write(SKIP_OVERRIDES_PATH, json.dumps(overrides, indent=2))
     return JSONResponse({"ok": True, "phase": phase, "skipped": overrides[phase]})
 
 
@@ -479,7 +507,9 @@ async def config_save_publishers(request: Request):
     except Exception as e:
         return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
     path = CONFIG_DIR / "publishers.yaml"
-    path.write_text(content, encoding="utf-8")
+    _atomic_write(path, content)
+    from config import reload_config
+    reload_config()
     return JSONResponse({"ok": True, "path": str(path)})
 
 
@@ -493,7 +523,9 @@ async def config_save_keywords(request: Request):
     except Exception as e:
         return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
     path = CONFIG_DIR / "keywords.yaml"
-    path.write_text(content, encoding="utf-8")
+    _atomic_write(path, content)
+    from config import reload_config
+    reload_config()
     return JSONResponse({"ok": True, "path": str(path)})
 
 
@@ -507,8 +539,9 @@ async def config_save_settings(request: Request):
     except Exception as e:
         return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
     path = CONFIG_DIR / "settings.yaml"
-    path.write_text(content, encoding="utf-8")
-    return JSONResponse({"ok": True, "path": str(path)})
+    _atomic_write(path, content)
+    from config import reload_config
+    reload_config()
 
 
 @app.post("/config/save-prompt/{name}")
@@ -521,7 +554,7 @@ async def config_save_prompt(request: Request, name: str):
     except Exception as e:
         return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
     path = PROMPTS_DIR / f"{name}.yaml"
-    path.write_text(content, encoding="utf-8")
+    _atomic_write(path, content)
     return JSONResponse({"ok": True, "path": str(path)})
 
 
@@ -573,7 +606,7 @@ async def config_test_crossref():
         import requests
         resp = requests.get(
             "https://api.crossref.org/works/10.1038/nature12373",
-            headers={"User-Agent": "PaperCrawler (mailto:test@example.com) Python"},
+            headers={"User-Agent": "PaperCrawler (mailto:your_email@example.com) Python"},
             timeout=10,
         )
         if resp.status_code == 200:
@@ -630,51 +663,21 @@ async def config_test_mineru():
 
 # ── Data Sources ──────────────────────────────────────────────────────────────
 
-JOURNAL_OVERRIDES_PATH = DATA_DIR / "journal_overrides.json"
-
-
-def _load_journal_overrides():
-    if not JOURNAL_OVERRIDES_PATH.exists():
-        return {"journals": {}}
-    try:
-        return json.loads(JOURNAL_OVERRIDES_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, Exception):
-        return {"journals": {}}
-
-
-def _journal_override_value(jid, overrides, field):
-    ov = overrides.get("journals", {}).get(jid, {})
-    if field in ov:
-        return ov[field]
-    if field in ("rss_enabled", "cr_enabled") and "enabled" in ov:
-        return ov["enabled"]
-    return None
+from pipeline.base import load_journal_overrides, journal_effective
 
 
 @app.get("/datasources", response_class=HTMLResponse)
 async def datasources_page(request: Request):
     publishers = load_publishers()
-    overrides = _load_journal_overrides()
+    overrides = load_journal_overrides()
     journals = []
     for j in publishers:
         jid = j["id"]
         ov = overrides.get("journals", {}).get(jid, {})
         enabled_default = j.get("enabled", True)
-        override_enabled = _journal_override_value(jid, overrides, "enabled")
-        if override_enabled is not None:
-            override_enabled = bool(override_enabled)
-        else:
-            override_enabled = bool(enabled_default)
-        override_rss = _journal_override_value(jid, overrides, "rss_enabled")
-        if override_rss is None:
-            override_rss = override_enabled
-        else:
-            override_rss = bool(override_rss)
-        override_cr = _journal_override_value(jid, overrides, "cr_enabled")
-        if override_cr is None:
-            override_cr = override_enabled
-        else:
-            override_cr = bool(override_cr)
+        override_enabled = journal_effective(j, overrides, "enabled")
+        override_rss = journal_effective(j, overrides, "rss_enabled")
+        override_cr = journal_effective(j, overrides, "cr_enabled")
         journals.append({
             "id": jid,
             "name": j.get("name", ""),
@@ -695,7 +698,7 @@ async def datasources_save(request: Request):
     body = await request.json()
     journals = body.get("journals", {})
     overrides = {"journals": journals}
-    JOURNAL_OVERRIDES_PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
+    _atomic_write(JOURNAL_OVERRIDES_PATH, json.dumps(overrides, indent=2))
     return JSONResponse({"ok": True, "path": str(JOURNAL_OVERRIDES_PATH)})
 
 
