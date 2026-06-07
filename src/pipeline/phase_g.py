@@ -7,13 +7,15 @@ Two modes:
 """
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
 from config import SKIP_PHASE_G
 from db.database import DatabaseClient
-from pipeline.base import logger
 from processors.paper_report_generator import generate_report
+
+logger = logging.getLogger(__name__)
 
 
 def phase_g_report(db, auto_dir, user_dir, doi_list=None):

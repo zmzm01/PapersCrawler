@@ -5,13 +5,15 @@ Sends today's auto-generated report if it exists,
 or a no-update notification if no report was generated.
 """
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
 from config import SKIP_PHASE_H, load_email_config
-from pipeline.base import logger
 from processors.email_sender import EmailSender
 from db.database import DatabaseClient
+
+logger = logging.getLogger(__name__)
 
 
 def phase_h_email(db, auto_dir):

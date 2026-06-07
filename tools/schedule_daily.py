@@ -15,12 +15,27 @@
     0 2 * * * cd /path/to/PapersCrawler && xvfb-run -a python tools/schedule_daily.py
 """
 
+import logging
+import os
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from config import LOG_FILE_PATH, DATA_DIR
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
+console_handler = logging.StreamHandler()
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "DEBUG").upper(), logging.DEBUG),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[file_handler, console_handler],
+)
 
 from pipeline.runner import run_daily
 
