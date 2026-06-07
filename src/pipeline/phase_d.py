@@ -8,6 +8,7 @@ Papers page. It does NOT gate Phase E (LLM relevance).
 When SKIP_PHASE_D = True (default), all papers go directly to Phase E.
 """
 
+import logging
 from datetime import datetime
 
 from config import (
@@ -15,8 +16,9 @@ from config import (
     SEMANTIC_MODEL_PATH,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger
 from processors.paper_relevance import SemanticFilter
+
+logger = logging.getLogger(__name__)
 
 
 def phase_d_semantic_filter(db, domain_config):

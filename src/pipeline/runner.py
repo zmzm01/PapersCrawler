@@ -5,6 +5,7 @@ Provides run_pipeline() for full execution and run_phases() for selective runs.
 """
 
 import json
+import logging
 
 from config import (
     load_publishers, load_keywords,
@@ -13,6 +14,8 @@ from config import (
     SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
     SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _load_skip_overrides():
@@ -39,7 +42,6 @@ def _get_effective_skip(overrides):
 
 
 from db.database import DatabaseClient
-from pipeline.base import logger
 
 from pipeline.phase_a import phase_a_rss, phase_a_crossref
 from pipeline.phase_b import phase_b_crossref
@@ -52,7 +54,7 @@ from pipeline.phase_g import phase_g_report
 from pipeline.phase_h import phase_h_email
 
 
-def run_phases(phase_list=None, force=False):
+def run_phases(phase_list=None, force=False, use_overrides=False):
     """Run selected phases of the pipeline.
 
     Parameters
@@ -61,9 +63,12 @@ def run_phases(phase_list=None, force=False):
         Phase names to run (e.g. ["A", "C", "F"]).
         If None, runs all non-skipped phases.
     force : bool, optional
+        Deprecated. Use ``use_overrides`` instead.
+        If True, load SKIP overrides from data/skip_overrides.json.
+    use_overrides : bool, optional
         If True, load SKIP overrides from data/skip_overrides.json.
         Used by Web UI: overrides are set via Config page SKIP toggles.
-        CLI (force=False) always uses config.py defaults only.
+        CLI (use_overrides=False) always uses config.py defaults only.
     """
     publishers = load_publishers()
     keywords = load_keywords()
@@ -79,7 +84,7 @@ def run_phases(phase_list=None, force=False):
     db.init_db_papers()
     logger.info(f"Database ready: {DB_PATH}")
 
-    overrides = _load_skip_overrides() if force else {}
+    overrides = _load_skip_overrides() if (use_overrides or force) else {}
     effective_skip = _get_effective_skip(overrides)
     phase_map = {
         "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A_RSS"]),
@@ -105,20 +110,26 @@ def run_phases(phase_list=None, force=False):
         if not enabled:
             logger.info(f"Phase {key}: skipped by config/override")
             continue
-        func(*args)
+        try:
+            func(*args)
+        except Exception:
+            logger.error(f"Phase {key} crashed — continuing to next phase",
+                         exc_info=True)
 
     logger.info("Pipeline finished")
 
  
-def run_pipeline(force=False):
+def run_pipeline(force=False, run_all=False):
     """Run the full pipeline (equivalent to old main()).
 
     Parameters
     ----------
     force : bool, optional
+        Deprecated. Use ``run_all`` instead.
+    run_all : bool, optional
         If True, run ALL phases regardless of SKIP_PHASE_* config.
     """
-    run_phases(force=force)
+    run_phases(force=force or run_all)
 
 
 # ── 便捷方法：每日/每周调度 ─────────────────────────────────────────

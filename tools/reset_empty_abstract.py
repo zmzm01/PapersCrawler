@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 """
-重置 abstract 为空字符串的论文的语义/相关性/报告状态。
-MinerU 和 LLM 总结结果保留不变。
+重置 abstract 为空字符串的论文的全部流水线状态（Phase C~G）。
+适用于反爬拦截导致 abstract 为空但被误标记为 success 的情况
+（如 Optica 非 CF 反爬——正文被拦但 <meta> 标签正常返回）。
+
+保留: MinerU 全文 / LLM 总结。
 
 用法: python tools/reset_empty_abstract.py
 """
@@ -13,7 +16,11 @@ DB_PATH = PROJECT_ROOT / "data" / "papers.db"
 
 RESET_SQL = """
 UPDATE papers
-SET semantic_similarity_score = NULL,
+SET publisher_page_fetched_status = 'pending',
+    publisher_page_fetched_error = NULL,
+    publisher_page_fetched_date = NULL,
+    semantic_similarity_score = NULL,
+    semantic_best_subdomain = NULL,
     semantic_filter_status = 'pending',
     semantic_filter_error = NULL,
     semantic_filter_date = NULL,
@@ -38,8 +45,8 @@ if __name__ == "__main__":
         print("无需操作")
         exit()
 
-    print("将重置这些论文的: 语义初筛 / LLM 相关性 / 报告状态")
-    print("保留: MinerU 全文 / LLM 总结")
+    print("将重置这些论文的: Publisher 抓取(Phase C) / 语义初筛(D) / LLM 相关性(E) / 报告状态(G)")
+    print("保留: MinerU 全文(E2) / LLM 总结(F)")
     resp = input(f"确认重置 {count} 篇？[y/N] ").strip().lower()
     if resp not in ("y", "yes"):
         print("已取消")
@@ -49,4 +56,4 @@ if __name__ == "__main__":
     conn.execute(RESET_SQL)
     conn.commit()
     conn.close()
-    print(f"已重置 {count} 篇论文的 Phase D/E/G 状态")
+    print(f"已重置 {count} 篇论文的 Phase C~G 状态")

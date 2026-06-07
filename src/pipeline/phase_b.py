@@ -3,14 +3,16 @@ Phase B: CrossRef metadata enrichment.
 """
 
 import json
+import logging
 from datetime import datetime
 
 import requests
 
 from config import SKIP_PHASE_B, CROSSREF_MAILTO, REQUEST_TIMEOUT, MAX_PAPERS_PER_PHASE
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger
 from sources.crossref import CrossrefClient, NotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 def phase_b_crossref(db):
