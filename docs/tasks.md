@@ -4,9 +4,12 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **架构改进** | 全面 review + 8 项架构修复：Phase 级异常保护、force 参数拆分、消除重复常量、原子写入、FormulaFixer 注释确认、Logger 统一（支持 LOG_LEVEL）、ConfigManager reload_config()、去除 mineru_fulltext 冗余存储 | 06-07 |
+| **Bug 修复** | 修复 review 指出的 9 个 bug：_get_reset_cols 列过滤错误、DB 连接泄漏、fetch_by_journal 零重试、error HTML 保存缺失、PredictedCategory 静默归 D、配置加载无文件缺失保护、RSS 零重试、MinerU 零重试、CF 检测增强 | 06-07 |
 | **Accepted Paper 处理** | Phase C 检测到 Accepted Paper 时从 cascade skip 改为 `delete_paper()` 直接删除；新增同名 DB 方法；新建 `tools/delete_accepted_papers.py` 清理脚本（支持 `--dry-run`/`--force`） | 06-06 |
 | **每日/每周调度脚本** | `runner.py` 新增 `DAILY_PHASES`/`WEEKLY_PHASES` 常量和 `run_daily()`/`run_weekly()` 方法；新建 `tools/schedule_daily.py`（A→F）和 `tools/schedule_weekly.py`（G→H），适配 cron | 06-07 |
 | **WebUI 修复** | Home 页标题图标间距增大；Papers 页适配 A/B/C/D 四级分类（badge + 图例 + skipped 置底）；新建 `md_to_pdf_katex.py`（KaTeX + cloakbrowser PDF 渲染，支持 \(\)/\[\] 公式） | 06-07 |
+| **Optica 反爬检测** | OpticaScraper.parse_page() 增加非 CF 反爬检测（title 有值但 abstract 空且 #articleBody 缺失时抛 PageParseError）；reset_empty_abstract.py 扩展重置 Phase C | 06-07 |
 | **PDF 下载重构** | `download_pdf()` 下载顺序反转（requests+cookie 优先 → JS fetch 兜底）；APS 导航容错（wait 5s→15s + try/retry）；UA 获取加 try 保护 | 06-07 |
 | **Phase F 修复** | `phase_f.py:43` `sqlite3.Row` 对象无 `.get()` 方法 → `p["llm_relevance_category"]` 方括号访问；`mineru_paper_parser.py` `print()` → `logger.info()` 残留修复 + `_download_and_extract()` 改用流式下载（`stream=True` + 分块写入，避免大 zip 整体加载到内存） | 06-07 |
 | **研究领域定义重构** | `keywords.yaml` 改为 `scope_definition`（6 子领域中文描述+topics）+ `irrelevant_fields` + `sub_domains_embedding`（英文 <300w）；`PaperRelevanceChecker` 改用 scope_definition 构建 prompt；LLM 输出改为四级分类 A/B/C/D；DB 新增 `llm_relevance_category`/`llm_relevance_subfields` 列；`get_relevant_papers()` 查询条件改为 `IN ('A','B')`；**99 passed** | 06-06 |
@@ -1363,6 +1366,57 @@ python tools/delete_accepted_papers.py --force       # 跳过确认
 
 首次执行删除存量 66 篇 Accepted Paper（全部为 APS 期刊的非课题组方向论文），
 清理后 `pytest tests/` → **99 passed**（不变）。
+
+# 2026-06-07 — Optica 反爬检测：非 CF 拦截的正文缺失识别
+
+**背景**：Optica 的反爬机制不同于 Cloudflare Challenge——它不会返回 `challenge-platform`、
+`cf-browser-requification` 等 CF 特征关键词，也不会完全拒绝请求。而是返回一个**部分页面**：
+`<head>` 中的 `<meta>` 标签正常加载（title/DOI 可提取），但正文内容（`#articleBody` div）被拦截。
+
+## 问题链路
+
+```
+Optica 反爬返回:
+  <head>
+    <meta name="citation_title" content="...">  → parse_page 提取到 title ✓
+    <meta name="citation_doi" content="...">     → parse_page 提取到 doi ✓
+  </head>
+  <body> [空白/验证页]                          → #articleBody 不存在
+
+Phase C 检测链:
+  CF 检测      → 关键词全不命中 → 通过
+  三空检查     → title+doi 有值 → 通过
+  非论文关键词  → 标题不含 erratum 等 → 通过
+  → 标记为 success ← 空 abstract
+```
+
+## 修复
+
+**`OpticaScraper.parse_page()` 新增正文结构检测**：
+
+```python
+if title and not abstract:
+    if not sel.xpath('//div[@id="articleBody"]'):
+        raise PageParseError(
+            "Optica anti-bot blocked: article body (#articleBody) not found"
+        )
+```
+
+这样在 abstract 为空但 `#articleBody` 也不存在时，直接抛出 `PageParseError`，
+Phase C 将其捕获后走重试/失败逻辑，不再误标 success。
+
+## 配套工具更新
+
+`tools/reset_empty_abstract.py` 扩展重置范围：
+
+| 列 | 改前 | 改后 |
+|----|------|------|
+| `publisher_page_fetched_*` | 不变 | **重置为 pending** |
+| `semantic_filter_*` | 重置 | 重置（不变） |
+| `llm_relevance_*` | 重置 | 重置（不变） |
+| `report_*` | 重置 | 重置（不变） |
+
+之前只重置 Phase D/E/G，现在加入 Phase C，使得空 abstract 论文可以触发重新抓取。
 
 # 已知问题
 
