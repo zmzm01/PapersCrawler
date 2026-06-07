@@ -2,6 +2,7 @@
 Phase E2: MinerU PDF full-text parsing.
 """
 
+import logging
 import random
 import shutil
 import tempfile
@@ -13,9 +14,11 @@ from config import (
     SKIP_PHASE_E2, MINERU_TOKEN, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger, SCRAPER_MAP
+from pipeline.base import SCRAPER_MAP
 from processors.mineru_paper_parser import MinerUParser
 from sources.publisher import BasePublisherScraper
+
+logger = logging.getLogger(__name__)
 
 
 def phase_e2_mineru(db):
@@ -108,14 +111,12 @@ def phase_e2_mineru(db):
                     full_md_path = mineru_output_dir / "full.md"
 
                     if full_md_path.exists():
-                        fulltext = full_md_path.read_text(encoding="utf-8")
                         rel_dir = str(mineru_output_dir.relative_to(MINERU_OUTPUT_DIR.parent))
                         db.update_mineru_result(
-                            doi, fulltext, rel_dir,
+                            doi, "", rel_dir,
                             FetchStatus.SUCCESS.value, timestamp,
                         )
-                        success_count += 1
-                        logger.info(f"MinerU success: {doi} ({len(fulltext)} chars)")
+                        logger.info(f"MinerU success: {doi} ({full_md_path.stat().st_size} bytes)")
                     else:
                         raise RuntimeError("MinerU output missing full.md")
 

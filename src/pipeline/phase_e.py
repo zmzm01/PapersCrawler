@@ -3,6 +3,7 @@ Phase E: LLM relevance judgement.
 """
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -11,11 +12,12 @@ from config import (
     load_keywords, LLM_API_CONFIG_DICT_RELE, LLM_CONCURRENT_MAX,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger
 from processors.paper_relevance import (
     PaperRelevanceChecker,
     LLMAPICallError, LLMResponseParseError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def phase_e_llm_relevance(db):

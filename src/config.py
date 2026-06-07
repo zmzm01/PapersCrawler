@@ -60,6 +60,9 @@ AUTO_REPORT_DIR = DATA_DIR / "reports" / "auto"  # 自动日报目录 (Phase G �
 USER_REPORT_DIR = DATA_DIR / "reports" / "user"  # 用户自选报告目录 (Web UI)
 MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 
+# Web UI journal enable/disable 覆写文件
+JOURNAL_OVERRIDES_PATH = DATA_DIR / "journal_overrides.json"
+
 # LLM Prompt 模板目录 (configs/prompts/*.yaml)
 PROMPTS_DIR = CONFIG_DIR / "prompts"
 
@@ -492,6 +495,77 @@ def _check_mineru_token():
             )
     except Exception:
         pass
+
+
+def reload_config():
+    """重新加载 settings.yaml 并刷新所有运行时配置变量。
+
+    用于 Web UI 修改 YAML 配置后无需重启进程即可生效。
+    调用后模块级变量（SKIP_PHASE_*, LLM_API_*, SUMMARIES_PROMPT 等）
+    将更新为 settings.yaml 中的最新值。
+    """
+    global \
+        _SETTINGS, _llm_cfg, \
+        LLM_API_CONFIG_DICT_RELE, LLM_API_CONFIG_DICT_SUMM, \
+        SUMMARIES_PROMPT, \
+        SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR, \
+        SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D, \
+        SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H, \
+        CROSSREF_LOOKBACK_DAYS, MAX_PAPERS_PER_PHASE, SKIP_NATURE_NEWS, \
+        PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX, \
+        PUBLISHER_MAX_CONSECUTIVE_FAILURES, PUBLISHER_PROXY, \
+        SKIP_FORMULA_FIX, FORCE_FORMULA_FIX, LLM_CONCURRENT_MAX, \
+        SEMANTIC_MODEL_PATH
+
+    _SETTINGS = load_settings() or {}
+    _llm_cfg = _SETTINGS.get("llm", {})
+
+    LLM_API_CONFIG_DICT_RELE["model"] = _llm_cfg.get("relevance", {}).get("model", "deepseek-v4-flash")
+    LLM_API_CONFIG_DICT_RELE["thinking"] = _llm_cfg.get("relevance", {}).get("thinking", "disabled")
+    LLM_API_CONFIG_DICT_RELE["timeout"] = _llm_cfg.get("relevance", {}).get("timeout", 300)
+    LLM_API_CONFIG_DICT_SUMM["model"] = _llm_cfg.get("summary", {}).get("model", "deepseek-v4-pro")
+    LLM_API_CONFIG_DICT_SUMM["thinking"] = _llm_cfg.get("summary", {}).get("thinking", "enabled")
+    LLM_API_CONFIG_DICT_SUMM["timeout"] = _llm_cfg.get("summary", {}).get("timeout", 300)
+
+    _loaded_prompt = load_prompt("summary")
+    if _loaded_prompt:
+        SUMMARIES_PROMPT = _loaded_prompt
+
+    _skip = _SETTINGS.get("skip_phases", {})
+    SKIP_PHASE_A_RSS = _skip.get("A_RSS", SKIP_PHASE_A_RSS)
+    SKIP_PHASE_A_CR = _skip.get("A_CR", SKIP_PHASE_A_CR)
+    SKIP_PHASE_B = _skip.get("B", SKIP_PHASE_B)
+    SKIP_PHASE_C = _skip.get("C", SKIP_PHASE_C)
+    SKIP_PHASE_D = _skip.get("D", SKIP_PHASE_D)
+    SKIP_PHASE_E = _skip.get("E", SKIP_PHASE_E)
+    SKIP_PHASE_E2 = _skip.get("E2", SKIP_PHASE_E2)
+    SKIP_PHASE_F = _skip.get("F", SKIP_PHASE_F)
+    SKIP_PHASE_G = _skip.get("G", SKIP_PHASE_G)
+    SKIP_PHASE_H = _skip.get("H", SKIP_PHASE_H)
+
+    _pp = _SETTINGS.get("pipeline", {})
+    CROSSREF_LOOKBACK_DAYS = _pp.get("crossref_lookback_days", CROSSREF_LOOKBACK_DAYS)
+    MAX_PAPERS_PER_PHASE = _pp.get("max_papers_per_phase", MAX_PAPERS_PER_PHASE)
+    SKIP_NATURE_NEWS = _pp.get("skip_nature_news", SKIP_NATURE_NEWS)
+
+    _ps = _SETTINGS.get("publisher", {})
+    PUBLISHER_PAGE_DELAY_MIN = _ps.get("page_delay_min", PUBLISHER_PAGE_DELAY_MIN)
+    PUBLISHER_PAGE_DELAY_MAX = _ps.get("page_delay_max", PUBLISHER_PAGE_DELAY_MAX)
+    PUBLISHER_MAX_CONSECUTIVE_FAILURES = _ps.get("max_consecutive_failures", PUBLISHER_MAX_CONSECUTIVE_FAILURES)
+    _cfg_proxy = _ps.get("proxy", {})
+    if _cfg_proxy:
+        PUBLISHER_PROXY = _cfg_proxy
+
+    _ff = _SETTINGS.get("formula_fix", {})
+    SKIP_FORMULA_FIX = _ff.get("skip", SKIP_FORMULA_FIX)
+    FORCE_FORMULA_FIX = _ff.get("force", FORCE_FORMULA_FIX)
+
+    LLM_CONCURRENT_MAX = _llm_cfg.get("concurrent_max", LLM_CONCURRENT_MAX)
+
+    _sem = _SETTINGS.get("semantic", {})
+    _sem_path = _sem.get("model_path")
+    if _sem_path:
+        SEMANTIC_MODEL_PATH = str(DATA_DIR / _sem_path)
 
 
 _check_mineru_token()

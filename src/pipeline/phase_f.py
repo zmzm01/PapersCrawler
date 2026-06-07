@@ -3,20 +3,23 @@ Phase F: LLM paper summarization.
 """
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 
 from config import (
-    SKIP_PHASE_F, MAX_PAPERS_PER_PHASE,
+    SKIP_PHASE_F, MAX_PAPERS_PER_PHASE, DATA_DIR,
     load_keywords, LLM_API_CONFIG_DICT_SUMM, LLM_API_CONFIG_DICT_RELE,
     SUMMARIES_PROMPT, SKIP_FORMULA_FIX, FORCE_FORMULA_FIX, LLM_CONCURRENT_MAX,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger
 from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
 )
 from processors.paper_relevance import LLMAPICallError, LLMResponseParseError
+
+logger = logging.getLogger(__name__)
 
 
 def phase_f_llm_summary(db):
@@ -63,7 +66,17 @@ def phase_f_llm_summary(db):
     tasks = []
     for paper in relevant_papers:
         doi = paper["doi"]
-        mineru_text = paper["mineru_fulltext"] or ""
+
+        mineru_text = ""
+        output_dir = paper["mineru_output_dir"] or ""
+        if output_dir:
+            full_md_path = DATA_DIR.parent / output_dir / "full.md"
+            try:
+                if full_md_path.exists():
+                    mineru_text = full_md_path.read_text(encoding="utf-8")
+            except Exception:
+                logger.warning(f"Cannot read fulltext file: {full_md_path}")
+
         if not mineru_text.strip():
             logger.info(f"No MinerU text, skipping summary: {doi}")
             db.update_llm_summary_error(
