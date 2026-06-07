@@ -4,6 +4,11 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **Accepted Paper 处理** | Phase C 检测到 Accepted Paper 时从 cascade skip 改为 `delete_paper()` 直接删除；新增同名 DB 方法；新建 `tools/delete_accepted_papers.py` 清理脚本（支持 `--dry-run`/`--force`） | 06-06 |
+| **每日/每周调度脚本** | `runner.py` 新增 `DAILY_PHASES`/`WEEKLY_PHASES` 常量和 `run_daily()`/`run_weekly()` 方法；新建 `tools/schedule_daily.py`（A→F）和 `tools/schedule_weekly.py`（G→H），适配 cron | 06-07 |
+| **WebUI 修复** | Home 页标题图标间距增大；Papers 页适配 A/B/C/D 四级分类（badge + 图例 + skipped 置底）；新建 `md_to_pdf_katex.py`（KaTeX + cloakbrowser PDF 渲染，支持 \(\)/\[\] 公式） | 06-07 |
+| **PDF 下载重构** | `download_pdf()` 下载顺序反转（requests+cookie 优先 → JS fetch 兜底）；APS 导航容错（wait 5s→15s + try/retry）；UA 获取加 try 保护 | 06-07 |
+| **Phase F 修复** | `phase_f.py:43` `sqlite3.Row` 对象无 `.get()` 方法 → `p["llm_relevance_category"]` 方括号访问；`mineru_paper_parser.py` `print()` → `logger.info()` 残留修复 + `_download_and_extract()` 改用流式下载（`stream=True` + 分块写入，避免大 zip 整体加载到内存） | 06-07 |
 | **研究领域定义重构** | `keywords.yaml` 改为 `scope_definition`（6 子领域中文描述+topics）+ `irrelevant_fields` + `sub_domains_embedding`（英文 <300w）；`PaperRelevanceChecker` 改用 scope_definition 构建 prompt；LLM 输出改为四级分类 A/B/C/D；DB 新增 `llm_relevance_category`/`llm_relevance_subfields` 列；`get_relevant_papers()` 查询条件改为 `IN ('A','B')`；**99 passed** | 06-06 |
 | **Review Bug 修复** | 修复 review 指出的 5 个问题：config_save_prompt 缺参数、fix_json_invalid_escapes 双重调用、Phase E2 无代理、DOI 路径穿越、Phase B 重复代码分支 | 06-06 |
 | **WebUI 图标美化** | Font Awesome CDN 全局图标；侧边栏导航图标；按钮/卡片/架构图图标；新增 `.icon-mr`/`.icon-left` 样式 | 06-05 |
@@ -1234,3 +1239,141 @@ page.evaluate(fetch) → 兜底
 | 5 | Phase B 重复代码分支 | P2 🟢 | `src/pipeline/phase_b.py` | 提取通用 DB 更新到 if/else 外部，`if` 分支仅保留 warning 日志 |
 
 **测试结果**：`pytest tests/` → **99 passed**（保持不变）
+
+# 2026-06-07 — PDF 下载重构：顺序反转 + APS 导航容错
+
+**背景**：`download_pdf()` 长期以来的下载顺序是 JS fetch 主路径 → requests+cookie 回退。
+AIP 出版社的 CSP（Content Security Policy）拦截了浏览器的 `fetch()` API，每次下载都要
+等待 60s 超时才降级到 requests。同时，APS 的 `link.aps.org` → `journals.aps.org` 302 重定向
+偶发在执行 `page.evaluate()` 导航后二次跳转，导致 `Execution context was destroyed` 崩溃。
+
+## 3 处核心改动
+
+| # | 位置 | 改前 | 改后 |
+|---|------|------|------|
+| ① | `goto` 后等待 | `wait_for_timeout(5000)` | **`wait_for_timeout(15000)`** — 给 APS 二次导航多留稳定时间 |
+| ② | 同域 PDF 链接提取 | 裸 `page.evaluate()`，导航导致上下文销毁即崩溃 | **`for _attempt in range(2)` + try/except + 3s 重试** — 导航不稳定时自动恢复 |
+| ③ | 下载优先级 | **JS fetch（主）** → requests+cookie（回退） | **requests+cookie（主）** → JS fetch（兜底） |
+
+## 下载数据流对比
+
+```
+改前:
+  goto + wait 5s → DOM 查 PDF 链接（裸调用）→ JS fetch（主, 60s 超时）→ requests+cookie（回退）
+
+  问题:
+  - AIP: JS fetch 被 CSP 拦截，等 60s 才回退 → 白等
+  - APS: navigate 不稳定 → DOM 查询崩 → pdf_url 未替换 → 跨域 fetch 也崩
+
+改后:
+  goto + wait 15s → DOM 查 PDF 链接（try/retry）→ requests+cookie（主, 秒级失败）→ JS fetch（兜底）
+
+  优势:
+  - AIP: requests 绕过了 CSP，秒级返回
+  - APS: 15s 稳定窗口 + try/retry → 同域链接可靠提取 → requests + cookie 直下
+```
+
+## 设计考量
+
+### requests+cookie 为什么能覆盖所有 publisher
+
+`download_pdf()` 在提取同域 PDF 链接成功后，`pdf_url` 已被替换为当前页面**同域**的 URL
+（如 `journals.aps.org/prresearch/pdf/XXX`）。同域下 requests + 浏览器 cookie 发送
+HTTP 请求，不存在 CORS/CSP 问题。对于 Nature/Science/Cambridge/IOP/Optica 等 publisher，
+`citation_pdf_url` 本身就在同域，同样适用。
+
+JS fetch 保留为兜底，假设未来某个 publisher 的 PDF 需要完整的浏览器 JS 执行环境才能下载。
+
+### UA 降级保护
+
+`self.page.evaluate("navigator.userAgent")` 同样可能因导航销毁上下文而失败，
+改为 try/except + 硬编码 Chrome 120 UA 字符串兜底：
+
+```python
+try:
+    ua = self.page.evaluate("navigator.userAgent")
+except Exception:
+    ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+```
+
+### 三层防护与兜底（APS 导航容错）
+
+APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的二次导航可能
+在任何时刻销毁执行上下文。`download_pdf()` 的三层防护：
+
+| 层 | 防护 | 失效时 |
+|----|------|--------|
+| 1 | `wait_for_timeout(15000)` 等待充分稳定 | 进入第 2 层 |
+| 2 | `for _attempt in range(2)` + except 重试 | 保留原始 `pdf_url`（跨域） |
+| 3 | requests+cookie 全局兜底（第 2 层已非核心） | JS fetch 兜底（第 2 层失败时跨域 fetch 也可能失败） |
+
+# 2026-06-07 — 6GB 内存问题定位与修复
+
+**背景**：运行 `python src/main.py` 时进程占用 6GB 内存，远超预期。经分析发现为 Chromium 子进程泄露。
+
+**根因**：cloakbrowser 的 `context.close()` 虽包装了 `pw.stop()`，但 `pw.stop()` 仅断开 WebSocket 连接，**不保证 Chromium 子进程退出**。Phase C 按 publisher 分组顺序处理 7 个 publisher，每个启动一个 Chromium（~300MB），`close()` 后进程变成孤儿继续吃内存，累计 2GB+。加上 sentence-transformers 模型（~1.5GB）、Python 数据结构和 Phase E2 额外浏览器启动，达到 6GB。
+
+**修复**（`src/sources/publisher.py` `BasePublisherScraper.close()`）：
+- 在 `context.close()` 前显式调用 `browser = self.context.browser; browser.close()` 杀 Chromium 进程
+- 更新 docstring 说明原因
+
+# 2026-06-06 — Accepted Paper 生命周期修正：删除而非跳过
+
+**背景**：APS 在正式发表前会发布 Accepted Paper 版本（URL 含 `/accepted/`）。
+这些论文后续会以正式论文形式发表，且 **DOI 保持不变**。旧方案将其标记为
+`skipped` 并 cascade skip 下游阶段，导致：
+1. 论文永久 stuck 在 DB 中（`paper_doi_exists()` 返回 True 阻止重新发现）
+2. 正式发表后流水线无法重新获取和处理
+3. 66 篇同类论文累积在数据库中
+
+**解决**：检测到 Accepted Paper 时直接从 DB 删除，而非标记跳过。
+
+### 改前 vs 改后
+
+```
+改前: 发现 Accepted Paper → mark skipped → cascade skip D/E → 论文永久 stuck
+改后: 发现 Accepted Paper → DELETE FROM papers → Phase A 重新发现 → 正式论文正常处理
+```
+
+### DB 层 — `src/db/database.py`
+新增 `delete_paper(doi)` 方法。
+
+### Pipeline 层 — `src/pipeline/phase_c.py`
+`AcceptedPaperError` 处理逻辑从 6 行 `update_*` cascade skip 替换为单行 `db.delete_paper(paperDOI)`。
+
+### 工具层 — `tools/delete_accepted_papers.py`
+清理存量数据脚本，扫描 `publisher_page_fetched_error LIKE 'AcceptedPaper:%'`：
+```bash
+python tools/delete_accepted_papers.py --dry-run   # 预览（不删除）
+python tools/delete_accepted_papers.py              # 交互确认
+python tools/delete_accepted_papers.py --force       # 跳过确认
+```
+
+### 设计决策
+
+| 决策 | 理由 |
+|------|------|
+| **删除而非跳过** | Accepted Paper 的 DOI 与正式版相同，保留则永久阻塞重新发现 |
+| **不影响 NonResearchPageError** | Erratum / Comment 等永远不会变成正式论文，保留原有跳过逻辑 |
+| **不在 Phase A-CR 阶段过滤** | CrossRef API 不提供 "accepted" vs "published" 标记，唯一可靠检测在 Phase C |
+| **删除时机足够安全** | 论文必须先通过 A-CR 插入（有 DOI），再经 Phase C 访问页面确认——两阶段确认无误 |
+
+### 清理结果
+
+首次执行删除存量 66 篇 Accepted Paper（全部为 APS 期刊的非课题组方向论文），
+清理后 `pytest tests/` → **99 passed**（不变）。
+
+# 已知问题
+
+| # | 问题 | 影响 | 状态 |
+|---|------|------|------|
+| K1 | Pipeline 页面 Phase E2 (MinerU) 的日志无法在实时日志窗口中显示。根因推测为子进程 `FileHandler` 块缓冲导致 SSE 文件大小增量检测不到新内容。 | 低（日志仍在文件中，仅 SSE 流不可见） | 待复现后修复 |
+| K2 | `tools/convert_md_to_pdf.py` 使用 pandoc `--mathml` 路径，`\(`/`\[\]` 公式渲染空白。替代方案：`src/processors/md_to_pdf_katex.py`（KaTeX + cloakbrowser，支持公式，**实验性**，标题间距待优化） | 中 | 已提供替代工具 |
+
+**遗留计划**：
+
+| # | 问题 | 计划 |
+|---|------|------|
+| P2 | `get_all_papers()` 全表加载 | 改为 COUNT 聚合查询 |
+| P3 | `SemanticFilter` 类级缓存 | 避免多次加载 sentence-transformers 模型 |

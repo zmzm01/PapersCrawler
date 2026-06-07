@@ -31,14 +31,25 @@ MINERU_TOKEN=your_mineru_token_here
 DEEPSEEK_API_KEY=sk-your-deepseek-key
 ```
 
-**configs/keywords.yaml** — 填写研究领域关键词 + 领域段落描述（支持中英文）：
+**configs/keywords.yaml** — 填写研究领域定义（scope_definition 含子领域描述+关键词、irrelevant_fields 排除领域）：
 
 ```yaml
-domain_description: "(I) Laser-driven ion acceleration..."
-keywords:
-  - Laser-plasma acceleration
-  - Laser wakefield acceleration (LWFA)
-  - ...
+scope_definition:
+  laser_wakefield_acceleration:
+    description: "本方向关注基于等离子体的尾场加速技术..."
+    topics:
+      - "Laser Wakefield Acceleration (LWFA) — ..."
+  laser_driven_ion_acceleration:
+    description: "本方向关注利用超强激光驱动的离子加速机制..."
+    topics:
+      - "Target Normal Sheath Acceleration (TNSA) — ..."
+irrelevant_fields:
+  description: "以下领域即使出现相关关键词也应排除..."
+  topics:
+    - "Fusion: Tokamak, Stellarator, ICF — ..."
+sub_domains_embedding:
+  laser_wakefield_acceleration: >
+    Plasma-based wakefield acceleration driven by intense laser pulses...
 ```
 
 **SMTP 配置（可选，不配置则跳过 Phase H）：** 编辑 `.env` 文件，添加以下字段：
@@ -63,19 +74,41 @@ python src/config.py   # 打印已加载的期刊配置
 
 ### 3. 运行
 
+**完整流水线：**
 ```bash
 # 桌面环境（有显示器）
 python src/main.py
 
-# 无图形界面服务器
+# 无图形界面服务器（Phase C 需要虚拟显示器）
 xvfb-run -a python src/main.py
 ```
+
+**按调度模式运行：**
+
+| 模式 | 包含阶段 | 推荐频率 | 命令 |
+|------|---------|---------|------|
+| 每日 | A→F（发现到 LLM 总结） | 每天 | `python tools/schedule_daily.py` |
+| 每周 | G→H（报告生成到邮件推送） | 每周一 | `python tools/schedule_weekly.py` |
+
+```bash
+# 每日运行（配合 cron：每天 2:00）
+0 2 * * * cd /path/to/PapersCrawler && python tools/schedule_daily.py
+
+# 每周运行（配合 cron：每周一 9:00）
+0 9 * * 1 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
+
+# 无头服务器需加 xvfb-run（仅每日模式需要，Phase C 需要显示器）
+0 2 * * * cd /path/to/PapersCrawler && xvfb-run -a python tools/schedule_daily.py
+```
+
+两个调度脚本均尊重 `configs/settings.yaml` 中的 `SKIP_PHASE_*` 配置。
+通过 Web UI Config 页面的 SKIP 切换仅影响 Web UI Pipeline 按钮，不影响 CLI 调度脚本。
 
 ### 4. 运行测试
 
 **T1/T2 自动化测试（纯离线，零跳过）：**
 ```bash
-pytest tests/ -v                    # 83 个测试全部通过
+pytest tests/ -v                    # 99 个测试全部通过
 pytest tests/ -v -k "not pdf"       # 跳过 PDF 测试（需 pandoc 系统依赖）
 pytest tests/test_db.py -v          # 单模块
 ```
@@ -98,7 +131,7 @@ python tests/real/real_email.py      # SMTP 邮件发送测试
 | 命令 | 重置范围 | 默认条件 | 级联 | 典型用途 |
 |------|---------|---------|------|---------|
 | `reset-semantic` | `semantic_filter_*`, `semantic_similarity_score`, `semantic_best_subdomain`（5 列） | **全部**（无 status 过滤） | 无 | 修改 sub_domains 后重算语义分 |
-| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 domain_description 后重判 |
+| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 scope_definition 后重判 |
 | `reset-publisher` | `publisher_page_fetched_status/error`（2 列） | `failed`/`skipped`（跳过 NonResearchPageError） | 无 | Phase C 被 CF 拦截后重试 |
 | `reset-mineru` | `mineru_parse_*`（5 列） | `failed`/`skipped` | 无 | MinerU 超时后重试 |
 | `reset-summary` | `llm_summary_*`（4 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 prompt 后重生成总结 |
@@ -106,7 +139,7 @@ python tests/real/real_email.py      # SMTP 邮件发送测试
 
 **常用示例：**
 ```bash
-# 修改 domain_description 后重新判断所有论文相关性（含已成功的）
+# 修改研究领域定义后重新判断所有论文相关性（含已成功的）
 python tools/reset_pipeline.py reset-relevance --all
 
 # 仅重置历史判断失败/跳过的论文（修正遗留问题）
@@ -157,15 +190,23 @@ python tools/fix_summary_formulas.py --publisher aps
 
 修复逻辑：`FormulaFixer.needs_fix()` 先移除已正确包裹的 `\(...\)` / `\[...\]` 区域，仅当残留 `\command` 时调用 flash 模型。纯文本进/纯文本出，Python 的 `json.dumps()` 自动处理写入 DB 时的 JSON 转义。
 
-### 7. Markdown → PDF 转换（实验性）
+### 7. Markdown → PDF 转换
 
-报告默认输出为 Markdown。如需 PDF，可尝试：
+报告默认输出为 Markdown。如需 PDF，提供三种转换方式：
 
+**实验性 — KaTeX 路径（支持 \(\)/\[\] 公式）：**
+```bash
+python src/processors/md_to_pdf_katex.py data/reports/auto/report_20260607.md
+```
+使用 marked.js + KaTeX（与 WebUI 报告渲染完全相同）→ cloakbrowser 打印 PDF。公式渲染效果与浏览器一致。
+
+> ⚠️ **实验性功能**：标题间距、分节渲染等细节尚不完善。欢迎反馈改进。
+
+**备用 — pandoc + cloakbrowser：**
 ```bash
 python tools/convert_md_to_pdf.py data/reports/report_20260601.md
 ```
-
-> ⚠️ **已知问题**：公式渲染尚不支持，PDF 中公式部分显示为空白。如有公式渲染需求请先使用 Markdown 格式报告。欢迎贡献修复。
+> ⚠️ 已知问题：`\(`/`\[\]` 公式渲染空白。
 
 ### 8. Web UI
 
@@ -192,7 +233,7 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 |------|------|
 | **Home** | 项目介绍、技术栈标签、架构概览图、Quick Start 三步卡片、出版社/论文统计、快速入门指南 |
 | **Pipeline** | 10 阶段（A-RSS / A-CR 独立）Run/Reset 按钮 + 状态柱状图 + SSE 实时日志。Config 页跳过的阶段按钮灰显不可点击 |
-| **Papers** | 论文列表，默认按入库日期排序，可选按发表日期排序（含精度警告）。展示语义相似度分（可选）和 LLM 相关性状态 ✓/✗ |
+| **Papers** | 论文列表，默认按入库日期排序（skipped/pending 置底），可选按发表日期排序。展示语义相似度分（可选）和 LLM 相关性分类（A/B/C/D badge + 图例） |
 | **Report** | 勾选有 LLM 总结的论文 → 生成 Markdown 报告 → 浏览器预览 + 下载（写入 `data/reports/user/`） |
 | **Data Sources** | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源。写入 `data/journal_overrides.json` |
 | **Logs** | 流水线日志（`data/PaperCrawler.log`），支持按级别过滤 |
@@ -202,6 +243,9 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 ### 9. 调试与辅助工具
 
 ```bash
+# Markdown → PDF（实验性，KaTeX + cloakbrowser，支持公式）
+python src/processors/md_to_pdf_katex.py <input.md> [output.pdf]
+
 # 诊断 LLM Summary JSON 解析失败（打印错误上下文）
 python tools/debug_llm_summary.py <doi>
 
