@@ -295,6 +295,8 @@ class FormulaFixer:
             logger.debug(f"{tag}跳过修复: 无需修复")
             return text
         logger.info(f"{tag}正在修复公式格式 ({len(text)} 字符)")
+        # 模型和 api_url 均来自 self.config（由调用方从 config.py 传入），
+        # 因此 FormulaFixer 的模型配置与 settings.yaml 保持一致。
         payload = {
             "model": self.config.get("model", "deepseek-v4-flash"),
             "messages": [
@@ -348,11 +350,11 @@ if __name__ == "__main__":
     SUMMARIES_PROMPT = _prompt
     # 示例：请先设置 export DEEPSEEK_API_KEY="your-key"
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT)
-    paperMDpath = Path("/home/user/Code/PapersCrawler/TEST/MinerU_Paper_Parser/qdgp-tydj/full.md")
+    paperMDpath = Path("./TEST/MinerU_Paper_Parser/qdgp-tydj/full.md")
     full_text = paperMDpath.read_text()
     llm_summary = summarizer.call_deepseek_api(full_text, SUMMARIES_PROMPT)
     from pprint import pprint
     pprint(llm_summary)
-    save_dir = Path("/home/user/Code/PapersCrawler/TEST/MinerU_Paper_Parser")
+    save_dir = Path("./TEST/MinerU_Paper_Parser")
     with open(save_dir / "summary.json", 'w') as f:
         f.write(llm_summary)

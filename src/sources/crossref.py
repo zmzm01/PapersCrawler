@@ -405,7 +405,7 @@ if __name__ == "__main__":
     doi_OA = "10.1364/OE.582177"    # 开放获取论文
     doi_NOA = "10.1103/mw7c-8qy4"   # 非开放获取论文（可能没有完整元数据）
 
-    client = CrossrefClient(mailto="czmczm01@qq.com")
+    client = CrossrefClient(mailto="your_email@example.com")
 
     paper = client.fetch_by_doi(doi_OA)
     print("=" * 30)

@@ -1017,6 +1017,14 @@ class OpticaScraper(BasePublisherScraper):
             re.sub(r"\s+", " ", abstract).strip() if abstract else ""
         )
 
+        # 检测反爬拦截：title 有值但 abstract 为空，
+        # #articleBody 缺失说明正文被拦截（非 Cloudflare，不会触发现有 CF 检测）
+        if title and not abstract:
+            if not sel.xpath('//div[@id="articleBody"]'):
+                raise PageParseError(
+                    "Optica anti-bot blocked: article body (#articleBody) not found"
+                )
+
         return Paper(
             doi=doi,
             date=date,
@@ -1040,78 +1048,78 @@ if __name__ == "__main__":
     # url = "https://www.nature.com/articles/d41586-026-01575-9" # podcast
     # url = "https://www.nature.com/articles/d41586-026-01504-w" # highlight
     # url = "https://www.nature.com/articles/d41586-026-01558-w" # news
-    # nScraper = NatureScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/nature")
+    # nScraper = NatureScraper("./TEST/publisher_test/chrome_cache/nature")
     # nScraper.start_browser()
     # nScraper.fetch_page(url)
     # paper = nScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/nature_news.html")
+    # html_path = Path("./TEST/publisher_test/html_example/nature_news.html")
     # nScraper.save_page(html_path)
     # nScraper.close()
 
     # Science 测试
     # url = "https://www.science.org/doi/abs/10.1126/science.adx9954?af=R"
-    # sScraper = ScienceScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/science")
+    # sScraper = ScienceScraper("./TEST/publisher_test/chrome_cache/science")
     # sScraper.start_browser()
     # sScraper.fetch_page(url)
     # paper = sScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/science.html")
+    # html_path = Path("./TEST/publisher_test/html_example/science.html")
     # sScraper.save_page(html_path)
     # sScraper.close()
 
     # APS 测试
     # url = "https://journals.aps.org/prl/abstract/10.1103/yq7c-8bsv"
-    # apsScraper = APSScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/aps")
+    # apsScraper = APSScraper("./TEST/publisher_test/chrome_cache/aps")
     # apsScraper.start_browser()
     # apsScraper.fetch_page(url)
     # paper = apsScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/aps.html")
+    # html_path = Path("./TEST/publisher_test/html_example/aps.html")
     # apsScraper.save_page(html_path)
     # apsScraper.close()
 
     # Cambridge 测试
     # url = "https://dx.doi.org/10.1017/hpl.2025.10090?rft_dat=source%3Ddrss"
-    # cScraper = CambridgeScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/cambridge")
+    # cScraper = CambridgeScraper("./TEST/publisher_test/chrome_cache/cambridge")
     # cScraper.start_browser()
     # cScraper.fetch_page(url)
     # paper = cScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/cambridge.html")
+    # html_path = Path("./TEST/publisher_test/html_example/cambridge.html")
     # cScraper.save_page(html_path)
     # cScraper.close()
 
     # AIP 测试
     # url = "https://pubs.aip.org/aip/apl/article/128/19/194001/3391238/A-cavity-mediated-reconfigurable-coupling-scheme"
-    # aipScraper = AIPScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/AIP")
+    # aipScraper = AIPScraper("./TEST/publisher_test/chrome_cache/AIP")
     # aipScraper.start_browser()
     # aipScraper.fetch_page(url)
     # paper = aipScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/aip.html")
+    # html_path = Path("./TEST/publisher_test/html_example/aip.html")
     # aipScraper.save_page(html_path)
     # aipScraper.close()
 
     # IOP 测试
     # url = "https://iopscience.iop.org/article/10.1088/1361-6587/ae5adb"
-    # iopScraper = IOPScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/IOP")
+    # iopScraper = IOPScraper("./TEST/publisher_test/chrome_cache/IOP")
     # iopScraper.start_browser()
     # iopScraper.fetch_page(url)
     # paper = iopScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/iop.html")
+    # html_path = Path("./TEST/publisher_test/html_example/iop.html")
     # iopScraper.save_page(html_path)
     # iopScraper.close()
 
     # Optica 测试
     # url = "https://opg.optica.org/abstract.cfm?URI=optica-13-5-951"
     # url = "https://opg.optica.org/optica/fulltext.cfm?uri=optica-13-5-867"
-    # optScraper = OpticaScraper("/home/user/Code/PapersCrawler/TEST/publisher_test/chrome_cache/Optica")
+    # optScraper = OpticaScraper("./TEST/publisher_test/chrome_cache/Optica")
     # optScraper.start_browser(proxy={"server": "http://127.0.0.1:10808"}) # Optica 可能需要美国代理才不触发检测
     # optScraper.fetch_page(url, 5000)
     # paper = optScraper.parse_page()
     # pprint(paper)
-    # html_path = Path("/home/user/Code/PapersCrawler/TEST/publisher_test/html_example/optica.html")
+    # html_path = Path("./TEST/publisher_test/html_example/optica.html")
     # optScraper.save_page(html_path)
     # optScraper.close()
