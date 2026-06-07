@@ -33,7 +33,7 @@ def phase_d_semantic_filter(db, domain_config):
         return
     logger.info("--- Phase D: Semantic similarity (reference only) ---")
 
-    sub_domains = domain_config.get("sub_domains", {})
+    sub_domains = domain_config.get("sub_domains_embedding", {})
     if not sub_domains:
         logger.info("Phase D: no sub_domains configured, skipping")
         return
