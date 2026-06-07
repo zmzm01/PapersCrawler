@@ -1,13 +1,14 @@
 """
 Shared context for pipeline phases.
 
-Holds SCRAPER_MAP, scraper factory, and logger configuration.
+Holds SCRAPER_MAP, scraper factory, logger configuration,
+and shared utilities (journal overrides loading).
 """
 
-import logging
+import json
 import os
 
-from config import BROWSER_SESSION_DIR, LOG_FILE_PATH, PUBLISHER_PROXY
+from config import BROWSER_SESSION_DIR, PUBLISHER_PROXY, JOURNAL_OVERRIDES_PATH
 from sources.publisher import (
     NatureScraper, ScienceScraper, APSScraper,
     AIPScraper, IOPScraper, CambridgeScraper, OpticaScraper,
@@ -53,14 +54,54 @@ def create_scraper(publisher):
     return scraper
 
 
-# ---- Logger ----
-file_handler = logging.FileHandler(LOG_FILE_PATH, encoding='utf-8')
-console_handler = logging.StreamHandler()
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[file_handler, console_handler],
-)
+# ---- Journal override utilities (shared by phase_a and web/app) ----
 
-logger = logging.getLogger(__name__)
+def load_journal_overrides():
+    """Load per-journal enable/disable overrides from journal_overrides.json.
+
+    Returns a dict keyed by journal id, with fields:
+    enabled, rss_enabled, cr_enabled.
+    Missing keys fall back to publishers.yaml defaults.
+
+    Returns
+    -------
+    dict
+        {"journals": {jid: {...}, ...}} or {"journals": {}} on file missing/error.
+    """
+    if not JOURNAL_OVERRIDES_PATH.exists():
+        return {"journals": {}}
+    try:
+        return json.loads(JOURNAL_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, Exception):
+        return {"journals": {}}
+
+
+def journal_effective(journal, overrides, field):
+    """Resolve effective setting for a journal field.
+
+    Priority: journal_overrides.json > publishers.yaml.
+
+    Parameters
+    ----------
+    journal : dict
+        Single journal config entry from publishers.yaml.
+    overrides : dict
+        Loaded from journal_overrides.json (keyed by journal id).
+    field : str
+        One of 'enabled', 'rss_enabled', 'cr_enabled'.
+
+    Returns
+    -------
+    bool
+    """
+    jid = journal["id"]
+    ov = overrides.get("journals", {}).get(jid, {})
+    if field in ov:
+        return ov[field]
+    if field in ("rss_enabled", "cr_enabled") and "enabled" in ov:
+        return ov["enabled"]
+    if field in ("rss_enabled", "cr_enabled"):
+        if field in journal:
+            return journal[field]
+        return journal.get("enabled", True)
+    return journal.get(field, True)

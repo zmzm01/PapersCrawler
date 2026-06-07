@@ -2,61 +2,21 @@
 Phase A: RSS Feed fetching and CrossRef journal querying.
 """
 
-import json
 from datetime import datetime, timedelta, date
-from pathlib import Path
+
+import logging
 
 from config import (
     SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
     RAW_RSS_DIR, SKIP_NATURE_NEWS, CROSSREF_LOOKBACK_DAYS,
-    CROSSREF_MAILTO, DATA_DIR,
+    CROSSREF_MAILTO,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger
+from pipeline.base import load_journal_overrides, journal_effective
 from sources.rss import RSSProcessor
 from sources.crossref import CrossrefClient
 
-JOURNAL_OVERRIDES_PATH = DATA_DIR / "journal_overrides.json"
-
-
-def _load_journal_overrides():
-    """Load per-journal enable/disable overrides from data/journal_overrides.json.
-
-    Returns a dict keyed by journal id, with fields: enabled, rss_enabled, cr_enabled.
-    Missing keys fall back to publishers.yaml defaults.
-    """
-    if not JOURNAL_OVERRIDES_PATH.exists():
-        return {}
-    try:
-        return json.loads(JOURNAL_OVERRIDES_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, Exception):
-        return {}
-
-
-def _journal_effective(journal, overrides, field):
-    """Resolve effective setting for a journal field.
-
-    Priority: journal_overrides.json > publishers.yaml.
-    ``field`` is one of 'enabled', 'rss_enabled', 'cr_enabled'.
-    For 'rss_enabled'/'cr_enabled', falls back to 'enabled' if not specified.
-
-    Notes
-    -----
-    - CLI (overrides={}): 只读 publishers.yaml 的 enabled 字段
-    - WebUI (overrides 有值): overrides > publishers.yaml 的 enabled
-    """
-    jid = journal["id"]
-    ov = overrides.get("journals", {}).get(jid, {})
-    if field in ov:
-        return ov[field]
-    if field in ("rss_enabled", "cr_enabled") and "enabled" in ov:
-        return ov["enabled"]
-    # publishers.yaml 回退：rss_enabled/cr_enabled 不存在时取 enabled
-    if field in ("rss_enabled", "cr_enabled"):
-        if field in journal:
-            return journal[field]
-        return journal.get("enabled", True)
-    return journal.get(field, True)
+logger = logging.getLogger(__name__)
 
 
 def phase_a_rss(db, publishers, use_overrides=False):
@@ -78,10 +38,10 @@ def phase_a_rss(db, publishers, use_overrides=False):
     logger.info("--- Phase A-RSS: RSS Feed fetch ---")
     rsspro = RSSProcessor()
     timestamp = datetime.now().strftime("%Y%m%d")
-    overrides = _load_journal_overrides() if use_overrides else {}
+    overrides = load_journal_overrides() if use_overrides else {}
 
     for journal in publishers:
-        if not _journal_effective(journal, overrides, "rss_enabled"):
+        if not journal_effective(journal, overrides, "rss_enabled"):
             continue
 
         journalid = journal["id"]
@@ -152,11 +112,11 @@ def phase_a_crossref(db, publishers, use_overrides=False):
     logger.info(f"Query window: {from_date} ~ {to_date}")
 
     client = CrossrefClient(mailto=CROSSREF_MAILTO)
-    overrides = _load_journal_overrides() if use_overrides else {}
+    overrides = load_journal_overrides() if use_overrides else {}
     seen_issns = set()    # 去重：相同 ISSN 只请求一次
 
     for journal in publishers:
-        if not _journal_effective(journal, overrides, "cr_enabled"):
+        if not journal_effective(journal, overrides, "cr_enabled"):
             continue
 
         issn = journal.get("issn")
