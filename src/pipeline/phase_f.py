@@ -40,7 +40,7 @@ def phase_f_llm_summary(db):
 
     relevant_papers = [
         p for p in papers
-        if p.get("llm_relevance_category", "") in ("A", "B")
+        if p["llm_relevance_category"] in ("A", "B")
     ]
 
     domain_config = load_keywords()

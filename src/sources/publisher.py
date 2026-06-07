@@ -248,43 +248,36 @@ class BasePublisherScraper:
             logger.debug(f"访问论文页面建立上下文: {page_url}")
             self.page.goto(page_url, wait_until="domcontentloaded",
                            timeout=max(timeout, 120000))
-            self.page.wait_for_timeout(5000)
+            self.page.wait_for_timeout(15000)
 
             # 从页面提取同域 PDF 链接（解决 APS link.aps.org 跨域问题）
-            on_page_url = self.page.evaluate("""
-                () => {
-                    for (const a of document.querySelectorAll('a')) {
-                        if (a.textContent.trim() === 'PDF') {
-                            return new URL(a.getAttribute('href'),
-                                           location.origin).href;
+            on_page_url = None
+            for _attempt in range(2):
+                try:
+                    on_page_url = self.page.evaluate("""
+                        () => {
+                            for (const a of document.querySelectorAll('a')) {
+                                if (a.textContent.trim() === 'PDF') {
+                                    return new URL(a.getAttribute('href'),
+                                                   location.origin).href;
+                                }
+                            }
+                            return null;
                         }
-                    }
-                    return null;
-                }
-            """)
+                    """)
+                    break
+                except Exception:
+                    if _attempt == 0:
+                        logger.debug("上下文可能因导航被销毁，3s 后重试...")
+                        self.page.wait_for_timeout(3000)
             if on_page_url:
                 logger.debug(f"页面中找到同域 PDF 链接: {on_page_url}")
                 pdf_url = on_page_url
 
-        # 在当前页面上下文中 fetch PDF（继承 referrer / cookie）
-        # 这是主路径，覆盖 6/7 publisher（Nature、Science、APS、Cambridge、IOP）
+        # 先尝试 requests + 浏览器 cookies（最快，避免 AIP 等 publisher 的
+        # JS fetch 因 CSP 长时间等待超时）。失败则降级为 JS fetch 兜底。
         logger.debug(f"下载 PDF: {pdf_url}")
-        url_escaped = json.dumps(pdf_url)
         try:
-            raw = self.page.evaluate(f"""
-                async () => {{
-                    const resp = await fetch({url_escaped});
-                    const buf = await resp.arrayBuffer();
-                    return Array.from(new Uint8Array(buf));
-                }}
-            """)
-            pdf_body = bytes(raw) if raw else None
-        except Exception as fetch_err:
-            # 回退：Python requests + 浏览器 cookies
-            # 部分 publisher（如 AIP）的 CSP 拦截 JS fetch() API，
-            # 但 PDF URL 本身在 HTTP 层不设防（wget 可直接下载）。
-            # 从浏览器提取 cookies + User-Agent，用 Python requests 直连下载。
-            logger.debug(f"JS fetch failed ({fetch_err}), trying HTTP download with browser cookies")
             cookies = self.context.cookies()
             session = py_requests.Session()
             for c in cookies:
@@ -292,7 +285,11 @@ class BasePublisherScraper:
                     c["name"], c["value"],
                     domain=c.get("domain", ""),
                 )
-            ua = self.page.evaluate("navigator.userAgent")
+            try:
+                ua = self.page.evaluate("navigator.userAgent")
+            except Exception:
+                ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             session.headers.update({
                 "User-Agent": ua,
                 "Referer": page_url or "",
@@ -300,6 +297,22 @@ class BasePublisherScraper:
             resp = session.get(pdf_url, timeout=120)
             resp.raise_for_status()
             pdf_body = resp.content
+        except Exception as http_err:
+            # 兜底：JS fetch（完全继承浏览器上下文，应对 requests 无法处理的场景）
+            logger.debug(f"HTTP download failed ({http_err}), trying JS fetch...")
+            url_escaped = json.dumps(pdf_url)
+            try:
+                raw = self.page.evaluate(f"""
+                    async () => {{
+                        const resp = await fetch({url_escaped});
+                        const buf = await resp.arrayBuffer();
+                        return Array.from(new Uint8Array(buf));
+                    }}
+                """)
+                pdf_body = bytes(raw) if raw else None
+            except Exception as fetch_err:
+                logger.debug(f"JS fetch also failed ({fetch_err})")
+                pdf_body = None
 
         if pdf_body is None or pdf_body[:5] != b'%PDF-':
             raise RuntimeError(
@@ -314,9 +327,20 @@ class BasePublisherScraper:
         释放所有 Chromium 相关资源（浏览器进程、网络连接等），
         同时清理持久化 Session 数据目录，避免 data/session_cached/
         目录无限膨胀（单个 publisher 的 Chromium profile 可达数百 MB）。
+
+        注意：cloakbrowser 的 context.close() 虽包装了 pw.stop()，
+        但 pw.stop() 仅断开 WebSocket 连接，不保证 Chromium 子进程退出。
+        因此先显式调用 browser.close() 确保杀进程。
         """
         try:
-            self.context.close()
+            if hasattr(self, 'context') and self.context:
+                try:
+                    browser = self.context.browser
+                    if browser:
+                        browser.close()
+                except Exception:
+                    pass
+                self.context.close()
         except Exception:
             pass
         if self.user_data_dir and self.user_data_dir.exists():

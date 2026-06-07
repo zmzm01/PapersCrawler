@@ -13,22 +13,22 @@ scope_definition:
   # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
   # ---------- Sub-Domain 1: 尾场加速 ----------
-  laser_wakefield_acceleration:
-    description: >
-      本方向关注基于等离子体的尾场加速技术，利用高功率激光或高能
-      粒子束在等离子体中激发大振幅尾场，实现超高梯度粒子加速。
-      研究内容包括加速机制、注入与俘获过程、束流品质优化、能量增益、
-      束流稳定性、发射度控制、能散控制、多级加速结构以及束流输运与
-      匹配等问题。
-    topics:
-      - "Laser Wakefield Acceleration (LWFA) — 利用超短超强激光脉冲在等离子体中激发尾场加速电子"
-      - "Plasma Wakefield Acceleration (PWFA) — 利用高能电子束或质子束驱动等离子体尾场"
-      - "Self-injection and external injection — 电子注入与俘获机制、电离注入"
-      - "Beam loading — 束流负载效应对加速梯度和能散的影响"
-      - "Multi-stage acceleration — 多级加速结构与级间耦合"
-      - "Capillary discharge plasma waveguide — 毛细管放电等离子体波导用于导引激光"
-      - "High-brightness electron beam generation — 高品质电子束产生与操控"
-      - "Betatron radiation and X-ray sources — 电子束在等离子体中振荡产生的辐射"
+  # laser_wakefield_acceleration:
+  #   description: >
+  #     本方向关注基于等离子体的尾场加速技术，利用高功率激光或高能
+  #     粒子束在等离子体中激发大振幅尾场，实现超高梯度粒子加速。
+  #     研究内容包括加速机制、注入与俘获过程、束流品质优化、能量增益、
+  #     束流稳定性、发射度控制、能散控制、多级加速结构以及束流输运与
+  #     匹配等问题。
+  #   topics:
+  #     - "Laser Wakefield Acceleration (LWFA) — 利用超短超强激光脉冲在等离子体中激发尾场加速电子"
+  #     - "Plasma Wakefield Acceleration (PWFA) — 利用高能电子束或质子束驱动等离子体尾场"
+  #     - "Self-injection and external injection — 电子注入与俘获机制、电离注入"
+  #     - "Beam loading — 束流负载效应对加速梯度和能散的影响"
+  #     - "Multi-stage acceleration — 多级加速结构与级间耦合"
+  #     - "Capillary discharge plasma waveguide — 毛细管放电等离子体波导用于导引激光"
+  #     - "High-brightness electron beam generation — 高品质电子束产生与操控"
+  #     - "Betatron radiation and X-ray sources — 电子束在等离子体中振荡产生的辐射"
 
   # ---------- Sub-Domain 2: 激光驱动离子加速 ----------
   laser_driven_ion_acceleration:
@@ -134,8 +134,8 @@ irrelevant_fields:
 # 每条 < 300 words，仅英文，简练自然语言不含缩写
 # =============================================================================
 sub_domains_embedding:
-  laser_wakefield_acceleration: >
-    Plasma-based wakefield acceleration driven by intense laser pulses or high-energy particle beams achieving ultra-high acceleration gradients exceeding conventional radio-frequency cavities. Research covers electron injection mechanisms including self-injection and controlled external injection schemes, beam loading effects, and optimization of beam quality including energy spread and emittance. Multi-stage acceleration architectures and capillary discharge plasma waveguides are studied for compact high-brightness electron sources.
+  # laser_wakefield_acceleration: >
+  #   Plasma-based wakefield acceleration driven by intense laser pulses or high-energy particle beams achieving ultra-high acceleration gradients exceeding conventional radio-frequency cavities. Research covers electron injection mechanisms including self-injection and controlled external injection schemes, beam loading effects, and optimization of beam quality including energy spread and emittance. Multi-stage acceleration architectures and capillary discharge plasma waveguides are studied for compact high-brightness electron sources.
   laser_driven_ion_acceleration: >
     High-power laser interaction with solid or gas targets to accelerate ions and protons to multi-MeV energies. Mechanisms studied include target normal sheath acceleration and radiation pressure acceleration. Research explores structured and multilayer targets to enhance beam energy and quality. Particle-in-cell simulations guide experimental design for monoenergetic ion sources with controlled divergence and energy spread.
   laser_plasma_physics_and_diagnostics: >

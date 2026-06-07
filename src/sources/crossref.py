@@ -221,6 +221,7 @@ class CrossrefClient:
 
         url = f"{self.BASE_URL}/journals/{issn}/works"
 
+        last_error = None
         while True:
             params = {
                 "filter": (
@@ -232,13 +233,19 @@ class CrossrefClient:
                 "offset": offset,
             }
 
-            try:
-                response = self.session.get(url, params=params,
-                                            timeout=self.timeout)
-                response.raise_for_status()
-                data = response.json()
-            except requests.RequestException as e:
-                raise e
+            for attempt in range(self.max_retries):
+                try:
+                    response = self.session.get(url, params=params,
+                                                timeout=self.timeout)
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+                except requests.RequestException as e:
+                    last_error = e
+                    if attempt == self.max_retries - 1:
+                        raise
+                    time.sleep(2 ** attempt)
+                    continue
 
             items = data.get("message", {}).get("items", [])
             parse_errors = 0

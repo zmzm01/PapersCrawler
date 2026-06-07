@@ -47,7 +47,17 @@
       <td>
         {% if p.llm_relevance_status == 'success' %}
           {% set cat = p.llm_relevance_category or '?' %}
-          <span class="badge badge-{% if cat in ('A','B') %}success{% else %}failed{% endif %}">{{ cat }}</span>
+          {% if cat == 'A' %}
+          <span class="badge badge-success">A</span>
+          {% elif cat == 'B' %}
+          <span class="badge badge-warning">B</span>
+          {% elif cat == 'C' %}
+          <span class="badge badge-skipped">C</span>
+          {% elif cat == 'D' %}
+          <span class="badge badge-failed">D</span>
+          {% else %}
+          <span class="badge badge-pending">{{ cat }}</span>
+          {% endif %}
         {% elif p.llm_relevance_status == 'skipped' %}
         <span class="badge badge-skipped" data-i18n="papers.skipped">Skipped</span>
         {% else %}
@@ -59,6 +69,13 @@
     {% endfor %}
   </tbody>
 </table>
+
+<div class="relevance-legend">
+  <span><span class="badge badge-success">A</span> Direct relevance</span>
+  <span><span class="badge badge-warning">B</span> Method relevance</span>
+  <span><span class="badge badge-skipped">C</span> Peripheral</span>
+  <span><span class="badge badge-failed">D</span> Irrelevant</span>
+</div>
 
 <script>
 function changeSort() {

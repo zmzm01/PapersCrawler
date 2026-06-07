@@ -135,15 +135,23 @@ def phase_c_publisher(db, publishers):
                             cooloff = 0
                         else:
                             timeout = 45000
-                            cooloff = random.uniform(120, 180)
-                            logger.debug(f"Cooling {cooloff:.0f}s before retry 3 [{paperDOI}]")
-                            time.sleep(cooloff)
+                            # First-in-group: no prior failure, skip cooldown
+                            if len(retry_attempts) == 1:
+                                logger.debug(f"Extended timeout 45s (first-in-group) [{paperDOI}]")
+                            else:
+                                cooloff = random.uniform(120, 180)
+                                logger.debug(f"Cooling {cooloff:.0f}s before retry 3 [{paperDOI}]")
+                                time.sleep(cooloff)
                         scraper.fetch_page(page_url, timeout=timeout)
 
                         cf_blocked = (
                             "challenge-platform" in scraper.html
                             or "_cf_chl_opt" in scraper.html
                             or "cf-browser-verification" in scraper.html
+                            or ("cf-ray" in scraper.html.lower()
+                                and len(scraper.html) < 2000)
+                            or ("turnstile" in scraper.html.lower()
+                                and "challenge" in scraper.html.lower())
                         )
                         if cf_blocked:
                             logger.warning(f"Cloudflare detected (attempt {attempt+1}/3) [{paperDOI}]")
@@ -186,26 +194,9 @@ def phase_c_publisher(db, publishers):
 
                     except AcceptedPaperError:
                         consecutive_failures = 0
-                        logger.info(f"Accepted Paper (no full text), skipped: {paperDOI}")
-                        db.update_error_message(
-                            paperDOI, "publisher_page_fetched_status",
-                            FetchStatus.SKIPPED.value,
-                            "publisher_page_fetched_error",
-                            "AcceptedPaper: no full text available",
-                            "publisher_page_fetched_date", timestamp,
-                        )
-                        db.update_process_status(
-                            paperDOI, "semantic_filter_status",
-                            FetchStatus.SKIPPED.value,
-                            "semantic_filter_date", timestamp,
-                        )
-                        db.update_process_status(
-                            paperDOI, "llm_relevance_status",
-                            FetchStatus.SKIPPED.value,
-                            "llm_relevance_date", timestamp,
-                        )
+                        db.delete_paper(paperDOI)
+                        logger.info(f"Accepted Paper deleted (will be re-discovered when formally published): {paperDOI}")
                         paper_skipped = True
-                        logger.info(f"Accepted Paper, downstream phases cascaded: {paperDOI}")
                         break
 
                     except NonResearchPageError:
@@ -251,8 +242,9 @@ def phase_c_publisher(db, publishers):
                     except Exception:
                         pass
                     html_saved = ""
-                    if scraper and hasattr(scraper, 'page_url') and scraper.page_url:
-                        if scraper._save_error_html(scraper.page_url, f"phaseC_fail_{paperDOI}"):
+                    if scraper and hasattr(scraper, '_save_error_html'):
+                        save_url = getattr(scraper, 'page_url', None) or page_url
+                        if scraper._save_error_html(save_url, f"phaseC_fail_{paperDOI}"):
                             html_saved = f" | HTML saved to error dir"
                     if isinstance(last_error, PageParseError):
                         logger.warning(f"Phase C page parse error [{paperDOI}]: {error_msg} | type={error_type}{html_saved}")

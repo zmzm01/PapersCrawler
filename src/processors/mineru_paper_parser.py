@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://mineru.net/api/v4"     # MinerU API 基础地址
 POLL_INTERVAL = 3                           # 轮询间隔（秒）
 POLL_TIMEOUT = 600                          # 轮询超时（秒），10 分钟
+MAX_RETRIES = 3                             # HTTP 请求最大重试次数
 
 
 class MinerUParser:
@@ -41,6 +42,37 @@ class MinerUParser:
     MinerU 论文解析器。
     封装了 batch file upload 全流程：申请上传地址 -> 上传文件 -> 轮询结果 -> 下载 zip 并完整解压。
     """
+
+    def _request_with_retry(self, method, url, **kwargs):
+        """带重试的 HTTP 请求封装。
+
+        Parameters
+        ----------
+        method : str
+            HTTP 方法名 ('get', 'post', 'put').
+        url : str
+            请求 URL.
+        **kwargs
+            传递给 requests.Session.request 的额外参数.
+
+        Returns
+        -------
+        requests.Response
+        """
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = self._session.request(method, url, **kwargs)
+                resp.raise_for_status()
+                return resp
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    logger.debug(f"MinerU HTTP {method} {url[:60]} 失败 "
+                                 f"(attempt {attempt+1}/{MAX_RETRIES}), "
+                                 f"{2**attempt}s 后重试: {e}")
+                    time.sleep(2 ** attempt)
+        raise last_error
 
     def __init__(self, token):
         """
@@ -101,25 +133,24 @@ class MinerUParser:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # ---- 步骤 1: 申请批量上传地址 ----
-        print(f"[1/4] 请求上传地址: {pdf_path.name}")
+        logger.info(f"[1/4] 请求上传地址: {pdf_path.name}")
         batch_id, file_urls = self._create_batch(pdf_path.name)
 
         # ---- 步骤 2: 上传 PDF 文件 ----
         file_size = pdf_path.stat().st_size
-        print(f"[2/4] 上传文件 ({file_size} 字节)...")
+        logger.info(f"[2/4] 上传文件 ({file_size} 字节)...")
         self._upload_file(file_urls[0], pdf_path)
 
         # ---- 步骤 3: 轮询等待解析完成 ----
-        print(f"[3/4] 等待解析完成 (batch_id={batch_id})...")
+        logger.info(f"[3/4] 等待解析完成 (batch_id={batch_id})...")
         zip_url = self._poll_batch(batch_id, pdf_path.name)
 
         # ---- 步骤 4: 下载结果 zip 并完整解压 ----
-        print(f"[4/4] 下载结果并解压到 {output_dir} ...")
+        logger.info(f"[4/4] 下载结果并解压到 {output_dir} ...")
         self._download_and_extract(zip_url, output_dir)
 
         markdown_path = output_dir / "full.md"
-        print(f"完成! Markdown: {markdown_path}")
-        print(f"       图片目录: {output_dir / 'images'}")
+        logger.info(f"MinerU 完成! Markdown: {markdown_path}")
         return output_dir
 
     # ---------- 内部方法 ----------
@@ -152,8 +183,8 @@ class MinerUParser:
             "enable_table": True,
             "language": "en",
         }
-        resp = self._session.post(f"{BASE_URL}/file-urls/batch", json=payload)
-        resp.raise_for_status()
+        resp = self._request_with_retry("post", f"{BASE_URL}/file-urls/batch",
+                                        json=payload)
         result = resp.json()
 
         if result["code"] != 0:
@@ -171,7 +202,7 @@ class MinerUParser:
             file_path:  本地 PDF 文件路径。
         """
         with open(file_path, "rb") as f:
-            resp = requests.put(upload_url, data=f)
+            resp = self._request_with_retry("put", upload_url, data=f)
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"文件上传失败: HTTP {resp.status_code}")
 
@@ -207,8 +238,7 @@ class MinerUParser:
         start = time.time()
 
         while time.time() - start < POLL_TIMEOUT:
-            resp = self._session.get(url)
-            resp.raise_for_status()
+            resp = self._request_with_retry("get", url)
             result = resp.json()
 
             if result["code"] != 0:
@@ -256,19 +286,20 @@ class MinerUParser:
             zip_url:    结果 zip 包的下载 URL。
             output_dir: 解压目标目录（Path 对象）。
         """
-        resp = requests.get(zip_url)
-        resp.raise_for_status()
+        resp = self._request_with_retry("get", zip_url, stream=True)
+        resp.raise_for_status()  # 冗余保护 stream 模式下的残留错误
 
-        # 将 zip 内容写入临时文件
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-            tmp.write(resp.content)
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    tmp.write(chunk)
             tmp_path = tmp.name
 
         try:
             with zipfile.ZipFile(tmp_path, "r") as zf:
-                zf.extractall(output_dir)  # 完整解压到 output_dir
+                zf.extractall(output_dir)
         finally:
-            os.unlink(tmp_path)  # 删除临时 zip 文件
+            os.unlink(tmp_path)
 
 
 # ---------- 快捷函数 ----------

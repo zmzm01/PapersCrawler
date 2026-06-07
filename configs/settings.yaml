@@ -18,8 +18,8 @@ skip_phases:
   E: false           # LLM 相关性判断
   E2: false          # MinerU PDF 解析
   F: false           # LLM 论文总结
-  G: false           # 报告生成
-  H: true            # 邮件推送
+  G: true           # 报告生成
+  H: true           # 邮件推送
 
 # ---------------------------------------------------------------------------
 # LLM API 配置

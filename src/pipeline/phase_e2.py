@@ -13,7 +13,7 @@ from config import (
     SKIP_PHASE_E2, MINERU_TOKEN, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR,
 )
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import logger, create_scraper, SCRAPER_MAP
+from pipeline.base import logger, SCRAPER_MAP
 from processors.mineru_paper_parser import MinerUParser
 from sources.publisher import BasePublisherScraper
 
@@ -50,22 +50,39 @@ def phase_e2_mineru(db):
     # Group papers by publisher for per-publisher scraper with proper proxy
     papers_by_publisher = {}
     for p in papers_with_pdf:
-        publisher = p.get("publisher") or "__unknown__"
+        publisher = p["publisher"] or "__unknown__"
         papers_by_publisher.setdefault(publisher, []).append(p)
 
     success_count = 0
     failed_count = 0
 
     for publisher, group in papers_by_publisher.items():
-        if publisher in SCRAPER_MAP:
-            downloader = create_scraper(publisher)
-            close_downloader = True
-        else:
-            dl_dir = BROWSER_SESSION_DIR / "mineru_download"
-            dl_dir.mkdir(parents=True, exist_ok=True)
-            downloader = BasePublisherScraper(dl_dir)
-            downloader.start_browser()
-            close_downloader = True
+        # 使用独立 session 目录，不碰 publisher 主缓存
+        dl_dir = BROWSER_SESSION_DIR / "mineru_download" / publisher
+        dl_dir.mkdir(parents=True, exist_ok=True)
+        downloader = BasePublisherScraper(dl_dir)
+
+        # 从 SCRAPER_MAP 查代理配置，不复用 session
+        scraper_config = SCRAPER_MAP.get(publisher)
+        proxy = scraper_config[2] if scraper_config else None
+
+        logger.info(f"Phase E2: launching browser for '{publisher}' ({len(group)} papers)")
+        try:
+            downloader.start_browser(proxy)
+            logger.info(f"Phase E2: browser ready for '{publisher}'")
+        except Exception as e:
+            logger.error(f"Phase E2: browser launch failed for '{publisher}': {e}")
+            for paper in group:
+                db.update_mineru_error(
+                    paper["doi"], f"Browser launch failed: {e}"[:500],
+                    FetchStatus.FAILED.value, str(datetime.now()),
+                )
+                failed_count += 1
+            try:
+                downloader.close()
+            except Exception:
+                pass
+            continue
 
         try:
             for paper in group:
@@ -82,6 +99,7 @@ def phase_e2_mineru(db):
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                         tmp.write(pdf_bytes)
                         pdf_path = tmp.name
+                    del pdf_bytes  # 释放 PDF 原始字节，避免堆积在内存中
 
                     safe_doi = doi.replace("/", "_").replace("\\", "_").replace("..", "_")
                     mineru_output_dir = parser.parse_pdf(
@@ -120,7 +138,9 @@ def phase_e2_mineru(db):
                 time.sleep(delay)
 
         finally:
-            if close_downloader:
+            try:
                 downloader.close()
+            except Exception:
+                pass
 
     logger.info(f"Phase E2 done: {success_count} success, {failed_count} failed")

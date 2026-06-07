@@ -167,8 +167,11 @@ async def home_page(request: Request):
     publishers = load_publishers()
     p_count = len(publishers)
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    total = len(db.get_all_papers())
+    try:
+        db.init_db_papers()
+        total = len(db.get_all_papers())
+    finally:
+        db.conn.close()
     return templates.TemplateResponse(
         request, "home.html", {
             "publisher_count": p_count,
@@ -222,48 +225,46 @@ async def run_all():
 
 
 def _get_reset_cols(phase: str) -> list[str]:
-    """Derive the list of status column names for a given reset phase."""
+    """Return all column names that should be reset for a given phase."""
     cols, _, _ = RESET_DEFS[phase]
-    col_names = [c for i, c in enumerate(cols) if i % 2 == 0]
-    return list(dict.fromkeys(col_names))
+    return list(dict.fromkeys(cols))
 
 
 def _count_reset_impact(phase: str, reset_cols: list[str]) -> dict[str, int]:
-    """Count papers affected per column for a reset operation (read-only).
+    """Count papers affected for a reset operation (read-only).
 
-    For Phase D, skip REAL/NULL columns (semantic_similarity_score,
-    semantic_best_subdomain) — count only on the primary status column.
+    Uses RESET_DEFS condition to count affected rows.
+    Reports count keyed by primary status column only.
     """
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    status_cols = [c for c in reset_cols
-                   if c not in ("semantic_similarity_score", "semantic_best_subdomain")]
-    impact = {}
-    for c in status_cols:
-        db._validate_column(c)
-        cur = db.conn.execute(
-            f"SELECT COUNT(*) FROM papers WHERE {c} IN ('success','failed','skipped')"
-        )
-        impact[c] = cur.fetchone()[0]
-    return impact
+    try:
+        db.init_db_papers()
+        _, condition, _ = RESET_DEFS[phase]
+        impact = {}
+        status_col = next((c for c in reset_cols if c.endswith('_status')), None)
+        if status_col:
+            db._validate_column(status_col)
+            cur = db.conn.execute(f"SELECT COUNT(*) FROM papers WHERE {condition}")
+            impact[status_col] = cur.fetchone()[0]
+        return impact
+    finally:
+        db.conn.close()
 
 
 def _execute_reset(phase: str, reset_cols: list[str]):
-    """Execute the reset for the given columns."""
+    """Execute the reset for all columns in a phase, using the RESET_DEFS condition."""
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    for c in reset_cols:
-        if c in ("semantic_similarity_score", "semantic_best_subdomain"):
-            # Non-status columns → set to NULL
-            db.batch_reset_status(
-                [(c, None)],
-                "semantic_filter_status IN ('success','failed','skipped')",
-            )
-        else:
-            db.batch_reset_status(
-                [(c, "pending")],
-                f"{c} IN ('success','failed','skipped')",
-            )
+    try:
+        db.init_db_papers()
+        _, condition, _ = RESET_DEFS[phase]
+        status_like = {c for c in reset_cols if c.endswith(('_status', '_error', '_date'))}
+        for c in reset_cols:
+            if c in status_like:
+                db.batch_reset_status([(c, "pending")], condition)
+            else:
+                db.batch_reset_status([(c, None)], condition)
+    finally:
+        db.conn.close()
 
 
 @app.post("/pipeline/reset/{phase}")
@@ -317,9 +318,12 @@ async def pipeline_logs_sse():
 @app.get("/papers", response_class=HTMLResponse)
 async def papers_page(request: Request, sort: str = "created"):
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    sort_by = sort if sort in ("created", "published") else "created"
-    papers = db.get_papers(limit=100, sort_by=sort_by)
+    try:
+        db.init_db_papers()
+        sort_by = sort if sort in ("created", "published") else "created"
+        papers = db.get_papers(limit=100, sort_by=sort_by)
+    finally:
+        db.conn.close()
     return templates.TemplateResponse(request, "papers.html", {
         "papers": papers, "sort_by": sort_by,
     })
@@ -348,8 +352,11 @@ def _list_reports():
 @app.get("/report", response_class=HTMLResponse)
 async def report_page(request: Request):
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    papers = db.get_papers_with_summaries()
+    try:
+        db.init_db_papers()
+        papers = db.get_papers_with_summaries()
+    finally:
+        db.conn.close()
     publishers = load_publishers()
     publisher_names = sorted(set(p["publisher"] for p in publishers if p.get("enabled", True)))
     reports = _list_reports()
@@ -381,10 +388,12 @@ async def generate_report(request: Request):
     dois = body.get("dois", [])
 
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-
-    from pipeline.phase_g import phase_g_report
-    phase_g_report(db, AUTO_REPORT_DIR, USER_REPORT_DIR, doi_list=dois)
+    try:
+        db.init_db_papers()
+        from pipeline.phase_g import phase_g_report
+        phase_g_report(db, AUTO_REPORT_DIR, USER_REPORT_DIR, doi_list=dois)
+    finally:
+        db.conn.close()
 
     # Find latest user report
     user_dir = Path(USER_REPORT_DIR)
@@ -695,8 +704,11 @@ async def datasources_save(request: Request):
 @app.get("/subscriptions", response_class=HTMLResponse)
 async def subscriptions_page(request: Request):
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    subscribers = db.get_subscribers(active_only=False)
+    try:
+        db.init_db_papers()
+        subscribers = db.get_subscribers(active_only=False)
+    finally:
+        db.conn.close()
     subs_list = []
     for s in subscribers:
         subs_list.append({
@@ -718,8 +730,11 @@ async def subscriptions_add(request: Request):
     if not email or "@" not in email:
         return JSONResponse({"ok": False, "error": "Invalid email"})
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    ok = db.add_subscriber(email, name)
+    try:
+        db.init_db_papers()
+        ok = db.add_subscriber(email, name)
+    finally:
+        db.conn.close()
     return JSONResponse({"ok": ok, "error": None if ok else "Duplicate email"})
 
 
@@ -730,8 +745,11 @@ async def subscriptions_remove(request: Request):
     if not email:
         return JSONResponse({"ok": False, "error": "Missing email"})
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    db.remove_subscriber(email)
+    try:
+        db.init_db_papers()
+        db.remove_subscriber(email)
+    finally:
+        db.conn.close()
     return JSONResponse({"ok": True})
 
 
@@ -743,8 +761,11 @@ async def subscriptions_toggle(request: Request):
     if not email:
         return JSONResponse({"ok": False, "error": "Missing email"})
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    db.toggle_subscriber(email, 1 if active else 0)
+    try:
+        db.init_db_papers()
+        db.toggle_subscriber(email, 1 if active else 0)
+    finally:
+        db.conn.close()
     return JSONResponse({"ok": True})
 
 
@@ -754,11 +775,14 @@ async def subscriptions_import_env():
     cfg = load_email_config()
     to_addrs = cfg.get("to_addrs", []) if cfg else []
     db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    imported = 0
-    for addr in to_addrs:
-        if db.add_subscriber(addr.strip().lower()):
-            imported += 1
+    try:
+        db.init_db_papers()
+        imported = 0
+        for addr in to_addrs:
+            if db.add_subscriber(addr.strip().lower()):
+                imported += 1
+    finally:
+        db.conn.close()
     return JSONResponse({"ok": True, "imported": imported})
 
 

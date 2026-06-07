@@ -154,6 +154,17 @@ h3 {
 .badge-failed  { background: #fecaca; color: #991b1b; }
 .badge-skipped { background: #fef3c7; color: #92400e; }
 .badge-pending { background: #f1f5f9; color: #475569; }
+.badge-warning { background: #dbeafe; color: #1e40af; }
+
+.relevance-legend {
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.relevance-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
 
 /* Buttons */
 .btn {
@@ -598,6 +609,7 @@ h3 {
 
 /* ── Icon helpers ─────────────────────────────────────────────────── */
 .icon-mr { margin-right: 0.8rem; width: 1.2rem; text-align: center; }
+.hero h2 .icon-mr { margin-right: 1.4rem; }
 .icon-left { margin-right: 0.6rem; }
 
 /* Sidebar icons */
