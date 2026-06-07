@@ -36,6 +36,8 @@ def _get_effective_skip(overrides):
 
     }
     return {k: overrides.get(k, defaults[k]) for k in defaults}
+
+
 from db.database import DatabaseClient
 from pipeline.base import logger
 
@@ -107,7 +109,7 @@ def run_phases(phase_list=None, force=False):
 
     logger.info("Pipeline finished")
 
-
+ 
 def run_pipeline(force=False):
     """Run the full pipeline (equivalent to old main()).
 
@@ -117,6 +119,40 @@ def run_pipeline(force=False):
         If True, run ALL phases regardless of SKIP_PHASE_* config.
     """
     run_phases(force=force)
+
+
+# ── 便捷方法：每日/每周调度 ─────────────────────────────────────────
+
+DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F"]
+WEEKLY_PHASES = ["G", "H"]
+
+
+def run_daily():
+    """每日运行：发现 → LLM 总结。
+
+    等价于依次执行 Phase A-RSS / A-CR / B / C / D / E / E2 / F。
+    尊重 settings.yaml 中的 SKIP_PHASE_* 配置（CLI 模式，force=False）。
+
+    典型 cron 用法:
+
+        # 每天 2:00
+        0 2 * * * cd /path/to/PapersCrawler && python tools/schedule_daily.py
+    """
+    run_phases(phase_list=DAILY_PHASES)
+
+
+def run_weekly():
+    """每周运行：报告生成 → 邮件推送。
+
+    等价于依次执行 Phase G / H。
+    尊重 settings.yaml 中的 SKIP_PHASE_* 配置（CLI 模式，force=False）。
+
+    典型 cron 用法:
+
+        # 每周一 9:00
+        0 9 * * 1 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
+    """
+    run_phases(phase_list=WEEKLY_PHASES)
 
 
 if __name__ == "__main__":

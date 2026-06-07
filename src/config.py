@@ -315,11 +315,17 @@ def load_publishers():
     每个期刊包含: id, name, publisher, rss (RSS 地址), enabled 等字段。
 
     Returns:
-        list[dict]: 期刊配置字典列表
+        list[dict]: 期刊配置字典列表。文件不存在或解析失败时返回空列表。
     """
     path = CONFIG_DIR / "publishers.yaml"
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)["publishers"]
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return data.get("publishers", []) if data else []
+    except Exception:
+        return []
 
 
 def load_keywords():
@@ -346,8 +352,11 @@ def load_keywords():
     }
     if not path.exists():
         return empty
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception:
+        return empty
     if data is None:
         return empty
     return {

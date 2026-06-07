@@ -88,6 +88,15 @@ def phase_e_llm_relevance(db):
             try:
                 result_str = future.result()
                 result = json.loads(result_str)
+
+                if "PredictedCategory" not in result:
+                    logger.warning(f"LLM response missing PredictedCategory [{doi}], marking failed")
+                    db.update_llm_relevance_error(
+                        doi, "LLM response missing PredictedCategory field",
+                        FetchStatus.FAILED.value, timestamp,
+                    )
+                    continue
+
                 category = result.get("PredictedCategory", "D")
                 subfields = json.dumps(result.get("MatchedSubfields", []), ensure_ascii=False)
                 confidence = result.get("Confidence", "low")

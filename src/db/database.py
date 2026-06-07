@@ -953,9 +953,12 @@ class DatabaseClient:
                paperdate_rss, paperdate_crossref, paperdate_page,
                created_date,
                semantic_similarity_score, semantic_best_subdomain,
-               llm_relevance_result, llm_relevance_status
+               llm_relevance_result, llm_relevance_category,
+               llm_relevance_subfields, llm_relevance_status
         FROM papers
-        ORDER BY {order}
+        ORDER BY
+          CASE WHEN llm_relevance_status IN ('skipped', 'pending') THEN 1 ELSE 0 END,
+          {order}
         LIMIT ?
         """, (limit,))
         return cur.fetchall()
@@ -1163,4 +1166,15 @@ class DatabaseClient:
             "UPDATE subscribers SET active = ?, updated_date = ? WHERE email = ?",
             (active, str(datetime.now()), email),
         )
+        self.conn.commit()
+
+    def delete_paper(self, doi):
+        """从数据库中删除指定 DOI 的论文记录。
+
+        Parameters
+        ----------
+        doi : str
+            要删除的论文 DOI。
+        """
+        self.conn.execute("DELETE FROM papers WHERE doi = ?", (doi,))
         self.conn.commit()

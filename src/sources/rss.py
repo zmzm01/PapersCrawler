@@ -56,25 +56,32 @@ class RSSProcessor:
             "Connection": "keep-alive",
         })
 
-    def fetch_rss(self, url: str) -> str:
+    def fetch_rss(self, url: str, max_retries: int = 3) -> str:
         """
         通过复用 Session 获取指定 RSS Feed 的原始文本内容。
 
         Args:
             url (str): RSS Feed 的请求 URL
+            max_retries (int): 最大重试次数，默认 3
 
         Returns:
             str: 服务端返回的 RSS XML 文本（未经解析的原始字符串）
 
         Raises:
-            requests.RequestException: 当 HTTP 请求失败或超时时抛出
+            requests.RequestException: 当所有重试均失败时抛出
         """
-        # 不加请求头 Cambridge/AIP 等出版商会拦截请求，返回 403
-        # 请求头已在 __init__ 中统一设置，无需每次传入
-        response = self.session.get(url, timeout=30)
-        # 将非 2xx 状态码转为异常，方便上层统一处理
-        response.raise_for_status()
-        return response.text
+        import time
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(url, timeout=30)
+                response.raise_for_status()
+                return response.text
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+        raise last_error
 
     def save_raw_rss(self, xml_text: str, save_path: str):
         """
