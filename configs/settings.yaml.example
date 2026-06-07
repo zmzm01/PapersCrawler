@@ -67,7 +67,7 @@ publisher:
   # 需要代理的出版商（key 为 publisher 标识，value 为 cloakbrowser proxy 字典）
   proxy:
     optica:
-      server: "http://127.0.0.1:10808"
+      server: "http://proxy.example.com:8080"
 
 # ---------------------------------------------------------------------------
 # FormulaFixer 公式修复
