@@ -66,6 +66,15 @@
   <span id="keywords-status" class="save-status"></span>
 </div>
 
+<h3><i class="fa-solid fa-envelope icon-mr"></i><span data-i18n="config.email_template">Email Template</span></h3>
+<p class="text-muted" data-i18n="config.email_template_hint">Template name in <code>templates/email/</code> directory (without <code>.html</code>). Leave empty to use default.</p>
+<div class="conn-test-grid" style="align-items:center;">
+  <input type="text" id="email-template-input" value="{{ email_template_name if email_template_name != email_template_default else '' }}"
+         placeholder="{{ email_template_default }}" style="flex:1;padding:6px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:14px;">
+  <button class="btn btn-sm btn-primary" onclick="saveEmailTemplate()" data-i18n="config.save">Save</button>
+  <span id="email-template-status" class="save-status"></span>
+</div>
+
 <h3><i class="fa-solid fa-gear icon-mr"></i><span data-i18n="config.settings_title">settings.yaml</span></h3>
 <p class="text-muted" data-i18n="config.settings_hint">Runtime parameters: pipeline, publisher, LLM API, FormulaFixer settings. Changes require pipeline restart to take effect.</p>
 <textarea class="yaml-editor" id="settings-editor" rows="20">{{ settings_raw }}</textarea>
@@ -178,6 +187,24 @@ async function saveDomain() {
     status.className = 'save-status ok';
   } else {
     status.textContent = getI18n('config.syntax_error', {msg: data.error});
+    status.className = 'save-status error';
+  }
+}
+
+async function saveEmailTemplate() {
+  const input = document.getElementById('email-template-input');
+  const status = document.getElementById('email-template-status');
+  const r = await fetch('/config/save-email-template', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: input.value.trim()}),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = 'Saved';
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = data.error || 'Failed';
     status.className = 'save-status error';
   }
 }
