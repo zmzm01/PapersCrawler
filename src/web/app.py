@@ -49,6 +49,7 @@ from config import (
     DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
     LOG_FILE_PATH, DATA_DIR, CONFIG_DIR, PROMPTS_DIR,
     JOURNAL_OVERRIDES_PATH,
+    EMAIL_TEMPLATE_NAME, EMAIL_TEMPLATE_DEFAULT,
     load_publishers, load_keywords, load_settings,
     SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
     SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
@@ -483,6 +484,8 @@ async def config_page(request: Request):
         "domain_description": domain_description,
         "settings_raw": settings_raw,
         "prompts_raw": prompts,
+        "email_template_name": EMAIL_TEMPLATE_NAME,
+        "email_template_default": EMAIL_TEMPLATE_DEFAULT,
     })
 
 
@@ -542,6 +545,20 @@ async def config_save_settings(request: Request):
     _atomic_write(path, content)
     from config import reload_config
     reload_config()
+
+
+@app.post("/config/save-email-template")
+async def config_save_email_template(request: Request):
+    body = await request.json()
+    value = body.get("value", "").strip()
+    path = DATA_DIR / "email_template_override.txt"
+    if value:
+        path.write_text(value, encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+    from config import reload_config
+    reload_config()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/config/save-prompt/{name}")

@@ -3,17 +3,47 @@ Phase H: Email delivery.
 
 Sends today's auto-generated report if it exists,
 or a no-update notification if no report was generated.
+Uses HTML email template from templates/email/<name>.html.
 """
 
 import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import SKIP_PHASE_H, load_email_config
+from config import (
+    SKIP_PHASE_H, EMAIL_TEMPLATE_DIR, EMAIL_TEMPLATE_NAME, load_email_config,
+)
 from processors.email_sender import EmailSender
 from db.database import DatabaseClient
 
 logger = logging.getLogger(__name__)
+
+
+def _render_email_template(template_name: str, **kwargs) -> str:
+    """Load and render an HTML email template.
+
+    Parameters
+    ----------
+    template_name : str
+        Template filename stem (e.g. 'default' → templates/email/default.html).
+    **kwargs
+        Variables to substitute via str.format().
+
+    Returns
+    -------
+    str
+        Rendered HTML string. Falls back to plain text if template is missing.
+    """
+    path = EMAIL_TEMPLATE_DIR / f"{template_name}.html"
+    if not path.exists():
+        logger.warning(f"Email template not found: {path}, falling back")
+        return kwargs.get("report_title", "")
+    try:
+        html = path.read_text(encoding="utf-8")
+        return html.format(**kwargs)
+    except (KeyError, ValueError) as e:
+        logger.warning(f"Email template error {e}: {path}")
+        return kwargs.get("report_title", "")
 
 
 def phase_h_email(db, auto_dir):
@@ -21,6 +51,7 @@ def phase_h_email(db, auto_dir):
 
     Recipients are read from the subscribers table in DB first,
     falling back to .env SMTP_TO_ADDRS if no subscribers are configured.
+    Email body is rendered from the configured HTML template.
 
     Parameters
     ----------
@@ -75,25 +106,48 @@ def phase_h_email(db, auto_dir):
 
     if today_report.exists():
         subject = f"PapersCrawler Report - {date_str}"
-        body = (
-            f"您好，\n\n"
-            f"以下是近期的文献追踪报告。\n\n"
-            f"祝好！\nPapersCrawler 自动发送"
-        )
+        # 从报告文件中统计论文数量（## 标题即为论文条目）
+        report_text = today_report.read_text(encoding="utf-8")
+        paper_count = str(report_text.count("## "))
+        has_papers = True
+        paper_msg = f"共收录 {paper_count} 篇相关论文，详细内容请参见附件报告。"
+        attachment_section = """              <table role="presentation" style="width:100%;border-collapse:collapse;margin:24px 0;">
+                <tr>
+                  <td align="center" style="padding:16px;background-color:#f0fdf4;border-radius:6px;border:1px solid #bbf7d0;">
+                    <span style="font-size:13px;color:#16a34a;font-weight:500;">📎 报告文件已随此邮件附上</span>
+                  </td>
+                </tr>
+              </table>"""
         try:
-            sender.send(subject, body, body_type="plain", attachments=[str(today_report)])
+            sender.send(
+                subject,
+                _render_email_template(
+                    EMAIL_TEMPLATE_NAME,
+                    report_title=f"PapersCrawler 文献追踪报告 — {date_str}",
+                    paper_msg=paper_msg,
+                    attachment_section=attachment_section,
+                ),
+                body_type="html",
+                attachments=[str(today_report)],
+            )
             logger.info(f"Report sent: {today_report.name}")
         except Exception as e:
             logger.error(f"Email send failed: {e}")
     else:
         subject = f"PapersCrawler Report - {date_str} (No Updates)"
-        body = (
-            f"您好，\n\n"
-            f"本期无新增相关论文，无需关注。\n\n"
-            f"祝好！\nPapersCrawler 自动发送"
-        )
+        paper_msg = "本期无新增相关论文，无需关注。"
+        attachment_section = ""
         try:
-            sender.send(subject, body, body_type="plain")
+            sender.send(
+                subject,
+                _render_email_template(
+                    EMAIL_TEMPLATE_NAME,
+                    report_title=f"PapersCrawler 文献追踪报告 — {date_str}（无新增）",
+                    paper_msg=paper_msg,
+                    attachment_section=attachment_section,
+                ),
+                body_type="html",
+            )
             logger.info("No new papers, sent no-update notification")
         except Exception as e:
             logger.error(f"Email send failed: {e}")

@@ -58,6 +58,9 @@ RAW_PAGE_DIR = DATA_DIR / "raw" / "page"
 REPORT_DIR = DATA_DIR / "reports"                # 报告根目录
 AUTO_REPORT_DIR = DATA_DIR / "reports" / "auto"  # 自动日报目录 (Phase G 自动)
 USER_REPORT_DIR = DATA_DIR / "reports" / "user"  # 用户自选报告目录 (Web UI)
+
+# 邮件模板目录
+EMAIL_TEMPLATE_DIR = BASE_DIR / "templates" / "email"
 MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 
 # Web UI journal enable/disable 覆写文件
@@ -306,6 +309,16 @@ _sem_path = _sem.get("model_path")
 if _sem_path:
     SEMANTIC_MODEL_PATH = str(DATA_DIR / _sem_path)
 
+# 邮件模板配置 — 从 settings.yaml 读取，WebUI Config 可覆盖
+_EMAIL_CFG = _SETTINGS.get("email", {})
+_EMAIL_TEMPLATE_DEFAULT = _EMAIL_CFG.get("template", "default")
+EMAIL_TEMPLATE_DEFAULT = _EMAIL_TEMPLATE_DEFAULT  # public for WebUI display
+_EMAIL_TEMPLATE_OVERRIDE = DATA_DIR / "email_template_override.txt"
+if _EMAIL_TEMPLATE_OVERRIDE.exists():
+    EMAIL_TEMPLATE_NAME = _EMAIL_TEMPLATE_OVERRIDE.read_text(encoding="utf-8").strip()
+else:
+    EMAIL_TEMPLATE_NAME = _EMAIL_TEMPLATE_DEFAULT
+
 # ==================================================================
 # 配置文件加载函数
 # ==================================================================
@@ -515,7 +528,8 @@ def reload_config():
         PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX, \
         PUBLISHER_MAX_CONSECUTIVE_FAILURES, PUBLISHER_PROXY, \
         SKIP_FORMULA_FIX, FORCE_FORMULA_FIX, LLM_CONCURRENT_MAX, \
-        SEMANTIC_MODEL_PATH
+        SEMANTIC_MODEL_PATH, \
+        EMAIL_TEMPLATE_NAME, EMAIL_TEMPLATE_DEFAULT
 
     _SETTINGS = load_settings() or {}
     _llm_cfg = _SETTINGS.get("llm", {})
@@ -566,6 +580,16 @@ def reload_config():
     _sem_path = _sem.get("model_path")
     if _sem_path:
         SEMANTIC_MODEL_PATH = str(DATA_DIR / _sem_path)
+
+    # 刷新邮件模板配置
+    _email_cfg = _SETTINGS.get("email", {})
+    _email_template_default = _email_cfg.get("template", "default")
+    EMAIL_TEMPLATE_DEFAULT = _email_template_default
+    _email_template_override = DATA_DIR / "email_template_override.txt"
+    if _email_template_override.exists():
+        EMAIL_TEMPLATE_NAME = _email_template_override.read_text(encoding="utf-8").strip()
+    else:
+        EMAIL_TEMPLATE_NAME = _email_template_default
 
 
 _check_mineru_token()
