@@ -5,6 +5,7 @@ Phase C: Publisher page scraping via cloakbrowser.
 import json
 import logging
 import random
+import re
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -147,29 +148,61 @@ def phase_c_publisher(db, publishers):
                                 time.sleep(cooloff)
                         scraper.fetch_page(page_url, timeout=timeout)
 
-                        cf_blocked = (
-                            "challenge-platform" in scraper.html
-                            or "_cf_chl_opt" in scraper.html
-                            or "cf-browser-verification" in scraper.html
-                            or ("cf-ray" in scraper.html.lower()
-                                and len(scraper.html) < 2000)
-                            or ("turnstile" in scraper.html.lower()
-                                and "challenge" in scraper.html.lower())
-                        )
-                        if cf_blocked:
-                            logger.warning(f"Cloudflare detected (attempt {attempt+1}/3) [{paperDOI}]")
-                            if attempt < 2:
-                                continue
-                            raise PageParseError(
-                                "Title, DOI and Abstract all empty (possible CF block)"
-                            )
-
+                        # Always try parsing first — CF/bot markers in HTML
+                        # (e.g. _cf_chl_opt from CDN scripts) do NOT necessarily
+                        # mean the page is blocked.  Only treat as a bot block
+                        # when parsing also returns empty results.
                         paperPage = scraper.parse_page()
 
                         if not paperPage.title and not paperPage.doi and not paperPage.abstract:
-                            if attempt < 2:
+                            # Empty parse — check for bot detection patterns
+                            html_lower = scraper.html.lower()
+                            page_title_snippet = ""
+                            try:
+                                mt = re.search(
+                                    r'<title>(.*?)</title>',
+                                    scraper.html, re.IGNORECASE | re.DOTALL,
+                                )
+                                if mt:
+                                    page_title_snippet = mt.group(1).strip()[:120]
+                            except Exception:
+                                pass
+                            title_lower = (page_title_snippet or "").lower()
+
+                            bot_blocked = (
+                                "challenge-platform" in scraper.html
+                                or "_cf_chl_opt" in scraper.html
+                                or "cf-browser-verification" in scraper.html
+                                or ("cf-ray" in html_lower
+                                    and len(scraper.html) < 2000)
+                                or ("turnstile" in html_lower
+                                    and "challenge" in html_lower)
+                                or "radware" in html_lower
+                                or "bot manager" in html_lower
+                                or "radware" in title_lower
+                                or "bot manager" in title_lower
+                                or "captcha" in title_lower
+                            )
+
+                            if bot_blocked:
+                                logger.warning(
+                                    f"Bot detection page (attempt {attempt+1}"
+                                    f"/{len(retry_attempts)}) [{paperDOI}]"
+                                    + (f" | page title: {page_title_snippet}"
+                                       if page_title_snippet else "")
+                                )
+                            else:
+                                logger.warning(
+                                    f"Empty parse result (attempt {attempt+1}"
+                                    f"/{len(retry_attempts)}) [{paperDOI}]"
+                                )
+
+                            if attempt < len(retry_attempts) - 1:
                                 continue
-                            raise PageParseError("Title, DOI and Abstract all empty")
+                            raise PageParseError(
+                                "Title, DOI and Abstract all empty"
+                                + (" (bot block)" if bot_blocked else "")
+                            )
 
                         title_lower = (paperPage.title or "").lower()
                         abstract_text = (paperPage.abstract or "").strip()
@@ -228,6 +261,31 @@ def phase_c_publisher(db, publishers):
 
                     except Exception as e:
                         last_error = e
+                        # If parse_page() raised an error and the HTML contains
+                        # bot-detection markers, treat it as a bot block and
+                        # retry with longer timeout instead of giving up early.
+                        if scraper and hasattr(scraper, 'html') and scraper.html:
+                            html_lower = scraper.html.lower()
+                            is_bot = (
+                                "challenge-platform" in scraper.html
+                                or "_cf_chl_opt" in scraper.html
+                                or "cf-browser-verification" in scraper.html
+                                or ("cf-ray" in html_lower
+                                    and len(scraper.html) < 2000)
+                                or ("turnstile" in html_lower
+                                    and "challenge" in html_lower)
+                                or "radware" in html_lower
+                                or "bot manager" in html_lower
+                            )
+                            if is_bot:
+                                logger.warning(
+                                    f"Bot block caused parse error (attempt "
+                                    f"{attempt+1}/{len(retry_attempts)})"
+                                    f" [{paperDOI}]: {e}"
+                                )
+                                if attempt < len(retry_attempts) - 1:
+                                    continue
+                                # fall through to error handling below
                         if attempt == 0:
                             continue
                         break
@@ -238,8 +296,7 @@ def phase_c_publisher(db, publishers):
                     page_title_snippet = ""
                     try:
                         if scraper and hasattr(scraper, 'html') and scraper.html:
-                            import re as _re
-                            mt = _re.search(r'<title>(.*?)</title>', scraper.html, _re.IGNORECASE | _re.DOTALL)
+                            mt = re.search(r'<title>(.*?)</title>', scraper.html, re.IGNORECASE | re.DOTALL)
                             if mt:
                                 page_title_snippet = mt.group(1).strip()[:120]
                     except Exception:
