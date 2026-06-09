@@ -237,26 +237,9 @@ def phase_c_publisher(db, publishers):
 
                     except NonResearchPageError:
                         consecutive_failures = 0
-                        logger.info(f"Non-research page, skipped: {paperDOI}")
-                        db.update_error_message(
-                            paperDOI, "publisher_page_fetched_status",
-                            FetchStatus.SKIPPED.value,
-                            "publisher_page_fetched_error",
-                            "NonResearchPageError: not a research article",
-                            "publisher_page_fetched_date", timestamp,
-                        )
-                        db.update_process_status(
-                            paperDOI, "semantic_filter_status",
-                            FetchStatus.SKIPPED.value,
-                            "semantic_filter_date", timestamp,
-                        )
-                        db.update_process_status(
-                            paperDOI, "llm_relevance_status",
-                            FetchStatus.SKIPPED.value,
-                            "llm_relevance_date", timestamp,
-                        )
+                        db.delete_paper(paperDOI)
+                        logger.info(f"Non-research page deleted: {paperDOI}")
                         paper_skipped = True
-                        logger.info(f"Non-research page, downstream phases cascaded: {paperDOI}")
                         break
 
                     except Exception as e:
