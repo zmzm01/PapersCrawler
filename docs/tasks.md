@@ -4,6 +4,10 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **PDF 复用** | Phase E2 增加本地 PDF 复用：`paper.pdf` 已存在且有效时跳过下载，仅校验 `%PDF-` 头部；无效时删除重下 | 06-09 |
+| **Phase C 反爬检测重构** | 移除 parse_page() 前的 CF 预检（误判 APS/AIP 含 CF CDN 脚本的正常页面）；bot 检测移至 parse_page() 之后，仅当 title+doi+abstract 全空时才检查；新增 Radware Bot Manager / captcha 检测（HTML + `<title>`）；异常处理中也增加 bot 检测（bot 拦截导致的异常走完整重试而非 attempt 0 终止）；修复 first-in-group 日志硬编码 `/3` → `len(retry_attempts)` | 06-09 |
+| **MinerU OSS 403 修复** | `_upload_file()` 改用独立 `requests.Session()`（不继承 `self._session` 的 `Content-Type: application/json`），显式设置 `Content-Type: application/pdf`；OSS 预签名 URL 对 Content-Type 敏感，JSON header 导致签名校验失败 | 06-09 |
+| **PDF 下载即保存** | `phase_e2.py` PDF 下载后立即保存到 `MINERU_OUTPUT_DIR/<safe_doi>/paper.pdf`（不再用 tempfile），MinerU 上传失败时 PDF 不丢失；新增 `%PDF-` 头部校验，非 PDF 内容直接报错；移除 `tempfile`/`shutil` 导入和 `pdf_path` 清理逻辑 | 06-09 |
 | **架构改进** | 全面 review + 8 项架构修复：Phase 级异常保护、force 参数拆分、消除重复常量、原子写入、FormulaFixer 注释确认、Logger 统一（支持 LOG_LEVEL）、ConfigManager reload_config()、去除 mineru_fulltext 冗余存储 | 06-07 |
 | **Bug 修复** | 修复 review 指出的 9 个 bug：_get_reset_cols 列过滤错误、DB 连接泄漏、fetch_by_journal 零重试、error HTML 保存缺失、PredictedCategory 静默归 D、配置加载无文件缺失保护、RSS 零重试、MinerU 零重试、CF 检测增强 | 06-07 |
 | **Accepted Paper 处理** | Phase C 检测到 Accepted Paper 时从 cascade skip 改为 `delete_paper()` 直接删除；新增同名 DB 方法；新建 `tools/delete_accepted_papers.py` 清理脚本（支持 `--dry-run`/`--force`） | 06-06 |
