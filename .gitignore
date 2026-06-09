@@ -11,3 +11,6 @@ configs/settings.yaml
 configs/prompts/fix.yaml
 configs/prompts/relevance.yaml
 configs/prompts/summary.yaml
+
+# 评审记录
+docs/reviews/

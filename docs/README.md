@@ -66,6 +66,16 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 
 > ⚠️ `.env` 包含真实密钥，**不要提交到公开仓库**。
 
+**邮件 HTML 模板（可选）：** Phase H 发送的邮件使用 `templates/email/default.html`
+作为正文模板。可通过 `configs/settings.yaml` 的 `email.template` 字段指定其他模板名，
+或在 Web UI Config 页面覆盖。模板使用 `str.format()` 渲染，支持以下变量：
+
+| 变量 | 类型 | 说明 |
+|------|------|------|
+| `{report_title}` | str | 邮件标题（含日期） |
+| `{paper_count}` | str | 论文数量 |
+| `{has_papers}` | str | 是否有论文（"True" / "False"） |
+
 配置自检：
 
 ```bash
@@ -108,13 +118,18 @@ LOG_LEVEL=WARNING python src/main.py # 仅关键信息
 两个调度脚本均尊重 `configs/settings.yaml` 中的 `SKIP_PHASE_*` 配置。
 通过 Web UI Config 页面的 SKIP 切换仅影响 Web UI Pipeline 按钮，不影响 CLI 调度脚本。
 
+`schedule_daily.py` 在运行前自动重置 `publisher_page_fetched_status = 'failed'` 的论文为 `pending`，
+使因 Cloudflare 瞬态拦截等偶发原因失败的 Publisher 页面在每次每日运行时自动获得重试机会。
+
+日志文件 `data/PaperCrawler.log` 使用 `RotatingFileHandler` 管理，单文件上限 10MB，保留最近 5 个备份。
+
 **阶段独立运行**：各阶段通过数据库状态列隔离，可单独重跑任一 phase 而不影响已完成的结果（如 Phase E 失败后只需 `reset-relevance` 再重跑，无需重跑 Phase C）。
 
 ### 4. 运行测试
 
 **T1/T2 自动化测试（纯离线，零跳过）：**
 ```bash
-pytest tests/ -v                    # 99 个测试全部通过
+pytest tests/ -v                    # 99 个测试全部通过（零跳过）
 pytest tests/ -v -k "not pdf"       # 跳过 PDF 测试（需 pandoc 系统依赖）
 pytest tests/test_db.py -v          # 单模块
 ```

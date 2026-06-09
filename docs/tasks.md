@@ -4,6 +4,10 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **非论文页删除** | NonResearchPageError 处理从 cascade skip 改为 `db.delete_paper()` 直接删除，与 AcceptedPaperError 一致 | 06-10 |
+| **日志轮转** | 3 个入口点（`main.py`/`schedule_daily.py`/`schedule_weekly.py`）的 `FileHandler` 替换为 `RotatingFileHandler`（10MB × 5 backup） | 06-10 |
+| **邮件 HTML 模板** | 新增 `templates/email/default.html`（字段：report_title/paper_count/has_papers）；`phase_h.py` 改用 HTML 模板渲染 + `body_type="html"`；`settings.yaml` 新增 `email.template` 配置；WebUI Config 页支持模板名覆盖 | 06-10 |
+| **自动重试** | `schedule_daily.py` 入口自动重置 `publisher_page_fetched_status = 'failed'` → `pending`，使失败论文在每次每日运行时自动获得重试 | 06-10 |
 | **PDF 复用** | Phase E2 增加本地 PDF 复用：`paper.pdf` 已存在且有效时跳过下载，仅校验 `%PDF-` 头部；无效时删除重下 | 06-09 |
 | **Phase C 反爬检测重构** | 移除 parse_page() 前的 CF 预检（误判 APS/AIP 含 CF CDN 脚本的正常页面）；bot 检测移至 parse_page() 之后，仅当 title+doi+abstract 全空时才检查；新增 Radware Bot Manager / captcha 检测（HTML + `<title>`）；异常处理中也增加 bot 检测（bot 拦截导致的异常走完整重试而非 attempt 0 终止）；修复 first-in-group 日志硬编码 `/3` → `len(retry_attempts)` | 06-09 |
 | **MinerU OSS 403 修复** | `_upload_file()` 改用独立 `requests.Session()`（不继承 `self._session` 的 `Content-Type: application/json`），显式设置 `Content-Type: application/pdf`；OSS 预签名 URL 对 Content-Type 敏感，JSON header 导致签名校验失败 | 06-09 |
@@ -1421,6 +1425,98 @@ Phase C 将其捕获后走重试/失败逻辑，不再误标 success。
 | `report_*` | 重置 | 重置（不变） |
 
 之前只重置 Phase D/E/G，现在加入 Phase C，使得空 abstract 论文可以触发重新抓取。
+
+# 2026-06-10 — 四项改进：非论文页删除、日志轮转、邮件模板、自动重试
+
+## 1. 非论文页面直接删除
+
+**动机**：NonResearchPageError 之前做 cascade skip（标记 skipped + 级联下游），但非论文页面
+
+永远不可能变"相关"，留在数据库中只会占据空间、增加查询噪音。AcceptedPaperError 已经用 delete_paper()
+直接删除，NonResearchPageError 也应一致。
+
+**变更**（`src/pipeline/phase_c.py`）：
+
+之前 cascade skip 逻辑（约 14 行）：
+```
+except NonResearchPageError:
+    consecutive_failures = 0
+    update_error_message(...)        # publisher_page_fetched → skipped
+    update_process_status(...)       # semantic_filter_status → skipped
+    update_process_status(...)       # llm_relevance_status → skipped
+    paper_skipped = True
+```
+
+改为 5 行：
+```
+except NonResearchPageError:
+    consecutive_failures = 0
+    db.delete_paper(paperDOI)
+    logger.info(f"Non-research page deleted: {paperDOI}")
+    paper_skipped = True
+```
+
+## 2. 日志轮转（RotatingFileHandler）
+
+**动机**：`FileHandler` 不轮转，长期运行后 `data/PaperCrawler.log` 持续增长，
+可能耗尽磁盘空间。WebUI Logs 页面读取整个文件也变慢。
+
+**变更**：3 个入口点统一替换。
+| 文件 | 改前 | 改后 |
+|------|------|------|
+| `src/main.py` | `logging.FileHandler` | `RotatingFileHandler(10MB, backupCount=5)` |
+| `tools/schedule_daily.py` | 同上 | 同上 |
+| `tools/schedule_weekly.py` | 同上 | 同上 |
+
+## 3. 邮件 HTML 模板
+
+**动机**：Phase H 发送纯文本邮件，无格式、无品牌。HTML 邮件能提供更好的阅读体验。
+
+### 模板设计（已确认的最终方案）
+
+**模板文件**：`templates/email/default.html`
+- 使用 `str.format()` 替换，不引入 Jinja2 等新依赖
+- 模板变量：`{report_title}`、`{paper_count}`、`{has_papers}`
+- 报告文件作为附件发送，正文无论文列表（通过邮件直接分享报告，避免正文过长）
+- 一个固定模板（详细版 vs 简化版的差异在只有 3 个字段时过于微小，不分开）
+- Footer: 无运行时信息（不暴露服务器路径、版本号等）
+
+### 相关变更
+
+| 文件 | 变更 |
+|------|------|
+| `templates/email/default.html` | **新建**。HTML 邮件模板，蓝色 header + 正文 + 附件提示 + 灰色 footer |
+| `configs/settings.yaml` | 新增 `email.template: "default"` 配置项 |
+| `src/config.py` | 新增 `EMAIL_TEMPLATE_DIR`、`EMAIL_TEMPLATE_NAME`、`EMAIL_TEMPLATE_DEFAULT`；支持 `email_template_override.txt` 覆盖 |
+| `src/pipeline/phase_h.py` | 新增 `_render_email_template()` 工具函数；`phase_h_email` 改用 HTML 渲染 + `body_type="html"` |
+| `src/web/app.py` | 新增 `POST /config/save-email-template` 端点 |
+| `src/web/templates/config.html` | 新增 Email Template 文本输入框 + 保存按钮 |
+
+## 4. 自动重试
+
+**动机**：Phase C 的 Publisher 抓取可能偶发失败（Cloudflare 瞬态拦截、网络抖动），
+失败论文留在 `failed` 状态，需要用户手动跑 `reset-publisher` 才能重试。
+每日调度脚本应在运行前自动重置失败状态。
+
+**变更**（`tools/schedule_daily.py`）：
+
+```python
+# 在 run_daily() 之前添加：
+reset_db = DatabaseClient(DB_PATH)
+reset_db.init_db_papers()
+count = reset_db.batch_reset_status(
+    [("publisher_page_fetched_status", "pending")],
+    "publisher_page_fetched_status = 'failed'",
+)
+if count:
+    logger.info(f"Auto-reset {count} failed publisher pages for retry")
+```
+
+**设计考量**：
+- 不重置 `skipped` 状态（非论文页面、禁用 publisher 等有意义的状态不应被覆盖）
+- 不重置 Phase D/E2/F/G/H 的状态（只有 Publisher 抓取需要自动重试）
+- 只影响 `schedule_daily.py`，不影响 `main.py` 全流程（全流程手动跑，用户可自行决定）
+- 简单一行操作，不需要复杂的状态机或计数逻辑
 
 # 已知问题
 
