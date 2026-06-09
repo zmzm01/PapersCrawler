@@ -194,15 +194,26 @@ class MinerUParser:
         return data["batch_id"], data["file_urls"]
 
     def _upload_file(self, upload_url, file_path):
-        """
-        将本地 PDF 文件 PUT 上传到 OSS 预签名 URL。
+        """将本地 PDF 文件 PUT 上传到 OSS 预签名 URL。
 
-        Args:
-            upload_url: OSS 预签名上传地址（来自 _create_batch 的响应）。
-            file_path:  本地 PDF 文件路径。
+        OSS 预签名 URL 对 Content-Type 敏感：签名时使用的 Content-Type
+        必须与实际上传请求一致。self._session 默认带
+        ``Content-Type: application/json``，会导致签名校验失败 (403)。
+        因此上传时必须使用独立的 requests.Session，不带 JSON header，
+        让 requests 自动设置 ``Content-Type: application/octet-stream``。
+
+        Parameters
+        ----------
+        upload_url : str
+            OSS 预签名上传地址（来自 _create_batch 的响应）。
+        file_path : Path
+            本地 PDF 文件路径。
         """
+        # 独立 session，不继承 self._session 的 JSON Content-Type
+        upload_session = requests.Session()
         with open(file_path, "rb") as f:
-            resp = self._request_with_retry("put", upload_url, data=f)
+            resp = upload_session.put(upload_url, data=f,
+                                     headers={"Content-Type": "application/pdf"})
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"文件上传失败: HTTP {resp.status_code}")
 
