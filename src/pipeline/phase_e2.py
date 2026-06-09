@@ -4,8 +4,6 @@ Phase E2: MinerU PDF full-text parsing.
 
 import logging
 import random
-import shutil
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -93,20 +91,40 @@ def phase_e2_mineru(db):
                 pdf_url = paper["pdf_url"]
                 page_url = paper["page_url"]
                 timestamp = str(datetime.now())
-                pdf_path = None
 
                 try:
-                    logger.info(f"Downloading PDF: {doi} ← {pdf_url}")
-                    pdf_bytes = downloader.download_pdf(pdf_url, page_url=page_url)
-
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                        tmp.write(pdf_bytes)
-                        pdf_path = tmp.name
-                    del pdf_bytes  # 释放 PDF 原始字节，避免堆积在内存中
-
                     safe_doi = doi.replace("/", "_").replace("\\", "_").replace("..", "_")
+                    mineru_output_dir = MINERU_OUTPUT_DIR / safe_doi
+                    mineru_output_dir.mkdir(parents=True, exist_ok=True)
+                    pdf_save_path = mineru_output_dir / "paper.pdf"
+
+                    # Reuse existing PDF if already downloaded and valid
+                    if pdf_save_path.exists() and pdf_save_path.stat().st_size > 0:
+                        with open(pdf_save_path, "rb") as f:
+                            header = f.read(5)
+                        if header == b'%PDF-':
+                            logger.info(f"PDF already exists, reusing: {pdf_save_path}")
+                        else:
+                            logger.warning(f"Existing PDF invalid (header: {header!r}), re-downloading")
+                            pdf_save_path.unlink()
+                    if not pdf_save_path.exists():
+                        logger.info(f"Downloading PDF: {doi} ← {pdf_url}")
+                        pdf_bytes = downloader.download_pdf(pdf_url, page_url=page_url)
+
+                        # Validate PDF content before saving
+                        if not pdf_bytes or pdf_bytes[:5] != b'%PDF-':
+                            raise RuntimeError(
+                                f"Downloaded content is not a valid PDF "
+                                f"({len(pdf_bytes)} bytes, "
+                                f"header: {pdf_bytes[:20]!r})"
+                            )
+
+                        pdf_save_path.write_bytes(pdf_bytes)
+                        logger.info(f"PDF saved ({len(pdf_bytes)} bytes): {pdf_save_path}")
+                        del pdf_bytes  # 释放 PDF 原始字节，避免堆积在内存中
+
                     mineru_output_dir = parser.parse_pdf(
-                        pdf_path, output_dir=MINERU_OUTPUT_DIR / safe_doi,
+                        pdf_save_path, output_dir=mineru_output_dir,
                     )
                     full_md_path = mineru_output_dir / "full.md"
 
@@ -120,20 +138,12 @@ def phase_e2_mineru(db):
                     else:
                         raise RuntimeError("MinerU output missing full.md")
 
-                    shutil.move(pdf_path, str(mineru_output_dir / "paper.pdf"))
-                    pdf_path = None
-
                 except Exception as e:
                     logger.warning(f"MinerU failed [{doi}]: {e}")
                     db.update_mineru_error(
                         doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                     )
                     failed_count += 1
-                    try:
-                        if pdf_path:
-                            Path(pdf_path).unlink(missing_ok=True)
-                    except Exception:
-                        pass
 
                 delay = random.uniform(3, 8)
                 time.sleep(delay)
