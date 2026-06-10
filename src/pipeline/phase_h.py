@@ -7,6 +7,7 @@ Uses HTML email template from templates/email/<name>.html.
 """
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -46,8 +47,8 @@ def _render_email_template(template_name: str, **kwargs) -> str:
         return kwargs.get("report_title", "")
 
 
-def phase_h_email(db, auto_dir):
-    """Send today's auto report or a no-update notification via email.
+def phase_h_email(db, auto_dir, report_path=None):
+    """Send today's auto report or a custom report via email.
 
     Recipients are read from the subscribers table in DB first,
     falling back to .env SMTP_TO_ADDRS if no subscribers are configured.
@@ -58,6 +59,9 @@ def phase_h_email(db, auto_dir):
     db : DatabaseClient
     auto_dir : Path
         Directory containing auto-generated daily reports.
+    report_path : Path or None, optional
+        Specific report file to send. If None, uses auto_dir/report_{today}.md.
+        When provided, no "no updates" notification is sent — the file must exist.
     """
     logger.info("--- Phase H: Email delivery ---")
     if SKIP_PHASE_H:
@@ -88,10 +92,6 @@ def phase_h_email(db, auto_dir):
         return
     logger.info(f"Phase H: {len(to_addrs)} recipient(s) ({'DB subscribers' if db.get_active_emails() else '.env config'})")
 
-    auto_dir = Path(auto_dir)
-    today_str = datetime.now().strftime("%Y%m%d")
-    today_report = auto_dir / f"report_{today_str}.md"
-
     sender = EmailSender(
         smtp_host=email_cfg["smtp_host"],
         smtp_port=email_cfg["smtp_port"],
@@ -103,12 +103,25 @@ def phase_h_email(db, auto_dir):
     )
 
     date_str = datetime.now().strftime("%Y-%m-%d")
+    send_no_update = True
 
-    if today_report.exists():
+    # Determine which report file to send
+    if report_path:
+        report_path = Path(report_path)
+        if not report_path.exists():
+            logger.warning(f"Specified report not found: {report_path}")
+            return
+        logger.info(f"Sending custom report: {report_path.name}")
+        send_no_update = False
+    else:
+        today_str = datetime.now().strftime("%Y%m%d")
+        report_path = Path(auto_dir) / f"report_{today_str}.md"
+
+    if report_path.exists():
         subject = f"PapersCrawler Report - {date_str}"
         # 从报告文件中统计论文数量（## 标题即为论文条目）
-        report_text = today_report.read_text(encoding="utf-8")
-        paper_count = str(report_text.count("## "))
+        report_text = report_path.read_text(encoding="utf-8")
+        paper_count = str(len(re.findall(r'(?m)^## (?!目录)[^#]', report_text)))
         has_papers = True
         paper_msg = f"共收录 {paper_count} 篇相关论文，详细内容请参见附件报告。"
         attachment_section = """              <table role="presentation" style="width:100%;border-collapse:collapse;margin:24px 0;">
@@ -128,12 +141,12 @@ def phase_h_email(db, auto_dir):
                     attachment_section=attachment_section,
                 ),
                 body_type="html",
-                attachments=[str(today_report)],
+                attachments=[str(report_path)],
             )
-            logger.info(f"Report sent: {today_report.name}")
+            logger.info(f"Report sent: {report_path.name}")
         except Exception as e:
             logger.error(f"Email send failed: {e}")
-    else:
+    elif send_no_update:
         subject = f"PapersCrawler Report - {date_str} (No Updates)"
         paper_msg = "本期无新增相关论文，无需关注。"
         attachment_section = ""
