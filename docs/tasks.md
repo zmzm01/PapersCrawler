@@ -4,6 +4,12 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **schedule_daily CLI 开关** | 新增 `--no-reset-publisher` 和 `--no-reset-mineru` 参数（默认均开启重置）；新增 `_run_auto_reset()` 函数封装重置逻辑；日志分别记录各重置开关状态 | 06-10 |
+| **skipped_dois 表** | 新增 `skipped_dois` SQLite 表（doi PRIMARY KEY, reason, created_date），记录被永久删除的论文 DOI；Phase A 发现前同时检查 `paper_doi_exists()` 和 `is_doi_skipped()`；Phase C NonResearchPageError 先 `insert_skipped_doi()` 再 `delete_paper()`（AcceptedPaperError 仅删除不入 skipped_dois，因同 DOI 正式版会重新出现） | 06-10 |
+| **Science og:type 非研究检测** | `ScienceScraper.parse_page()` 当 `dc.Type` 缺失时增加 `og:type` 三级兜底：`og:type` 存在则视为非研究文章（Careers/Working Life 等无 dc.Type 但有 og:type），抛 `NonResearchPageError`；两者均不存在才抛 `PageParseError`（页面结构可能已变） | 06-10 |
+| **Nature Client Challenge 检测** | `phase_c.py` bot 检测模式增加 `"javascript is disabled"`（HTML 内容）和 `"client challenge"`（页面标题）关键词，覆盖 Nature 自有 JS 验证拦截页。同时加入异常处理器 `is_bot` 检测（此前仅在空解析结果路径检测），且新增 `og:type` 对应标题信息提取 | 06-10 |
+| **MinerU OSS 403 最终修复** | `_upload_file()` 严格遵循 MinerU 官方文档（`No Content-Type header is required when uploading files`），改用 module-level `requests.put(url, data=data)` + 手动重试循环。不经过 `self._session`（带 JSON Content-Type 导致 403），不设自定义 Content-Type（OSS 签名与 `application/octet-stream` 匹配） | 06-10 |
+| **first-in-group 日志格式** | 首个论文 `retry_attempts = [2]` 的日志从 `attempt 3/1` 改为 `attempt 1/1`，清晰表示单次 45s 尝试 | 06-10 |
 | **非论文页删除** | NonResearchPageError 处理从 cascade skip 改为 `db.delete_paper()` 直接删除，与 AcceptedPaperError 一致 | 06-10 |
 | **日志轮转** | 3 个入口点（`main.py`/`schedule_daily.py`/`schedule_weekly.py`）的 `FileHandler` 替换为 `RotatingFileHandler`（10MB × 5 backup） | 06-10 |
 | **邮件 HTML 模板** | 新增 `templates/email/default.html`（字段：report_title/paper_count/has_papers）；`phase_h.py` 改用 HTML 模板渲染 + `body_type="html"`；`settings.yaml` 新增 `email.template` 配置；WebUI Config 页支持模板名覆盖 | 06-10 |

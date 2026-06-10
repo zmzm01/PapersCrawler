@@ -95,7 +95,10 @@ PapersCrawler/
 │   ├── convert_md_to_pdf.py     # Markdown → PDF (pandoc + cloakbrowser 主路径)
 │   ├── reset_empty_abstract.py  # 重置空摘要论文的 Phase D/E/G
 │   ├── debug_llm_summary.py     # 诊断 LLM Summary JSON 解析失败
-│   └── debug_publisher_urls.py  # 诊断 Publisher URL 抓取（headful 浏览器）
+│   ├── debug_publisher_urls.py  # 诊断 Publisher URL 抓取（headful 浏览器）
+│   ├── schedule_daily.py        # 每日调度入口（A→F，支持 --no-reset-* 开关）
+│   ├── schedule_weekly.py       # 每周调度入口（G→H）
+│   ├── migrate_db_v2.py         # 数据库迁移 v2（新增 skipped_dois 表）
 └── README.md                    # 项目使用说明
 ```
 
@@ -253,6 +256,20 @@ subscribers:
 ```
 
 Phase H（邮件推送）优先使用 `subscribers` 表中 `active=1` 的邮箱列表作为收件人。当表中无订阅者时，回退到 `.env` 的 `SMTP_TO_ADDRS` 配置，保证向后兼容。
+
+### skipped_dois 表（跳过/删除的论文 DOI）
+
+```
+skipped_dois:
+  doi            TEXT PRIMARY KEY      -- 论文 DOI（唯一）
+  reason         TEXT                  -- 跳过原因（如 NonResearchPageError）
+  created_date   TEXT                  -- 记录时间
+```
+
+**用途**：记录被永久跳过（删除）的论文 DOI，防止流水线反复发现→删除→再发现的循环。
+- NonResearchPageError（非研究文章）：写入 `skipped_dois` + 从 `papers` 删除
+- AcceptedPaperError（接受前预发布）：仅从 `papers` 删除，**不**写入 `skipped_dois`（同 DOI 正式版会重新出现）
+- Phase A 发现新论文前同时检查 `papers`（`paper_doi_exists`）和 `skipped_dois`（`is_doi_skipped`）
 
 # 关键设计决策
 
@@ -637,7 +654,7 @@ SKIP_PHASE_B = False
 
 `MinerUParser._request_with_retry()` 提供统一的 3 次重试封装，覆盖 create_batch / poll / download 三个步骤。
 
-**注意**：`_upload_file()` 不使用 `_request_with_retry()`，因为 OSS 预签名 URL 对 Content-Type 敏感。`self._session` 默认带 `Content-Type: application/json`，会导致 OSS 签名校验失败（403 Forbidden）。上传使用独立的 `requests.Session()` + 显式 `Content-Type: application/pdf`。
+**注意**：`_upload_file()` 不使用 `_request_with_retry()`，因为 OSS 预签名 URL 对 Content-Type 敏感。`self._session` 默认带 `Content-Type: application/json`，会导致 OSS 签名校验失败（403 Forbidden）。严格遵循 [MinerU 官方文档](https://mineru.net/api/v4/file-urls/batch) 的说明（"No Content-Type header is required when uploading files"），上传使用 module-level `requests.put(url, data=data)`，不经过 session，不设自定义 Content-Type——requests 对二进制 `data` 自动使用 `application/octet-stream`，匹配 OSS 预签名。同时 upload 自身也包含 3 次指数退避重试。
 
 ## 4. JSON 反斜杠修复（双层防御）
 
@@ -702,17 +719,28 @@ Phase C 采用两级检测：
 - 对应 bug：Science 的 news 文章通过 CrossRef 入库后，Phase C 找不到 dc.Type 标签，
   报 `PageParseError` 而不是抛 `NonResearchPageError`，导致失败原因不清
 
-**三级 — 关键词 + 空摘要检测**（通用兜底，对所有 publisher 生效）：
+**三级 — Science og:type 兜底**（覆盖既无 dc.Type 也无 altmetric_type 的非研究文章）：
+- 条件：`dc.Type` 为空且 `altmetric_type` 不存在时，检查 `<meta property="og:type">`
+- 这类页面（如 Careers / Working Life）有正常的 `og:type=article` 但缺少 dc.Type，
+  说明页面加载成功但不属于有 dc.Type 注释的研究文章
+- `og:type` 存在 → `NonResearchPageError`；两者均不存在 → `PageParseError`
+- 实现位置：`ScienceScraper.parse_page()` 中，原 dc.Type 空值判断分支内
+
+**四级 — 关键词 + 空摘要检测**（通用兜底，对所有 publisher 生效）：
 - 条件：`abstract` 为空 `AND` 标题包含以下关键词之一
 - 关键词表：`Erratum`, `Comment on`, `Response to`, `Publisher's Note`
 - 实现位置：`pipeline/phase_c.py` 的 retry 循环内，`parse_page()` 成功后检查
 
 ### 触发后的行为
 
-NonResearchPageError 触发后，Phase C 会调用 `db.delete_paper()` **直接删除**该论文记录。
-这与 `AcceptedPaperError` 的处理方式一致——非研究论文永远不可能变为"相关"，
-保留在数据库中只会增加噪音和占用空间。删除后论文在下次 RSS/CrossRef 发现时
-会被重新发现；如果那时已正式出版（Erratum 通常附有原论文链接），会正常入库。
+NonResearchPageError 触发后，Phase C 会执行：
+1. 写入 `skipped_dois` 表（记录 DOI + 原因 + 时间），防止将来被重新发现
+2. 调用 `db.delete_paper()` 从 `papers` 表中删除该记录
+
+这与 `AcceptedPaperError` 不同——Accepted Paper 仅删除不记入 `skipped_dois`，
+因为同 DOI 的正式版论文会在未来出现，届时 Phase A 应能正常发现。
+
+删除后论文在下次 RSS/CrossRef 发现时会被 `is_doi_skipped()` 阻止，不再重复处理。
 
 ### 与空摘要论文的区别
 
@@ -1006,9 +1034,12 @@ LOG_LEVEL=INFO python src/main.py
 - **Publisher 启停检查**：运行前从 `publishers.yaml` 构建 `enabled_publishers` 集合，
   禁用 publisher 的 pending 论文直接标记 `skipped`，不浪费浏览器启动时间（详见「韧性策略 #12」）
 - **Bot 拦截检测**（parse_page 之后）：仅当 `parse_page()` 返回空结果（title+doi+abstract 全空）时才检查 bot 标记；
-  检测范围包括 Cloudflare（`challenge-platform`、`_cf_chl_opt`、`cf-browser-verification`、`cf-ray` + 短 HTML、`turnstile` + `challenge`）、
-  Radware Bot Manager（`radware`、`bot manager`）、captcha 页面标题（`captcha`、`radware`、`bot manager`）；
-  异常处理中也增加 bot 检测，bot 拦截导致的异常走完整重试而非 attempt 0 终止
+  检测范围包括：
+  - Cloudflare: `challenge-platform`、`_cf_chl_opt`、`cf-browser-verification`、`cf-ray` + 短 HTML、`turnstile` + `challenge`
+  - Radware Bot Manager: `radware`、`bot manager`（HTML 和页面标题）
+  - Captcha 页面标题: `captcha`
+  - Nature Client Challenge (JS 验证): `javascript is disabled`（HTML 内容）、`client challenge`（页面标题）
+  - 异常处理中也增加 bot 检测（含页面标题提取），bot 拦截导致的异常走完整重试而非 attempt 0 终止
 - 按 publisher 分组处理，同一组复用浏览器实例（`SCRAPER_MAP` 管理 7 个 publisher）
 - Session 缓存自动清理：`BasePublisherScraper.close()` 在每次 publisher 组处理完毕后
   执行 `shutil.rmtree()` 清理 Chromium profile 目录（详见「韧性策略 #9」）
