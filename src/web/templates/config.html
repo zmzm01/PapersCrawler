@@ -67,10 +67,14 @@
 </div>
 
 <h3><i class="fa-solid fa-envelope icon-mr"></i><span data-i18n="config.email_template">Email Template</span></h3>
-<p class="text-muted" data-i18n="config.email_template_hint">Template name in <code>templates/email/</code> directory (without <code>.html</code>). Leave empty to use default.</p>
+<p class="text-muted" data-i18n="config.email_template_hint">Select a template from <code>templates/email/</code>. "Default" uses <code>settings.yaml → email.template</code> setting.</p>
 <div class="conn-test-grid" style="align-items:center;">
-  <input type="text" id="email-template-input" value="{{ email_template_name if email_template_name != email_template_default else '' }}"
-         placeholder="{{ email_template_default }}" style="flex:1;padding:6px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:14px;">
+  <select id="email-template-select" style="flex:1;padding:6px 10px;border:1px solid #d1d5db;border-radius:4px;font-size:14px;">
+    <option value="" {% if not current_override %}selected{% endif %} data-i18n="config.email_template_default">Default ({{ email_template_default }})</option>
+    {% for t in email_templates %}
+    <option value="{{ t }}" {% if t == current_override %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
   <button class="btn btn-sm btn-primary" onclick="saveEmailTemplate()" data-i18n="config.save">Save</button>
   <span id="email-template-status" class="save-status"></span>
 </div>
@@ -192,12 +196,12 @@ async function saveDomain() {
 }
 
 async function saveEmailTemplate() {
-  const input = document.getElementById('email-template-input');
+  const sel = document.getElementById('email-template-select');
   const status = document.getElementById('email-template-status');
   const r = await fetch('/config/save-email-template', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({value: input.value.trim()}),
+    body: JSON.stringify({value: sel.value}),
   });
   const data = await r.json();
   if (data.ok) {
