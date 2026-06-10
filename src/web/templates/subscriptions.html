@@ -18,6 +18,19 @@
   <span id="sub-action-status" class="save-status"></span>
 </div>
 
+<div class="send-report-bar">
+  <label><span data-i18n="subscriptions.choose_report">Report:</span>
+    <select id="report-select">
+      <option value="" data-i18n="subscriptions.latest_report">Latest auto report</option>
+      {% for r in reports %}
+      <option value="{{ r.filename }}">{{ r.filename }} ({{ r.source }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="btn btn-primary" onclick="sendReport()"><i class="fa-solid fa-paper-plane icon-left"></i><span data-i18n="subscriptions.send_report">Send Report Now</span></button>
+  <span id="send-report-status" class="save-status"></span>
+</div>
+
 {% if subscribers %}
 <table class="sub-table">
   <thead><tr>
@@ -103,6 +116,26 @@ async function testSubscriber(email) {
     status.className = 'save-status ok';
   } else {
     status.textContent = getI18n('subscriptions.test_failed', {msg: data.error || 'Unknown'});
+    status.className = 'save-status error';
+  }
+}
+
+async function sendReport() {
+  const filename = document.getElementById('report-select').value;
+  const status = document.getElementById('send-report-status');
+  status.textContent = 'Sending...';
+  status.className = 'save-status';
+  const r = await fetch('/subscriptions/send-report', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({report_filename: filename}),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    status.textContent = getI18n('subscriptions.send_report_sent');
+    status.className = 'save-status ok';
+  } else {
+    status.textContent = getI18n('subscriptions.send_report_failed', {msg: data.error || 'Unknown'});
     status.className = 'save-status error';
   }
 }
