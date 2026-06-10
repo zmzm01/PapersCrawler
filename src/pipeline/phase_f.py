@@ -70,7 +70,7 @@ def phase_f_llm_summary(db):
         mineru_text = ""
         output_dir = paper["mineru_output_dir"] or ""
         if output_dir:
-            full_md_path = DATA_DIR.parent / output_dir / "full.md"
+            full_md_path = DATA_DIR / output_dir / "full.md"
             try:
                 if full_md_path.exists():
                     mineru_text = full_md_path.read_text(encoding="utf-8")
