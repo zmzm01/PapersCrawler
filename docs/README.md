@@ -67,14 +67,21 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 > ⚠️ `.env` 包含真实密钥，**不要提交到公开仓库**。
 
 **邮件 HTML 模板（可选）：** Phase H 发送的邮件使用 `templates/email/default.html`
-作为正文模板。可通过 `configs/settings.yaml` 的 `email.template` 字段指定其他模板名，
-或在 Web UI Config 页面覆盖。模板使用 `str.format()` 渲染，支持以下变量：
+作为正文模板。可通过 `configs/settings.yaml` 的 `email.template` 字段指定其他模板名（如 `funny`），
+或在 Web UI Config 页面覆盖。内置模板：
+
+| 模板文件 | 风格 | 说明 |
+|---------|------|------|
+| `default.html` | 正式 | 蓝色主题，嵌入 GitHub 开源地址，欢迎贡献 |
+| `funny.html` | 搞笑 | 橙粉渐变，大标题"啊哈哈，论文来咯！"，结尾"欢迎接手屎山代码" |
+
+模板使用 `str.format()` 渲染，支持以下变量：
 
 | 变量 | 类型 | 说明 |
 |------|------|------|
 | `{report_title}` | str | 邮件标题（含日期） |
-| `{paper_count}` | str | 论文数量 |
-| `{has_papers}` | str | 是否有论文（"True" / "False"） |
+| `{paper_msg}` | str | 论文数量或无新增提示 |
+| `{attachment_section}` | str | 附件标记 HTML（无论文时为空） |
 
 配置自检：
 
@@ -258,7 +265,7 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 | **Report** | 勾选有 LLM 总结的论文 → 生成 Markdown 报告 → 浏览器预览 + 下载（写入 `data/reports/user/`） |
 | **Data Sources** | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源。写入 `data/journal_overrides.json` |
 | **Logs** | 流水线日志（`data/PaperCrawler.log`），支持按级别过滤 |
-| **Subscriptions** | 邮件订阅者管理（添加/删除/启用停用/测试/从 .env 导入），Phase H 优先使用 DB 订阅者列表 |
+| **Subscriptions** | 邮件订阅者管理（添加/删除/启用停用/测试/从 .env 导入/发送日报），Phase H 优先使用 DB 订阅者列表 |
 | **Config** | SKIP 开关切换（影响 Pipeline 页按钮）、研究领域描述编辑、连通性测试（DeepSeek/CrossRef/MinerU）、MinerU Token 过期色标、YAML 编辑器 |
 
 ### 9. 调试与辅助工具
