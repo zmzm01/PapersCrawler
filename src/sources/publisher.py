@@ -328,19 +328,22 @@ class BasePublisherScraper:
         同时清理持久化 Session 数据目录，避免 data/session_cached/
         目录无限膨胀（单个 publisher 的 Chromium profile 可达数百 MB）。
 
-        注意：cloakbrowser 的 context.close() 虽包装了 pw.stop()，
-        但 pw.stop() 仅断开 WebSocket 连接，不保证 Chromium 子进程退出。
-        因此先显式调用 browser.close() 确保杀进程。
+        关闭顺序：
+        1. context.close() — cloakbrowser 的 patched close，先调 Playwright
+           原版 context.close() 关闭页面/context，再调 pw.stop() 断开 WebSocket
+        2. browser.close() — 确保 Chromium 子进程退出，防止 orphan 进程泄漏
+           单独 pw.stop() 不保证 Chrome 进程退出，需要显式 kill。
         """
         try:
             if hasattr(self, 'context') and self.context:
+                self.context.close()
+                # context.close() 之后单独杀进程（pw.stop() 不保证 Chrome 退出）
                 try:
                     browser = self.context.browser
                     if browser:
                         browser.close()
                 except Exception:
                     pass
-                self.context.close()
         except Exception:
             pass
         if self.user_data_dir and self.user_data_dir.exists():
@@ -668,8 +671,20 @@ class ScienceScraper(BasePublisherScraper):
         # 二级：dc.Type 检测（覆盖 RSS 来源的标准页面）
         dctype = sel.css('meta[name="dc.Type"]::attr(content)').get() or ""
         if dctype == "":
+            # 三级：og:type 兜底 — 当 dc.Type 缺失但 og:type 存在时，
+            # 说明页面正常加载（有 meta），只是不属于有 dc.Type 注释的
+            # 研究论文（如 Careers / Working Life / News 等），视为非研究文章。
+            og_type = sel.css(
+                'meta[property="og:type"]::attr(content)'
+            ).get() or ""
+            if og_type:
+                raise NonResearchPageError(
+                    f"Science page has og:type='{og_type}' but no dc.Type, "
+                    "not a research article"
+                )
             raise PageParseError(
-                "No dc.Type in Science page, maybe the page structure has changed."
+                "No dc.Type or og:type in Science page, "
+                "maybe the page structure has changed."
             )
         if dctype != "research-article":
             raise NonResearchPageError("This Science page is not research-article.")
