@@ -164,6 +164,87 @@ def test_science_scraper_type_check():
             scraper.parse_page()
 
 
+def test_science_scraper_no_dc_type_with_og_type():
+    """Science 页面无 dc.Type 但有 og:type → NonResearchPageError.
+
+    Careers/Working Life 类文章没有 dc.Type meta，但有 og:type。
+    说明页面正常加载但非研究文章。"""
+    import tempfile
+    html = """
+    <html><head>
+    <meta property="og:type" content="article"/>
+    <meta property="og:title" content="I may not look like a professor"/>
+    <meta name="dc.Title" content="I may not look like a professor"/>
+    <meta name="dc.Identifier" scheme="doi" content="10.1126/science.aej3528"/>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "science_careers.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = ScienceScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        with pytest.raises(NonResearchPageError) as exc_info:
+            scraper.parse_page()
+        assert "og:type" in str(exc_info.value)
+
+
+def test_science_scraper_no_dc_type_no_og_type():
+    """Science 页面既无 dc.Type 也无 og:type → PageParseError.
+
+    两样都没有说明页面结构可能已变化。"""
+    import tempfile
+    html = """
+    <html><head>
+    <title>Some page</title>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "science_no_meta.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = ScienceScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        with pytest.raises(PageParseError):
+            scraper.parse_page()
+
+
+def test_aps_scraper_cf_cdn_scripts_not_blocked():
+    """APS 页面含 CF CDN 脚本但内容正常 → 解析成功（非误判为 bot）。
+
+    这是 Bug 1 的回归测试：APS/AIP 页面可能包含 Cloudflare CDN
+ 脚本文件（含 challenge-platform、_cf_chl_opt 等标记），
+    但只要页面有正常标题/DOI/摘要，就不应被误判为 bot 拦截。"""
+    import tempfile
+    html = """
+    <html><head>
+    <script src="/cdn-cgi/challenge-platform/scripts/jsd.js"></script>
+    <meta name="citation_title" content="Valid APS Paper"/>
+    <meta name="citation_date" content="2025-06-01"/>
+    <meta name="citation_doi" content="10.1103/PhysRevLett.134.205001"/>
+    <meta name="citation_journal_title" content="Physical Review Letters"/>
+    <meta name="citation_author" content="Alice"/>
+    <meta name="citation_pdf_url" content="https://example.com/paper.pdf"/>
+    </head><body>
+    <div id="abstract-section-content"><p>This paper studies laser-plasma interaction.</p></div>
+    </body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "aps_cf_cdn.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = APSScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert paper.title == "Valid APS Paper"
+        assert paper.doi == "10.1103/PhysRevLett.134.205001"
+        assert "laser-plasma" in (paper.abstract or "")
+
+
 def test_aip_scraper_parse():
     """验证 AIP 解析器正确提取元数据。"""
     import tempfile
