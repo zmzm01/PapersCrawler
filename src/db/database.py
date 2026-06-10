@@ -260,8 +260,13 @@ class DatabaseClient:
             updated_date TEXT
         )
         """)
-
-        # 提交 DDL 操作
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS skipped_dois (
+            doi         TEXT PRIMARY KEY,
+            reason      TEXT,
+            created_date TEXT
+        )
+        """)
         self.conn.commit()
 
         # ---- 迁移: 为旧数据库添加 MinerU 列 (如果不存在) ----
@@ -367,6 +372,52 @@ class DatabaseClient:
         """
         cur = self.conn.execute("SELECT 1 FROM papers WHERE doi = ?", (doi,))
         return cur.fetchone() is not None
+
+    def is_doi_skipped(self, doi):
+        """检查某 DOI 是否已被标记为跳过（如 Non-Research Paper）。
+
+        被跳过的论文不参与流水线处理。
+        Phase A 在插入新论文前应同时检查 paper_doi_exists() 和此方法。
+
+        Parameters
+        ----------
+        doi : str
+            论文 DOI。
+
+        Returns
+        -------
+        bool
+            True 表示该 DOI 已被跳过。
+        """
+        cur = self.conn.execute(
+            "SELECT 1 FROM skipped_dois WHERE doi = ?", (doi,),
+        )
+        return cur.fetchone() is not None
+
+    def insert_skipped_doi(self, doi, reason, created_date=None):
+        """记录一个被跳过/删除的 DOI，防止未来被重新发现。
+
+        用于 NonResearchPageError：非研究文章永远不会变成研究论文，
+        删除后下次 Phase A 仍会重新发现。此表阻止这种循环。
+
+        Parameters
+        ----------
+        doi : str
+            论文 DOI。
+        reason : str
+            跳过原因，如 'NonResearchPageError'
+        created_date : str, optional
+            记录时间，默认当前时间。
+        """
+        from datetime import datetime
+        if created_date is None:
+            created_date = str(datetime.now())
+        self.conn.execute(
+            "INSERT OR IGNORE INTO skipped_dois (doi, reason, created_date) "
+            "VALUES (?, ?, ?)",
+            (doi, reason, created_date),
+        )
+        self.conn.commit()
 
     def get_pendings(self, status_field):
         """
