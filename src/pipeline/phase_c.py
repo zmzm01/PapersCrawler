@@ -25,6 +25,68 @@ logger = logging.getLogger(__name__)
 _NON_RESEARCH_KEYWORDS = ["erratum", "comment on", "response to", "publisher's note"]
 
 
+def _extract_page_title(html):
+    """从 HTML 中提取 <title> 内容。
+
+    Parameters
+    ----------
+    html : str
+        HTML 源码。
+
+    Returns
+    -------
+    str
+        页面标题（前 120 字符），提取失败返回空字符串。
+    """
+    try:
+        mt = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+        if mt:
+            return mt.group(1).strip()[:120]
+    except Exception:
+        pass
+    return ""
+
+
+def _has_bot_markers(html, page_title=""):
+    """检查 HTML 中是否存在反爬挑战标记。
+
+    覆盖以下反爬系统：
+    - Cloudflare Challenge（challenge-platform、_cf_chl_opt、cf-browser-verification、
+      cf-ray + 短 HTML、turnstile + challenge）
+    - Radware Bot Manager（radware、bot manager）
+    - Nature Client Challenge（client challenge 页面标题）
+    - 通用 JS 禁用检测（javascript is disabled）
+
+    Parameters
+    ----------
+    html : str
+        页面 HTML 源码。
+    page_title : str
+        页面标题（可选），用于检测标题中的 bot 标记。
+
+    Returns
+    -------
+    bool
+        True 如果检测到 bot 拦截标记。
+    """
+    html_lower = html.lower()
+    title_lower = page_title.lower()
+    return (
+        "challenge-platform" in html
+        or "_cf_chl_opt" in html
+        or "cf-browser-verification" in html
+        or ("cf-ray" in html_lower and len(html) < 2000)
+        or ("turnstile" in html_lower and "challenge" in html_lower)
+        or "radware" in html_lower
+        or "bot manager" in html_lower
+        or "javascript is disabled" in html_lower
+        or "radware" in title_lower
+        or "bot manager" in title_lower
+        or "captcha" in title_lower
+        or "client challenge" in title_lower
+    )
+
+
 def phase_c_publisher(db, publishers):
     """Scrape publisher pages for abstracts and PDF links.
 
@@ -156,45 +218,25 @@ def phase_c_publisher(db, publishers):
 
                         if not paperPage.title and not paperPage.doi and not paperPage.abstract:
                             # Empty parse — check for bot detection patterns
-                            html_lower = scraper.html.lower()
-                            page_title_snippet = ""
-                            try:
-                                mt = re.search(
-                                    r'<title>(.*?)</title>',
-                                    scraper.html, re.IGNORECASE | re.DOTALL,
-                                )
-                                if mt:
-                                    page_title_snippet = mt.group(1).strip()[:120]
-                            except Exception:
-                                pass
-                            title_lower = (page_title_snippet or "").lower()
+                            page_title_snippet = _extract_page_title(scraper.html)
 
-                            bot_blocked = (
-                                "challenge-platform" in scraper.html
-                                or "_cf_chl_opt" in scraper.html
-                                or "cf-browser-verification" in scraper.html
-                                or ("cf-ray" in html_lower
-                                    and len(scraper.html) < 2000)
-                                or ("turnstile" in html_lower
-                                    and "challenge" in html_lower)
-                                or "radware" in html_lower
-                                or "bot manager" in html_lower
-                                or "radware" in title_lower
-                                or "bot manager" in title_lower
-                                or "captcha" in title_lower
+                            bot_blocked = _has_bot_markers(
+                                scraper.html, page_title=page_title_snippet,
                             )
 
                             if bot_blocked:
                                 logger.warning(
-                                    f"Bot detection page (attempt {attempt+1}"
-                                    f"/{len(retry_attempts)}) [{paperDOI}]"
+                                    f"Bot detection page (attempt "
+                                    f"{'1/1' if len(retry_attempts) == 1 else f'{attempt+1}/{len(retry_attempts)}'})"
+                                    f" [{paperDOI}]"
                                     + (f" | page title: {page_title_snippet}"
                                        if page_title_snippet else "")
                                 )
                             else:
                                 logger.warning(
-                                    f"Empty parse result (attempt {attempt+1}"
-                                    f"/{len(retry_attempts)}) [{paperDOI}]"
+                                    f"Empty parse result (attempt "
+                                    f"{'1/1' if len(retry_attempts) == 1 else f'{attempt+1}/{len(retry_attempts)}'})"
+                                    f" [{paperDOI}]"
                                 )
 
                             if attempt < len(retry_attempts) - 1:
@@ -237,8 +279,9 @@ def phase_c_publisher(db, publishers):
 
                     except NonResearchPageError:
                         consecutive_failures = 0
+                        db.insert_skipped_doi(paperDOI, "NonResearchPageError", timestamp)
                         db.delete_paper(paperDOI)
-                        logger.info(f"Non-research page deleted: {paperDOI}")
+                        logger.info(f"Non-research page deleted (skipped_dois recorded): {paperDOI}")
                         paper_skipped = True
                         break
 
@@ -248,22 +291,14 @@ def phase_c_publisher(db, publishers):
                         # bot-detection markers, treat it as a bot block and
                         # retry with longer timeout instead of giving up early.
                         if scraper and hasattr(scraper, 'html') and scraper.html:
-                            html_lower = scraper.html.lower()
-                            is_bot = (
-                                "challenge-platform" in scraper.html
-                                or "_cf_chl_opt" in scraper.html
-                                or "cf-browser-verification" in scraper.html
-                                or ("cf-ray" in html_lower
-                                    and len(scraper.html) < 2000)
-                                or ("turnstile" in html_lower
-                                    and "challenge" in html_lower)
-                                or "radware" in html_lower
-                                or "bot manager" in html_lower
+                            page_title_snippet = _extract_page_title(scraper.html)
+                            is_bot = _has_bot_markers(
+                                scraper.html, page_title=page_title_snippet,
                             )
                             if is_bot:
                                 logger.warning(
                                     f"Bot block caused parse error (attempt "
-                                    f"{attempt+1}/{len(retry_attempts)})"
+                                    f"{'1/1' if len(retry_attempts) == 1 else f'{attempt+1}/{len(retry_attempts)}'})"
                                     f" [{paperDOI}]: {e}"
                                 )
                                 if attempt < len(retry_attempts) - 1:
@@ -276,14 +311,11 @@ def phase_c_publisher(db, publishers):
                 if not paper_succeeded and not paper_skipped:
                     error_msg = str(last_error) if last_error else "Unknown error"
                     error_type = type(last_error).__name__ if last_error else "N/A"
-                    page_title_snippet = ""
-                    try:
-                        if scraper and hasattr(scraper, 'html') and scraper.html:
-                            mt = re.search(r'<title>(.*?)</title>', scraper.html, re.IGNORECASE | re.DOTALL)
-                            if mt:
-                                page_title_snippet = mt.group(1).strip()[:120]
-                    except Exception:
-                        pass
+                    page_title_snippet = (
+                        _extract_page_title(scraper.html)
+                        if scraper and hasattr(scraper, 'html') and scraper.html
+                        else ""
+                    )
                     html_saved = ""
                     if scraper and hasattr(scraper, '_save_error_html'):
                         save_url = getattr(scraper, 'page_url', None) or page_url

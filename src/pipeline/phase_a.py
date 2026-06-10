@@ -69,6 +69,9 @@ def phase_a_rss(db, publishers, use_overrides=False):
                 if db.paper_doi_exists(paperDOI):
                     logger.debug(f"DOI already exists: {paperDOI}")
                     continue
+                if db.is_doi_skipped(paperDOI):
+                    logger.debug(f"DOI in skip list: {paperDOI}")
+                    continue
                 if SKIP_NATURE_NEWS and "/d41586-" in paperDOI:
                     logger.debug(f"Skipping Nature news: {paperDOI}")
                     continue
@@ -140,6 +143,9 @@ def phase_a_crossref(db, publishers, use_overrides=False):
                     continue
                 if SKIP_NATURE_NEWS and "/d41586-" in (paper.doi or ""):
                     logger.debug(f"Skipping Nature news from CrossRef: {paper.doi}")
+                    continue
+                if db.is_doi_skipped(paper.doi):
+                    logger.debug(f"DOI in skip list: {paper.doi}")
                     continue
                 if db.paper_doi_exists(paper.doi):
                     db.append_discovery_source(paper.doi, "crossref")
