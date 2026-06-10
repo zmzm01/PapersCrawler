@@ -134,6 +134,7 @@ def phase_e2_mineru(db):
                             doi, "", rel_dir,
                             FetchStatus.SUCCESS.value, timestamp,
                         )
+                        success_count += 1
                         logger.info(f"MinerU success: {doi} ({full_md_path.stat().st_size} bytes)")
                     else:
                         raise RuntimeError("MinerU output missing full.md")
