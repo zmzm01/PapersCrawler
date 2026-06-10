@@ -141,6 +141,11 @@ const I18N = {
     'subscriptions.test_failed': '测试邮件发送失败: {msg}',
     'subscriptions.delete_confirm': '确定要删除 {email} 吗？',
     'subscriptions.empty': '暂无订阅者。添加一个或从 .env 导入。',
+    'subscriptions.choose_report': '选择报告：',
+    'subscriptions.latest_report': '最新自动日报',
+    'subscriptions.send_report': '发送日报',
+    'subscriptions.send_report_sent': '日报已成功发送',
+    'subscriptions.send_report_failed': '日报发送失败: {msg}',
 
     'config.settings_title': 'settings.yaml',
     'config.settings_hint': '运行参数：流水线、爬虫、LLM API、FormulaFixer 等设置。修改后需重启流水线。',
@@ -280,6 +285,11 @@ const I18N = {
     'subscriptions.test_failed': 'Test email failed: {msg}',
     'subscriptions.delete_confirm': 'Delete {email}?',
     'subscriptions.empty': 'No subscribers yet. Add one or import from .env.',
+    'subscriptions.choose_report': 'Report:',
+    'subscriptions.latest_report': 'Latest auto report',
+    'subscriptions.send_report': 'Send Report Now',
+    'subscriptions.send_report_sent': 'Report sent successfully',
+    'subscriptions.send_report_failed': 'Report send failed: {msg}',
   },
 };
 

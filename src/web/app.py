@@ -28,7 +28,7 @@ if str(_src_path) not in sys.path:
 import logging
 import os as _os
 
-from config import LOG_FILE_PATH
+from config import DATA_DIR, LOG_FILE_PATH
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 file_handler = logging.FileHandler(LOG_FILE_PATH, encoding='utf-8')
@@ -39,6 +39,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[file_handler, console_handler],
 )
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
@@ -49,7 +50,7 @@ from config import (
     DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
     LOG_FILE_PATH, DATA_DIR, CONFIG_DIR, PROMPTS_DIR,
     JOURNAL_OVERRIDES_PATH,
-    EMAIL_TEMPLATE_NAME, EMAIL_TEMPLATE_DEFAULT,
+    EMAIL_TEMPLATE_NAME, EMAIL_TEMPLATE_DEFAULT, EMAIL_TEMPLATE_DIR,
     load_publishers, load_keywords, load_settings,
     SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
     SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
@@ -167,20 +168,48 @@ def _run_phase_subprocess(phase, is_all=False):
     global _running_phase
     project_root = Path(__file__).parent.parent.parent
     src_dir = project_root / "src"
+    log_path = Path(LOG_FILE_PATH)
 
     def _run():
         global _running_phase
         try:
+            # 子进程需要自己的 logging 配置，才能写入共享日志文件
+            log_file_abs = str(log_path.resolve())
             if is_all:
-                code = ("from pipeline.runner import run_pipeline; run_pipeline(run_all=True)")
+                code = (
+                    "import logging, sys;"
+                    f"logging.basicConfig(level=logging.DEBUG,"
+                    f" format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',"
+                    f" datefmt='%Y-%m-%d %H:%M:%S',"
+                    f" handlers=[logging.FileHandler(r'{log_file_abs}', encoding='utf-8'),"
+                    f"           logging.StreamHandler(sys.stderr)]);"
+                    "from pipeline.runner import run_pipeline;"
+                    "run_pipeline(run_all=True)"
+                )
             else:
-                code = (f"from pipeline.runner import run_phases; run_phases({[phase]!r}, use_overrides=True)")
-            subprocess.run(
+                code = (
+                    "import logging, sys;"
+                    f"logging.basicConfig(level=logging.DEBUG,"
+                    f" format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',"
+                    f" datefmt='%Y-%m-%d %H:%M:%S',"
+                    f" handlers=[logging.FileHandler(r'{log_file_abs}', encoding='utf-8'),"
+                    f"           logging.StreamHandler(sys.stderr)]);"
+                    f"from pipeline.runner import run_phases;"
+                    f"run_phases({[phase]!r}, use_overrides=True)"
+                )
+            logger.info(f"Subprocess starting: phase={phase}, is_all={is_all}")
+            result = subprocess.run(
                 [sys.executable, "-c", f"import sys; sys.path.insert(0, '{src_dir}'); {code}"],
-                cwd=project_root, capture_output=True, timeout=14400 if is_all else 3600,
+                cwd=project_root, timeout=14400 if is_all else 3600,
             )
+            if result.returncode != 0:
+                logger.warning(f"Subprocess phase={phase} exited with code {result.returncode}")
+            else:
+                logger.info(f"Subprocess phase={phase} completed successfully")
         except subprocess.TimeoutExpired:
-            pass
+            logger.warning(f"Subprocess phase={phase} timed out")
+        except Exception as e:
+            logger.error(f"Subprocess phase={phase} failed: {e}")
         finally:
             _running_phase = None
 
@@ -319,11 +348,23 @@ async def reset_execute(phase: str):
 
 async def _log_event_stream():
     log_path = Path(LOG_FILE_PATH)
+    first_read = True
     last_size = log_path.stat().st_size if log_path.exists() else 0
     while True:
         if log_path.exists():
             current_size = log_path.stat().st_size
-            if current_size > last_size:
+            if first_read:
+                # 首次连接：发送文件尾部 ~200KB，让用户看到已有日志
+                with open(log_path, "r", encoding="utf-8") as f:
+                    if current_size > 200 * 1024:
+                        f.seek(current_size - 200 * 1024)
+                        f.readline()  # 跳过可能截断的行
+                    existing = f.read()
+                    if existing:
+                        yield f"data: {json.dumps({'text': existing})}\n\n"
+                first_read = False
+                last_size = current_size
+            elif current_size > last_size:
                 with open(log_path, "r", encoding="utf-8") as f:
                     f.seek(last_size)
                     new_lines = f.read()
@@ -477,6 +518,14 @@ async def config_page(request: Request):
         ppath = PROMPTS_DIR / f"{pname}.yaml"
         prompts[pname] = ppath.read_text(encoding="utf-8") if ppath.exists() else ""
 
+    email_templates = sorted(
+        f.stem for f in EMAIL_TEMPLATE_DIR.glob("*.html")
+    ) if EMAIL_TEMPLATE_DIR.exists() else ["default"]
+
+    # Determine current selection: override path content, or the active EMAIL_TEMPLATE_NAME
+    override_path = DATA_DIR / "email_template_override.txt"
+    current_override = override_path.read_text(encoding="utf-8").strip() if override_path.exists() else ""
+
     return templates.TemplateResponse(request, "config.html", {
         "publishers": publishers, "keywords": keywords,
         "skip_config": skip_config, "overrides_raw": overrides_raw,
@@ -486,6 +535,8 @@ async def config_page(request: Request):
         "prompts_raw": prompts,
         "email_template_name": EMAIL_TEMPLATE_NAME,
         "email_template_default": EMAIL_TEMPLATE_DEFAULT,
+        "email_templates": email_templates,
+        "current_override": current_override,
     })
 
 
@@ -739,6 +790,7 @@ async def subscriptions_page(request: Request):
         })
     return templates.TemplateResponse(request, "subscriptions.html", {
         "subscribers": subs_list,
+        "reports": _list_reports(),
     })
 
 
@@ -831,3 +883,36 @@ async def subscriptions_test(email: str):
         return JSONResponse({"ok": True})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)})
+
+
+@app.post("/subscriptions/send-report")
+async def subscriptions_send_report(request: Request):
+    """Send a report to all active subscribers immediately.
+
+    If report_filename is provided, resolves it against AUTO_REPORT_DIR
+    and USER_REPORT_DIR. Otherwise sends the latest auto report.
+    """
+    body = await request.json()
+    report_filename = body.get("report_filename", "") or ""
+
+    report_path = None
+    if report_filename:
+        for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
+            candidate = directory / report_filename
+            if candidate.exists():
+                report_path = candidate
+                break
+        if not report_path:
+            return JSONResponse({"ok": False, "error": f"Report not found: {report_filename}"})
+
+    db = DatabaseClient(DB_PATH)
+    try:
+        db.init_db_papers()
+        from pipeline.phase_h import phase_h_email
+        phase_h_email(db, AUTO_REPORT_DIR, report_path=report_path)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.error(f"Send report failed: {e}")
+        return JSONResponse({"ok": False, "error": str(e)})
+    finally:
+        db.conn.close()

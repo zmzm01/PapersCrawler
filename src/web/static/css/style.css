@@ -632,6 +632,9 @@ h3 {
 .qs-card code { display: block; background: #f1f5f9; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.8rem; color: var(--text); word-break: break-all; margin-top: 0.5rem; }
 
 /* ── Subscriptions page ──────────────────────────────────────────── */
+.send-report-bar { margin-bottom: 1.25rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+.send-report-bar .save-status { margin-left: 0; }
+
 .sub-form { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
 .sub-form .form-group { margin-bottom: 0; }
 .sub-form label { font-size: 0.8rem; font-weight: 600; margin-bottom: 0.25rem; display: block; color: var(--text-muted); }
