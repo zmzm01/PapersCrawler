@@ -196,11 +196,15 @@ class MinerUParser:
     def _upload_file(self, upload_url, file_path):
         """将本地 PDF 文件 PUT 上传到 OSS 预签名 URL。
 
-        OSS 预签名 URL 对 Content-Type 敏感：签名时使用的 Content-Type
-        必须与实际上传请求一致。self._session 默认带
-        ``Content-Type: application/json``，会导致签名校验失败 (403)。
-        因此上传时必须使用独立的 requests.Session，不带 JSON header，
-        让 requests 自动设置 ``Content-Type: application/octet-stream``。
+        严格遵循 MinerU 官方文档：
+        - "No Content-Type header is required when uploading files"
+        - 官方示例使用 ``requests.put(url, data=f)``
+          (https://mineru.net/api/v4/file-urls/batch)
+
+        因此使用 module-level ``requests.put()`` 而非 self._session
+        （self._session 带 ``Content-Type: application/json`` 导致 OSS
+        签名校验失败 403）。同时不设自定义 Content-Type header，
+        requests 自动使用 ``application/octet-stream`` 匹配 OSS 预签名。
 
         Parameters
         ----------
@@ -209,13 +213,23 @@ class MinerUParser:
         file_path : Path
             本地 PDF 文件路径。
         """
-        # 独立 session，不继承 self._session 的 JSON Content-Type
-        upload_session = requests.Session()
         with open(file_path, "rb") as f:
-            resp = upload_session.put(upload_url, data=f,
-                                     headers={"Content-Type": "application/pdf"})
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"文件上传失败: HTTP {resp.status_code}")
+            data = f.read()
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = requests.put(upload_url, data=data)
+                if resp.status_code in (200, 201):
+                    return
+                raise RuntimeError(f"文件上传失败: HTTP {resp.status_code}")
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    logger.debug(f"MinerU OSS PUT 失败 "
+                                 f"(attempt {attempt+1}/{MAX_RETRIES}), "
+                                 f"{2**attempt}s 后重试: {e}")
+                    time.sleep(2 ** attempt)
+        raise RuntimeError(f"文件上传失败: {last_error}")
 
     def _poll_batch(self, batch_id, filename):
         """
