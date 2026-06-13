@@ -1037,6 +1037,7 @@ LOG_LEVEL=INFO python src/main.py
 - 失败熔断：连续失败 `PUBLISHER_MAX_CONSECUTIVE_FAILURES`（默认 3）篇后自动中止，避免 IP 封禁
 - **Publisher 启停检查**：运行前从 `publishers.yaml` 构建 `enabled_publishers` 集合，
   禁用 publisher 的 pending 论文直接标记 `skipped`，不浪费浏览器启动时间（详见「韧性策略 #12」）
+- **Pre-fetch 非研究论文检测**（`configs/settings.yaml` 配置）：在浏览器启动之前根据 DB 中的论文标题进行前缀匹配（`startswith`），匹配到 `erratum`、`author correction:`、`publisher correction:`、`comment on`、`response to`、`publisher's note` 等关键词时直接 `delete_paper()` + `insert_skipped_doi()`，避免浏览器启动和重试消耗。pre-fetch（`prefetch_non_research`）和 post-fetch（`postfetch_non_research`）有独立开关，关键词列表（`non_research_keywords`）由用户配置
 - **Bot 拦截检测**（parse_page 之后）：仅当 `parse_page()` 返回空结果（title+doi+abstract 全空）时才检查 bot 标记；
   检测范围包括：
   - Cloudflare: `challenge-platform`、`_cf_chl_opt`、`cf-browser-verification`、`cf-ray` + 短 HTML、`turnstile` + `challenge`

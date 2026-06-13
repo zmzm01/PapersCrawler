@@ -14,15 +14,13 @@ from config import (
     SKIP_PHASE_C, MAX_PAPERS_PER_PHASE,
     PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX,
     PUBLISHER_MAX_CONSECUTIVE_FAILURES,
+    PREFETCH_NON_RESEARCH, POSTFETCH_NON_RESEARCH, NON_RESEARCH_KEYWORDS,
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import create_scraper
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
 
 logger = logging.getLogger(__name__)
-
-# Keywords to detect non-research articles (Erratum, etc.)
-_NON_RESEARCH_KEYWORDS = ["erratum", "comment on", "response to", "publisher's note"]
 
 
 def _extract_page_title(html):
@@ -191,6 +189,24 @@ def phase_c_publisher(db, publishers):
                 paper_skipped = False
                 last_error = None
 
+                # Pre-fetch non-research detection: check DB title before browser launch
+                if PREFETCH_NON_RESEARCH:
+                    paper_title = (paper["title"] or "").strip()
+                    if paper_title:
+                        title_lower = paper_title.lower()
+                        for kw in NON_RESEARCH_KEYWORDS:
+                            if title_lower.startswith(kw):
+                                db.insert_skipped_doi(paperDOI, "NonResearchPreFetch", timestamp)
+                                db.delete_paper(paperDOI)
+                                logger.info(
+                                    f"Non-research pre-fetch: {paperDOI}"
+                                    f" | {paper_title[:80]}"
+                                )
+                                paper_skipped = True
+                                break
+                    if paper_skipped:
+                        continue
+
                 for attempt in retry_attempts:
                     try:
                         if attempt == 0:
@@ -246,14 +262,13 @@ def phase_c_publisher(db, publishers):
                                 + (" (bot block)" if bot_blocked else "")
                             )
 
-                        title_lower = (paperPage.title or "").lower()
-                        abstract_text = (paperPage.abstract or "").strip()
-                        if not abstract_text and any(
-                            kw in title_lower for kw in _NON_RESEARCH_KEYWORDS
-                        ):
-                            raise NonResearchPageError(
-                                f"Non-research page (keyword: {paperPage.title})"
-                            )
+                        if POSTFETCH_NON_RESEARCH:
+                            title_lower = (paperPage.title or "").lower()
+                            for kw in NON_RESEARCH_KEYWORDS:
+                                if title_lower.startswith(kw):
+                                    raise NonResearchPageError(
+                                        f"Non-research page (keyword: {paperPage.title})"
+                                    )
 
                         consecutive_failures = 0
                         authors_json = (
