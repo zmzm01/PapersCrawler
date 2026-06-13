@@ -4,6 +4,7 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **Publisher 统计过滤** | Phase H `detailed.html` 邮件模板中的 publisher 爬取统计现在排除未启用的 publisher（如 Optica `enabled: false` 不再显示 "0 success"），从 `load_publishers()` 构建 `enabled_publishers` set 做过滤 | 06-11 |
 | **Pre-fetch 非研究论文检测** | Phase C 新增浏览器启动前的标题前缀检测：从 DB 读取论文标题，按 `settings.yaml` 配置的前缀列表（`erratum`, `author correction:`, `publisher correction:`, `comment on`, `response to`, `publisher's note`）前缀匹配后直接 `delete_paper()` 并记入 `skipped_dois`；post-fetch 同步从子串匹配改为前缀匹配 + config 驱动；pre/post 独立开关，关键词列表用户可配置 | 06-11 |
 | **schedule_daily CLI 开关** | 新增 `--no-reset-publisher` 和 `--no-reset-mineru` 参数（默认均开启重置）；新增 `_run_auto_reset()` 函数封装重置逻辑；日志分别记录各重置开关状态 | 06-10 |
 | **skipped_dois 表** | 新增 `skipped_dois` SQLite 表（doi PRIMARY KEY, reason, created_date），记录被永久删除的论文 DOI；Phase A 发现前同时检查 `paper_doi_exists()` 和 `is_doi_skipped()`；Phase C NonResearchPageError 先 `insert_skipped_doi()` 再 `delete_paper()`（AcceptedPaperError 仅删除不入 skipped_dois，因同 DOI 正式版会重新出现） | 06-10 |
@@ -1483,7 +1484,7 @@ except NonResearchPageError:
 
 **模板文件**：`templates/email/default.html`
 - 使用 `str.format()` 替换，不引入 Jinja2 等新依赖
-- 模板变量：`{report_title}`、`{paper_count}`、`{has_papers}`
+- 模板变量：`{report_title}`、`{paper_msg}`、`{attachment_section}`、`{journal_list}`、`{keyword_list}`、`{domain_block}`、`{publisher_stats}`、`{threshold}`
 - 报告文件作为附件发送，正文无论文列表（通过邮件直接分享报告，避免正文过长）
 - 一个固定模板（详细版 vs 简化版的差异在只有 3 个字段时过于微小，不分开）
 - Footer: 无运行时信息（不暴露服务器路径、版本号等）
