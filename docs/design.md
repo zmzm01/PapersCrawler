@@ -351,12 +351,17 @@ Phase H 检测逻辑：
 
 **报告论文数量统计**：使用 `re.findall(r'(?m)^## (?!目录)[^#]', ...)` 精确匹配报告中的 `## ` 标题行，排除 `### ` 子节和 `## 目录`（TOC 标题），避免 `str.count("## ")` 的误计。
 
-**HTML 邮件模板**：`templates/email/default.html`（正式风格）和 `templates/email/funny.html`（搞笑风格）
+**HTML 邮件模板**：`templates/email/default.html`（正式风格）、`templates/email/funny.html`（搞笑风格）和 `templates/email/detailed.html`（详细版，含追踪期刊、筛选依据、Publisher 抓取状态）
 - 使用 `str.format()` 渲染，不引入新依赖
-- 模板变量：`{report_title}`（邮件标题）、`{paper_msg}`（论文数量或无新增提示）、`{attachment_section}`（附件标记 HTML，无论文时为空）
+- 模板变量：`{report_title}`（邮件标题）、`{paper_msg}`（论文数量或无新增提示）、`{attachment_section}`（附件标记 HTML，无论文时为空）、`{journal_list}`（追踪期刊列表 HTML）、`{keyword_list}`（关键词标签云 HTML）、`{domain_block}`（完整领域定义 HTML）、`{publisher_stats}`（Publisher 抓取状态表 HTML）
 - 报告作为附件，正文无论文列表
 - 模板名可在 `configs/settings.yaml` 的 `email.template` 配置，WebUI Config 页面可通过 `<select>` 下拉框覆盖
 - 当 `email_template_override.txt`（`DATA_DIR/` 下）存在时，WebUI 优先使用其内容作为模板选择
+
+**Publisher 抓取状态**（`detailed.html` 特有）：显示过去 7 天各 publisher 的爬取健康状况。
+- 仅展示 `publishers.yaml` 中至少有一个期刊 `enabled: true` 的 publisher（禁用 publisher 如 Optica 不显示）
+- 状态判断：失败数 ≥ `PUBLISHER_MAX_CONSECUTIVE_FAILURES`（默认 3）→ "🚫 Blocked"，否则 "✅ OK"
+- `pending` 论文是熔断器残留（Phase C 同 publisher 连续失败 N 篇后自动中止），不纳入统计
 
 ## 10. LLM 总结输出简单化
 

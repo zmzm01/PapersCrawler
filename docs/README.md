@@ -303,9 +303,49 @@ python tools/reset_empty_abstract.py
 1. **Persistent Context** — 同一个 publisher 共用一个浏览器 session
 2. **Headful Chromium** — 不使用无头模式（Cloudflare 检测 headless）
 3. **cloakbrowser** — 自动处理浏览器指纹伪装，无需手动注入反检测 JS
-4. **真人节奏** — 页面间 5~10s 随机延迟，publisher 间冷却 15s
-5. **失败熔断** — 同一 publisher 连续 5 篇失败后自动中止
+4. **真人节奏** — 页面间 3~5s 随机延迟，publisher 间冷却 15s
+5. **失败熔断** — 同一 publisher 连续 3 篇失败后自动中止
 6. **校园网** — IP Reputation 是 anti-bot 最关键的因素
+
+## 非研究论文预检测（Pre-fetch）
+
+Phase C 启动浏览器前先根据标题前缀（如 `erratum`、`comment on`、`publisher's note` 等）过滤非研究论文，直接删除不入库。开关和关键词列表通过 `settings.yaml` 配置：
+
+```yaml
+# settings.yaml
+pipeline:
+  prefetch_non_research: true    # 浏览器启动前检测
+  postfetch_non_research: true   # 页面抓取后二次检测
+  non_research_keywords:         # 标题前缀匹配关键词
+    - "erratum"
+    - "comment on"
+    - "response to"
+    - "publisher's note"
+```
+
+Science 和 Nature 的 Scraper 还通过 `dc.type` / `og:type` / `altmetric_type` meta 标签做精确检测，覆盖 Pre-fetch 无法识别的非研究文章类型。
+
+## 邮件 HTML 模板
+
+Phase H 支持 HTML 模板渲染，模板文件位于 `templates/email/`：
+
+| 模板 | 说明 |
+|------|------|
+| `default.html` | 默认模板：蓝色 header + 正文 + 附件链接 + 灰色 footer |
+| `detailed.html` | 详细模板：包含期刊列表、筛选范围说明、出版社 7 日爬虫统计 |
+| `funny.html` | 趣味模板：轻松语气 + 表情符号 |
+
+模板变量（str.format 替换）：
+- `{report_title}` — 报告标题
+- `{paper_msg}` — 论文数量描述（如 "共收录 N 篇"）
+- `{attachment_section}` — 附件链接 HTML
+- `{journal_list}` — 期刊列表 HTML
+- `{keyword_list}` — 关键词列表 HTML
+- `{domain_block}` — 筛选范围说明 HTML
+- `{publisher_stats}` — 出版社 7 日爬虫统计 HTML
+- `{threshold}` — 相关度阈值说明
+
+通过 `Web UI Config 页 → Email Template` 文本框覆盖模板内容，或修改 `settings.yaml` 的 `email.template` 配置项。
 
 ## 数据源优先级
 
