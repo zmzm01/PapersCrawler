@@ -331,23 +331,8 @@ if __name__ == "__main__":
     }
 
     # 从配置加载系统提示词（如文件不存在则使用内嵌后备值）
-    from config import load_prompt
-    _prompt = load_prompt("summary")
-    if not _prompt:
-        # 内嵌后备值（不含 Python 转义干扰）
-        _prompt = (
-            "你是一位专业的理论/实验物理学家，尤其擅长激光等离子体物理。"
-            "请根据提供的论文全文，生成一个 JSON 格式的结构化总结。\n\n"
-            "【输出格式】\n"
-            '严格输出合法 JSON 对象，不包含任何额外文字或注释。\n'
-            "【内容要求】\n"
-            "1. 所有字段必须用中文学术语言\n"
-            "2. 未提及的信息设为 '未提供'\n"
-            "3. 反斜杠必须双写\n"
-            "4. 禁止 \\begin{} / \\end{} 等复杂环境\n"
-            "5. 换行用 \\n 表示"
-        )
-    SUMMARIES_PROMPT = _prompt
+    from config import CFG
+    SUMMARIES_PROMPT = CFG.SUMMARIES_PROMPT
     # 示例：请先设置 export DEEPSEEK_API_KEY="your-key"
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT)
     paperMDpath = Path("./TEST/MinerU_Paper_Parser/qdgp-tydj/full.md")

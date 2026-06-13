@@ -8,11 +8,8 @@ import json
 import logging
 
 from config import (
-    load_publishers, load_keywords,
+    CFG, load_publishers, load_keywords,
     DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR, DATA_DIR,
-    SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
-    SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
-    SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,11 +29,10 @@ def _load_skip_overrides():
 def _get_effective_skip(overrides):
     """Build effective skip dict: overrides take precedence over defaults."""
     defaults = {
-        "A_RSS": SKIP_PHASE_A_RSS, "A_CR": SKIP_PHASE_A_CR,
-        "B": SKIP_PHASE_B, "C": SKIP_PHASE_C,
-        "D": SKIP_PHASE_D, "E": SKIP_PHASE_E, "E2": SKIP_PHASE_E2,
-        "F": SKIP_PHASE_F, "G": SKIP_PHASE_G, "H": SKIP_PHASE_H,
-
+        "A_RSS": CFG.SKIP_PHASE_A_RSS, "A_CR": CFG.SKIP_PHASE_A_CR,
+        "B": CFG.SKIP_PHASE_B, "C": CFG.SKIP_PHASE_C,
+        "D": CFG.SKIP_PHASE_D, "E": CFG.SKIP_PHASE_E, "E2": CFG.SKIP_PHASE_E2,
+        "F": CFG.SKIP_PHASE_F, "G": CFG.SKIP_PHASE_G, "H": CFG.SKIP_PHASE_H,
     }
     return {k: overrides.get(k, defaults[k]) for k in defaults}
 

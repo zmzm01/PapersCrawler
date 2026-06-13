@@ -5,16 +5,13 @@ Computes cosine similarity between each paper and multiple sub-domain
 descriptions. The resulting score is used ONLY for sorting in the WebUI
 Papers page. It does NOT gate Phase E (LLM relevance).
 
-When SKIP_PHASE_D = True (default), all papers go directly to Phase E.
+When CFG.SKIP_PHASE_D = True (default), all papers go directly to Phase E.
 """
 
 import logging
 from datetime import datetime
 
-from config import (
-    SKIP_PHASE_D, MAX_PAPERS_PER_PHASE,
-    SEMANTIC_MODEL_PATH,
-)
+from config import CFG
 from db.database import DatabaseClient, FetchStatus
 from processors.paper_relevance import SemanticFilter
 
@@ -30,8 +27,8 @@ def phase_d_semantic_filter(db, domain_config):
     domain_config : dict
         {"keywords": [...], "domain_description": "...", "sub_domains": {...}}
     """
-    if SKIP_PHASE_D:
-        logger.info("Phase D: SKIP_PHASE_D=True, skipping")
+    if CFG.SKIP_PHASE_D:
+        logger.info("Phase D: CFG.SKIP_PHASE_D=True, skipping")
         return
     logger.info("--- Phase D: Semantic similarity (reference only) ---")
 
@@ -43,7 +40,7 @@ def phase_d_semantic_filter(db, domain_config):
     logger.info(f"Phase D: {len(sub_domains)} sub-domains loaded")
 
     try:
-        sf = SemanticFilter(SEMANTIC_MODEL_PATH, sub_domains)
+        sf = SemanticFilter(CFG.SEMANTIC_MODEL_PATH, sub_domains)
     except ImportError as e:
         logger.error(f"Phase D: {e}")
         logger.error("Install sentence-transformers: pip install sentence-transformers")
@@ -53,8 +50,8 @@ def phase_d_semantic_filter(db, domain_config):
         return
 
     papers = db.get_pendings("semantic_filter_status")
-    if MAX_PAPERS_PER_PHASE:
-        papers = papers[:MAX_PAPERS_PER_PHASE]
+    if CFG.MAX_PAPERS_PER_PHASE:
+        papers = papers[:CFG.MAX_PAPERS_PER_PHASE]
     if not papers:
         logger.info("Phase D: no pending papers")
         return

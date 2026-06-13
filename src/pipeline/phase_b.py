@@ -8,7 +8,7 @@ from datetime import datetime
 
 import requests
 
-from config import SKIP_PHASE_B, CROSSREF_MAILTO, REQUEST_TIMEOUT, MAX_PAPERS_PER_PHASE
+from config import CFG
 from db.database import DatabaseClient, FetchStatus
 from sources.crossref import CrossrefClient, NotFoundError
 
@@ -22,15 +22,15 @@ def phase_b_crossref(db):
     ----------
     db : DatabaseClient
     """
-    if SKIP_PHASE_B:
-        logger.info("Phase B: SKIP_PHASE_B=True, skipping")
+    if CFG.SKIP_PHASE_B:
+        logger.info("Phase B: CFG.SKIP_PHASE_B=True, skipping")
         return
     logger.info("--- Phase B: CrossRef metadata ---")
-    crClient = CrossrefClient(mailto=CROSSREF_MAILTO, timeout=REQUEST_TIMEOUT)
+    crClient = CrossrefClient(mailto=CFG.CROSSREF_MAILTO, timeout=CFG.REQUEST_TIMEOUT)
 
     paper_tasks = db.get_pendings("cr_metadata_fetched_status")
-    if MAX_PAPERS_PER_PHASE:
-        paper_tasks = paper_tasks[:MAX_PAPERS_PER_PHASE]
+    if CFG.MAX_PAPERS_PER_PHASE:
+        paper_tasks = paper_tasks[:CFG.MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
         logger.info("Phase B: no pending papers")
         return

@@ -7,10 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from config import (
-    SKIP_PHASE_E, MAX_PAPERS_PER_PHASE,
-    load_keywords, LLM_API_CONFIG_DICT_RELE, LLM_CONCURRENT_MAX,
-)
+from config import CFG, load_keywords
 from db.database import DatabaseClient, FetchStatus
 from processors.paper_relevance import (
     PaperRelevanceChecker,
@@ -28,7 +25,7 @@ def phase_e_llm_relevance(db):
     db : DatabaseClient
     """
     logger.info("--- Phase E: LLM relevance ---")
-    if SKIP_PHASE_E:
+    if CFG.SKIP_PHASE_E:
         logger.info("Phase E: SKIP_PHASE_E=True, skipping")
         return
 
@@ -38,8 +35,8 @@ def phase_e_llm_relevance(db):
         return
 
     paper_tasks = db.get_pendings("llm_relevance_status")
-    if MAX_PAPERS_PER_PHASE:
-        paper_tasks = paper_tasks[:MAX_PAPERS_PER_PHASE]
+    if CFG.MAX_PAPERS_PER_PHASE:
+        paper_tasks = paper_tasks[:CFG.MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
         logger.info("Phase E: no pending papers")
         return
@@ -74,13 +71,13 @@ def phase_e_llm_relevance(db):
         logger.info("Phase E: no valid papers to judge")
         return
 
-    max_workers = min(len(tasks), LLM_CONCURRENT_MAX)
+    max_workers = min(len(tasks), CFG.LLM_CONCURRENT_MAX)
     logger.info(f"Phase E: {max_workers} concurrent workers")
     success_count = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(checker.call_deepseek_api, prompt, LLM_API_CONFIG_DICT_RELE): (paper, prompt)
+            executor.submit(checker.call_deepseek_api, prompt, CFG.LLM_API_CONFIG_DICT_RELE): (paper, prompt)
             for paper, prompt in tasks
         }
         for future in as_completed(futures):
