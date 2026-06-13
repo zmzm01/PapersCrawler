@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{report_title}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table role="presentation" style="width:100%;border-collapse:collapse;">
+    <tr>
+      <td align="center" style="padding:40px 20px;">
+        <table role="presentation" style="max-width:600px;width:100%;border-collapse:collapse;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#2563eb;padding:32px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:600;letter-spacing:0.5px;">PapersCrawler</h1>
+              <p style="margin:8px 0 0;color:#bfdbfe;font-size:14px;">学术文献自动追踪与推送</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px;">
+              <p style="margin:0 0 8px;color:#374151;font-size:15px;line-height:1.6;">您好，</p>
+              <p style="margin:0 0 8px;color:#374151;font-size:15px;line-height:1.6;">{report_title}</p>
+              <p style="margin:0 0 24px;color:#6b7280;font-size:14px;line-height:1.6;">{paper_msg}</p>
+              {attachment_section}
+
+              <!-- Journal List -->
+              <div style="margin:28px 0 0;padding:20px;background-color:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+                <h2 style="margin:0 0 12px;color:#1e293b;font-size:16px;font-weight:600;">📡 追踪期刊</h2>
+                <p style="margin:0;color:#64748b;font-size:13px;line-height:1.5;">本次流水线覆盖以下期刊：</p>
+                {journal_list}
+              </div>
+
+              <!-- Screening Scope Block -->
+              <div style="margin:20px 0 0;padding:20px;background-color:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+                <h2 style="margin:0 0 12px;color:#1e293b;font-size:16px;font-weight:600;">🔑 筛选依据（完整领域定义）</h2>
+                <p style="margin:0;color:#64748b;font-size:13px;line-height:1.5;">以下文本作为 LLM 相关性判断的依据：</p>
+                {domain_block}
+              </div>
+
+              <!-- Publisher Scraping Stats -->
+              <div style="margin:20px 0 0;padding:20px;background-color:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+                <h2 style="margin:0 0 12px;color:#1e293b;font-size:16px;font-weight:600;">🕷️ 出版社抓取状态（近 7 天）</h2>
+                <p style="margin:0;color:#64748b;font-size:13px;line-height:1.5;">连续 {threshold} 次失败即熔断标记为 Blocked，其余记为 OK。</p>
+                {publisher_stats}
+              </div>
+
+              <p style="margin:24px 0 0;color:#6b7280;font-size:13px;line-height:1.6;">祝好！<br>PapersCrawler 自动发送</p>
+              <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;text-align:center;border-top:1px solid #e5e7eb;padding-top:16px;">
+                开源地址：
+                <a href="https://github.com/zmzm01/PapersCrawler" style="color:#2563eb;text-decoration:none;">github.com/zmzm01/PapersCrawler</a>
+                — 欢迎 Star、Issue 和 PR 🚀
+              </p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:12px 40px;background-color:#f9fafb;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;color:#d1d5db;font-size:11px;text-align:center;">PapersCrawler — 学术文献自动追踪与推送</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
