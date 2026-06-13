@@ -1229,3 +1229,42 @@ class DatabaseClient:
         """
         self.conn.execute("DELETE FROM papers WHERE doi = ?", (doi,))
         self.conn.commit()
+
+    def get_publisher_page_stats(self, days: int = 7):
+        """获取各出版社页面抓取状态统计，可选时间范围。
+
+        Parameters
+        ----------
+        days : int or None
+            统计最近 N 天内的记录。为 None 时不限时间，统计全部。
+
+        Returns
+        -------
+        dict[str, dict[str, int]]
+            {publisher: {"success": N, "failed": N, "skipped": N, "pending": N}}
+        """
+        if days is not None:
+            cur = self.conn.execute(
+                "SELECT publisher, publisher_page_fetched_status, COUNT(*) as cnt "
+                "FROM papers "
+                "WHERE publisher_page_fetched_date "
+                ">= datetime('now', ? || ' days', 'localtime') "
+                "GROUP BY publisher, publisher_page_fetched_status",
+                (str(-days),),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT publisher, publisher_page_fetched_status, COUNT(*) as cnt "
+                "FROM papers GROUP BY publisher, publisher_page_fetched_status"
+            )
+        rows = cur.fetchall()
+        stats: dict[str, dict[str, int]] = {}
+        for row in rows:
+            pub = row["publisher"] or "unknown"
+            status = row["publisher_page_fetched_status"] or "pending"
+            cnt = row["cnt"]
+            if pub not in stats:
+                stats[pub] = {"success": 0, "failed": 0, "skipped": 0, "pending": 0}
+            if status in stats[pub]:
+                stats[pub][status] = cnt
+        return stats
