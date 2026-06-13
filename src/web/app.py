@@ -47,14 +47,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import (
+    CFG,
     DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
     LOG_FILE_PATH, DATA_DIR, CONFIG_DIR, PROMPTS_DIR,
-    JOURNAL_OVERRIDES_PATH,
-    EMAIL_TEMPLATE_NAME, EMAIL_TEMPLATE_DEFAULT, EMAIL_TEMPLATE_DIR,
+    JOURNAL_OVERRIDES_PATH, EMAIL_TEMPLATE_DIR,
     load_publishers, load_keywords, load_settings,
-    SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
-    SKIP_PHASE_B, SKIP_PHASE_C, SKIP_PHASE_D,
-    SKIP_PHASE_E, SKIP_PHASE_E2, SKIP_PHASE_F, SKIP_PHASE_G, SKIP_PHASE_H,
 )
 from db.database import DatabaseClient
 from pipeline.runner import _load_skip_overrides
@@ -75,14 +72,15 @@ PHASE_LABELS = {
     "F": "LLM Summary", "G": "Report", "H": "Email",
 }
 
-PHASE_DEFAULTS = {
-    "A-RSS": SKIP_PHASE_A_RSS, "A-CR": SKIP_PHASE_A_CR,
-    "B": SKIP_PHASE_B, "C": SKIP_PHASE_C,
-    "D": SKIP_PHASE_D, "E": SKIP_PHASE_E, "E2": SKIP_PHASE_E2,
-    "F": SKIP_PHASE_F, "G": SKIP_PHASE_G, "H": SKIP_PHASE_H,
-}
-
 PHASE_ORDER = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F", "G", "H"]
+
+# 从 CFG 读取阶段默认值的映射表
+_PHASE_KEY_MAP = {
+    "A-RSS": "SKIP_PHASE_A_RSS", "A-CR": "SKIP_PHASE_A_CR",
+    "B": "SKIP_PHASE_B", "C": "SKIP_PHASE_C",
+    "D": "SKIP_PHASE_D", "E": "SKIP_PHASE_E", "E2": "SKIP_PHASE_E2",
+    "F": "SKIP_PHASE_F", "G": "SKIP_PHASE_G", "H": "SKIP_PHASE_H",
+}
 
 SKIP_OVERRIDES_PATH = DATA_DIR / "skip_overrides.json"
 
@@ -101,7 +99,7 @@ def _atomic_write(path, content):
 
 def _get_effective_skip():
     overrides = _load_skip_overrides()
-    return {k: overrides.get(k, PHASE_DEFAULTS[k]) for k in PHASE_DEFAULTS}
+    return {k: overrides.get(k, getattr(CFG, _PHASE_KEY_MAP[k])) for k in _PHASE_KEY_MAP}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -533,8 +531,8 @@ async def config_page(request: Request):
         "domain_description": domain_description,
         "settings_raw": settings_raw,
         "prompts_raw": prompts,
-        "email_template_name": EMAIL_TEMPLATE_NAME,
-        "email_template_default": EMAIL_TEMPLATE_DEFAULT,
+        "email_template_name": CFG.EMAIL_TEMPLATE_NAME,
+        "email_template_default": CFG.EMAIL_TEMPLATE_DEFAULT,
         "email_templates": email_templates,
         "current_override": current_override,
     })
@@ -545,7 +543,9 @@ async def config_skip_toggle(phase: str):
     if phase not in PHASE_LABELS:
         return JSONResponse({"error": f"Unknown phase: {phase}"}, status_code=400)
     overrides = _load_skip_overrides()
-    current = overrides.get(phase, PHASE_DEFAULTS[phase])
+    phase_attr = _PHASE_KEY_MAP.get(phase)
+    default_val = getattr(CFG, phase_attr) if phase_attr else False
+    current = overrides.get(phase, default_val)
     overrides[phase] = not current
     _atomic_write(SKIP_OVERRIDES_PATH, json.dumps(overrides, indent=2))
     return JSONResponse({"ok": True, "phase": phase, "skipped": overrides[phase]})

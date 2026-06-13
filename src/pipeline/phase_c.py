@@ -10,12 +10,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-from config import (
-    SKIP_PHASE_C, MAX_PAPERS_PER_PHASE,
-    PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX,
-    PUBLISHER_MAX_CONSECUTIVE_FAILURES,
-    PREFETCH_NON_RESEARCH, POSTFETCH_NON_RESEARCH, NON_RESEARCH_KEYWORDS,
-)
+from config import CFG
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import create_scraper
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
@@ -96,13 +91,13 @@ def phase_c_publisher(db, publishers):
         Used to check enabled/disabled status per publisher key.
     """
     logger.info("--- Phase C: Publisher page scraping ---")
-    if SKIP_PHASE_C:
-        logger.info("Phase C: SKIP_PHASE_C=True, skipping")
+    if CFG.SKIP_PHASE_C:
+        logger.info("Phase C: CFG.SKIP_PHASE_C=True, skipping")
         return
 
     paper_tasks = db.get_pendings("publisher_page_fetched_status")
-    if MAX_PAPERS_PER_PHASE:
-        paper_tasks = paper_tasks[:MAX_PAPERS_PER_PHASE]
+    if CFG.MAX_PAPERS_PER_PHASE:
+        paper_tasks = paper_tasks[:CFG.MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
         logger.info("Phase C: no pending papers")
         return
@@ -190,11 +185,11 @@ def phase_c_publisher(db, publishers):
                 last_error = None
 
                 # Pre-fetch non-research detection: check DB title before browser launch
-                if PREFETCH_NON_RESEARCH:
+                if CFG.PREFETCH_NON_RESEARCH:
                     paper_title = (paper["title"] or "").strip()
                     if paper_title:
                         title_lower = paper_title.lower()
-                        for kw in NON_RESEARCH_KEYWORDS:
+                        for kw in CFG.NON_RESEARCH_KEYWORDS:
                             if title_lower.startswith(kw):
                                 db.insert_skipped_doi(paperDOI, "NonResearchPreFetch", timestamp)
                                 db.delete_paper(paperDOI)
@@ -262,9 +257,9 @@ def phase_c_publisher(db, publishers):
                                 + (" (bot block)" if bot_blocked else "")
                             )
 
-                        if POSTFETCH_NON_RESEARCH:
+                        if CFG.POSTFETCH_NON_RESEARCH:
                             title_lower = (paperPage.title or "").lower()
-                            for kw in NON_RESEARCH_KEYWORDS:
+                            for kw in CFG.NON_RESEARCH_KEYWORDS:
                                 if title_lower.startswith(kw):
                                     raise NonResearchPageError(
                                         f"Non-research page (keyword: {paperPage.title})"
@@ -349,11 +344,11 @@ def phase_c_publisher(db, publishers):
                         "publisher_page_fetched_date", timestamp,
                     )
                     consecutive_failures += 1
-                    if consecutive_failures >= PUBLISHER_MAX_CONSECUTIVE_FAILURES:
+                    if consecutive_failures >= CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES:
                         logger.warning(f"Publisher {publisher}: {consecutive_failures} consecutive failures, aborting")
                         break
 
-                delay = random.uniform(PUBLISHER_PAGE_DELAY_MIN, PUBLISHER_PAGE_DELAY_MAX)
+                delay = random.uniform(CFG.PUBLISHER_PAGE_DELAY_MIN, CFG.PUBLISHER_PAGE_DELAY_MAX)
                 logger.debug(f"Delay {delay:.1f}s...")
                 time.sleep(delay)
 

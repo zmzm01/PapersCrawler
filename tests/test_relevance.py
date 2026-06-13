@@ -184,9 +184,9 @@ def semantic_filter():
                         reason="sentence-transformers not installed")
     try:
         from processors.paper_relevance import SemanticFilter
-        from config import SEMANTIC_MODEL_PATH
+        from config import CFG
         sf = SemanticFilter(
-            model_name=SEMANTIC_MODEL_PATH,
+            model_name=CFG.SEMANTIC_MODEL_PATH,
             sub_domains={
                 "laser_wakefield_acceleration": (
                     "Laser-driven wakefield acceleration of electrons "

@@ -8,11 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-from config import (
-    SKIP_PHASE_F, MAX_PAPERS_PER_PHASE, DATA_DIR,
-    load_keywords, LLM_API_CONFIG_DICT_SUMM, LLM_API_CONFIG_DICT_RELE,
-    SUMMARIES_PROMPT, SKIP_FORMULA_FIX, FORCE_FORMULA_FIX, LLM_CONCURRENT_MAX,
-)
+from config import CFG, DATA_DIR, load_keywords
 from db.database import DatabaseClient, FetchStatus
 from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
@@ -30,13 +26,13 @@ def phase_f_llm_summary(db):
     db : DatabaseClient
     """
     logger.info("--- Phase F: LLM summary ---")
-    if SKIP_PHASE_F:
+    if CFG.SKIP_PHASE_F:
         logger.info("Phase F: SKIP_PHASE_F=True, skipping")
         return
 
     papers = db.get_pendings("llm_summary_status")
-    if MAX_PAPERS_PER_PHASE:
-        papers = papers[:MAX_PAPERS_PER_PHASE]
+    if CFG.MAX_PAPERS_PER_PHASE:
+        papers = papers[:CFG.MAX_PAPERS_PER_PHASE]
     if not papers:
         logger.info("Phase F: no pending papers")
         return
@@ -58,10 +54,10 @@ def phase_f_llm_summary(db):
     if skipped_count:
         logger.info(f"Phase F: {skipped_count} papers skipped (not relevant)")
 
-    summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
+    summarizer = DeepSeekPaperSummarizer(llm_api_config=CFG.LLM_API_CONFIG_DICT_SUMM)
     fixer = None
-    if not SKIP_FORMULA_FIX:
-        fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE, force=FORCE_FORMULA_FIX)
+    if not CFG.SKIP_FORMULA_FIX:
+        fixer = FormulaFixer(llm_api_config=CFG.LLM_API_CONFIG_DICT_RELE, force=CFG.FORCE_FORMULA_FIX)
 
     tasks = []
     for paper in relevant_papers:
@@ -93,13 +89,13 @@ def phase_f_llm_summary(db):
 
     logger.info(f"Phase F: {len(tasks)} papers to summarize")
 
-    max_workers = min(len(tasks), LLM_CONCURRENT_MAX)
+    max_workers = min(len(tasks), CFG.LLM_CONCURRENT_MAX)
     logger.info(f"Phase F: {max_workers} concurrent workers")
     success_count = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(summarizer.call_deepseek_api, article_text, SUMMARIES_PROMPT): paper
+            executor.submit(summarizer.call_deepseek_api, article_text, CFG.SUMMARIES_PROMPT): paper
             for paper, article_text in tasks
         }
         for future in as_completed(futures):

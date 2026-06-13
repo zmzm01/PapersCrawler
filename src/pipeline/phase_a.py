@@ -7,9 +7,7 @@ from datetime import datetime, timedelta, date
 import logging
 
 from config import (
-    SKIP_PHASE_A_RSS, SKIP_PHASE_A_CR,
-    RAW_RSS_DIR, SKIP_NATURE_NEWS, CROSSREF_LOOKBACK_DAYS,
-    CROSSREF_MAILTO,
+    CFG, RAW_RSS_DIR,
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import load_journal_overrides, journal_effective
@@ -32,8 +30,8 @@ def phase_a_rss(db, publishers, use_overrides=False):
         CLI (force=False) 时 False，只读 publishers.yaml。
         WebUI (force=True) 时 True，叠加 journal_overrides.json。
     """
-    if SKIP_PHASE_A_RSS:
-        logger.info("Phase A-RSS: SKIP_PHASE_A_RSS=True, skipping")
+    if CFG.SKIP_PHASE_A_RSS:
+        logger.info("Phase A-RSS: CFG.SKIP_PHASE_A_RSS=True, skipping")
         return
     logger.info("--- Phase A-RSS: RSS Feed fetch ---")
     rsspro = RSSProcessor()
@@ -72,7 +70,7 @@ def phase_a_rss(db, publishers, use_overrides=False):
                 if db.is_doi_skipped(paperDOI):
                     logger.debug(f"DOI in skip list: {paperDOI}")
                     continue
-                if SKIP_NATURE_NEWS and "/d41586-" in paperDOI:
+                if CFG.SKIP_NATURE_NEWS and "/d41586-" in paperDOI:
                     logger.debug(f"Skipping Nature news: {paperDOI}")
                     continue
                 db.insert_rss_basicinfo(
@@ -90,7 +88,7 @@ def phase_a_rss(db, publishers, use_overrides=False):
 def phase_a_crossref(db, publishers, use_overrides=False):
     """Fetch papers from CrossRef by journal ISSN + date range.
 
-    Daily incremental mode: queries from (today - CROSSREF_LOOKBACK_DAYS) to today.
+    Daily incremental mode: queries from (today - CFG.CROSSREF_LOOKBACK_DAYS) to today.
     New DOIs are inserted with discovery_source='crossref'.
     Existing DOIs get discovery_source appended with ',crossref'.
 
@@ -104,17 +102,17 @@ def phase_a_crossref(db, publishers, use_overrides=False):
         CLI (force=False) 时 False，只读 publishers.yaml。
         WebUI (force=True) 时 True，叠加 journal_overrides.json。
     """
-    if SKIP_PHASE_A_CR:
-        logger.info("Phase A-CR: SKIP_PHASE_A_CR=True, skipping")
+    if CFG.SKIP_PHASE_A_CR:
+        logger.info("Phase A-CR: CFG.SKIP_PHASE_A_CR=True, skipping")
         return
     logger.info("--- Phase A-CR: CrossRef journal query ---")
 
     timestamp = datetime.now().strftime("%Y%m%d")
     to_date = date.today().isoformat()
-    from_date = (date.today() - timedelta(days=CROSSREF_LOOKBACK_DAYS)).isoformat()
+    from_date = (date.today() - timedelta(days=CFG.CROSSREF_LOOKBACK_DAYS)).isoformat()
     logger.info(f"Query window: {from_date} ~ {to_date}")
 
-    client = CrossrefClient(mailto=CROSSREF_MAILTO)
+    client = CrossrefClient(mailto=CFG.CROSSREF_MAILTO)
     overrides = load_journal_overrides() if use_overrides else {}
     seen_issns = set()    # 去重：相同 ISSN 只请求一次
 
@@ -141,7 +139,7 @@ def phase_a_crossref(db, publishers, use_overrides=False):
             for paper in papers:
                 if not paper.doi:
                     continue
-                if SKIP_NATURE_NEWS and "/d41586-" in (paper.doi or ""):
+                if CFG.SKIP_NATURE_NEWS and "/d41586-" in (paper.doi or ""):
                     logger.debug(f"Skipping Nature news from CrossRef: {paper.doi}")
                     continue
                 if db.is_doi_skipped(paper.doi):
