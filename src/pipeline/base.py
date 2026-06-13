@@ -8,7 +8,7 @@ and shared utilities (journal overrides loading).
 import json
 import os
 
-from config import BROWSER_SESSION_DIR, PUBLISHER_PROXY, JOURNAL_OVERRIDES_PATH
+from config import CFG, BROWSER_SESSION_DIR, JOURNAL_OVERRIDES_PATH
 from sources.publisher import (
     NatureScraper, ScienceScraper, APSScraper,
     AIPScraper, IOPScraper, CambridgeScraper, OpticaScraper,
@@ -22,7 +22,7 @@ SCRAPER_MAP = {
     "iop":       (IOPScraper, BROWSER_SESSION_DIR / "iop",       None),
     "cambridge": (CambridgeScraper, BROWSER_SESSION_DIR / "cambridge", None),
     "optica":    (OpticaScraper, BROWSER_SESSION_DIR / "optica",
-                  PUBLISHER_PROXY.get("optica")),
+                  CFG.PUBLISHER_PROXY.get("optica")),
 }
 
 

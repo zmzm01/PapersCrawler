@@ -8,9 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from config import (
-    SKIP_PHASE_E2, MINERU_TOKEN, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR,
-)
+from config import CFG, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import SCRAPER_MAP
 from processors.mineru_paper_parser import MinerUParser
@@ -27,11 +25,11 @@ def phase_e2_mineru(db):
     db : DatabaseClient
     """
     logger.info("--- Phase E2: MinerU PDF parsing ---")
-    if SKIP_PHASE_E2:
+    if CFG.SKIP_PHASE_E2:
         logger.info("Phase E2: SKIP_PHASE_E2=True, skipping")
         return
 
-    if not MINERU_TOKEN:
+    if not CFG.MINERU_TOKEN:
         logger.info("Phase E2: MINERU_TOKEN not configured, skipping")
         return
 
@@ -46,7 +44,7 @@ def phase_e2_mineru(db):
 
     logger.info(f"Phase E2: {len(papers_with_pdf)} PDFs pending")
 
-    parser = MinerUParser(MINERU_TOKEN)
+    parser = MinerUParser(CFG.MINERU_TOKEN)
 
     # Group papers by publisher for per-publisher scraper with proper proxy
     papers_by_publisher = {}

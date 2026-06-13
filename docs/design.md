@@ -1031,6 +1031,64 @@ LOG_LEVEL=INFO python src/main.py
 使因 Cloudflare 瞬态拦截等偶发原因失败的论文在每次每日运行时自动获得重试机会。
 仅重置 `failed` 状态，不触碰 `skipped`。
 
+## 18. 配置持有对象（CFG）
+
+**背景**：`config.py` 使用模块级裸变量（`SKIP_PHASE_A_RSS = False`）持有运行时配置。
+`reload_config()` 用 `global` 修改它们。其他模块通过 `from config import X` 获取值副本。
+Web UI 长进程中 `reload_config()` 更新了 `config` 模块的变量，但 `web/app.py` 的
+`PHASE_DEFAULTS` dict 在 import 时捕获的值不会自动跟随。这是 Python 值复制 + 模块级可变
+状态的经典陷阱。
+
+**解决**：引入 `CFG` 持有对象（`types.SimpleNamespace`），所有可热加载的运行时配置作为其属性。
+
+### 设计
+
+```
+# config.py
+from types import SimpleNamespace
+CFG = SimpleNamespace()
+CFG.SKIP_PHASE_A_RSS = False
+
+def reload_config():
+    CFG.SKIP_PHASE_A_RSS = new_value  # 不需要 global
+
+# 任何消费者
+from config import CFG
+if CFG.SKIP_PHASE_A_RSS:   # 属性访问 → 永远实时 ✅
+```
+
+**关键差异**：
+- `from config import X` → **值复制**，过期
+- `from config import CFG; CFG.X` → **属性访问**，永远当前值
+
+### `_apply_settings()` 去重
+
+引入 `_apply_settings(settings)` 函数，被模块加载和 `reload_config()` 共同调用，
+消除原先 ~80 行重复代码：
+
+```python
+_SOURCE_SETTINGS = load_settings()
+if _SOURCE_SETTINGS:
+    _apply_settings(_SOURCE_SETTINGS)
+
+def reload_config():
+    _settings = load_settings()
+    if _settings:
+        _apply_settings(_settings)
+```
+
+### 消费者迁移
+
+| 文件类别 | import 方式 | 说明 |
+|---------|------------|------|
+| `web/app.py`（长进程） | `from config import CFG; CFG.X` | 热加载实时生效 |
+| `pipeline/*.py`（子进程） | `from config import CFG; CFG.X` | 统一风格，子进程重新 import 时拿到当前值 |
+| `config.py` 自身 | `CFG.X = ...` | 属性写入 |
+
+### 不变部分
+
+路径常量（`DATA_DIR`、`DB_PATH`、`RAW_RSS_DIR` 等）、.env 密钥（虽然在 `CFG` 上有别名但永不热加载）、加载函数（`load_publishers()`、`load_keywords()` 等）保持模块级变量/函数不变。
+
 # 流水线子阶段详解
 
 ## Phase C — Publisher 页面抓取

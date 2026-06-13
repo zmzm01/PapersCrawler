@@ -4,6 +4,7 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **CFG 重构** | 运行时配置从模块级裸变量迁移到 `CFG` 持有对象（`types.SimpleNamespace`），消除 `reload_config()` 的 `global` 声明与模块级值副本过期问题。`_apply_settings()` 抽取去重（消除模块加载和 reload 之间 ~80 行重复代码）。删除废弃的 `SKIP_PHASE_A`。全项目 19 个文件更新为 `from config import CFG; CFG.X` 模式。 | 06-11 |
 | **Publisher 统计过滤** | Phase H `detailed.html` 邮件模板中的 publisher 爬取统计现在排除未启用的 publisher（如 Optica `enabled: false` 不再显示 "0 success"），从 `load_publishers()` 构建 `enabled_publishers` set 做过滤 | 06-11 |
 | **Pre-fetch 非研究论文检测** | Phase C 新增浏览器启动前的标题前缀检测：从 DB 读取论文标题，按 `settings.yaml` 配置的前缀列表（`erratum`, `author correction:`, `publisher correction:`, `comment on`, `response to`, `publisher's note`）前缀匹配后直接 `delete_paper()` 并记入 `skipped_dois`；post-fetch 同步从子串匹配改为前缀匹配 + config 驱动；pre/post 独立开关，关键词列表用户可配置 | 06-11 |
 | **schedule_daily CLI 开关** | 新增 `--no-reset-publisher` 和 `--no-reset-mineru` 参数（默认均开启重置）；新增 `_run_auto_reset()` 函数封装重置逻辑；日志分别记录各重置开关状态 | 06-10 |

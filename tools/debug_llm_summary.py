@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import DB_PATH, LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT
+from config import CFG, DB_PATH
 from db.database import DatabaseClient
 from processors.llm_summarize_deepseek import DeepSeekPaperSummarizer
 from processors.paper_relevance import LLMAPICallError, LLMResponseParseError
@@ -69,10 +69,10 @@ def main():
     print(f"全文长度: {len(mineru_text)} 字符")
     print("\n--- 调用 DeepSeek API ---")
 
-    summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT_SUMM)
+    summarizer = DeepSeekPaperSummarizer(llm_api_config=CFG.LLM_API_CONFIG_DICT_SUMM)
 
     try:
-        result_str = summarizer.call_deepseek_api(article_text, SUMMARIES_PROMPT)
+        result_str = summarizer.call_deepseek_api(article_text, CFG.SUMMARIES_PROMPT)
     except (LLMAPICallError, LLMResponseParseError) as e:
         print(f"API 调用失败: {e}")
         sys.exit(1)

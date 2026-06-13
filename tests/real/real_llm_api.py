@@ -29,9 +29,9 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 def run_relevance():
     from processors.paper_relevance import PaperRelevanceChecker
-    from config import LLM_API_CONFIG_DICT_RELE
+    from config import CFG
 
-    config = dict(LLM_API_CONFIG_DICT_RELE)
+    config = dict(CFG.LLM_API_CONFIG_DICT_RELE)
     if not config.get("api_key"):
         print("[SKIP] DEEPSEEK_API_KEY not configured in .env")
         return False
@@ -63,9 +63,9 @@ def run_relevance():
 
 def run_summary():
     from processors.llm_summarize_deepseek import DeepSeekPaperSummarizer
-    from config import LLM_API_CONFIG_DICT_SUMM, SUMMARIES_PROMPT
+    from config import CFG
 
-    config = dict(LLM_API_CONFIG_DICT_SUMM)
+    config = dict(CFG.LLM_API_CONFIG_DICT_SUMM)
     if not config.get("api_key"):
         print("[SKIP] DEEPSEEK_API_KEY not configured for summary")
         return False
@@ -79,7 +79,7 @@ def run_summary():
         "using a 200 TW laser system with 30 fs pulse duration."
     )
 
-    result_str = summarizer.call_deepseek_api(article_text, SUMMARIES_PROMPT)
+    result_str = summarizer.call_deepseek_api(article_text, CFG.SUMMARIES_PROMPT)
     parsed = json.loads(result_str)
 
     expected_fields = [

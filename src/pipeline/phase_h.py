@@ -12,8 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import (
-    SKIP_PHASE_H, EMAIL_TEMPLATE_DIR, EMAIL_TEMPLATE_NAME,
-    PUBLISHER_MAX_CONSECUTIVE_FAILURES,
+    CFG, EMAIL_TEMPLATE_DIR,
     load_email_config, load_publishers, load_keywords,
     build_scope_block,
 )
@@ -67,7 +66,7 @@ def phase_h_email(db, auto_dir, report_path=None):
         When provided, no "no updates" notification is sent — the file must exist.
     """
     logger.info("--- Phase H: Email delivery ---")
-    if SKIP_PHASE_H:
+    if CFG.SKIP_PHASE_H:
         logger.info("Phase H: SKIP_PHASE_H=True, skipping")
         return
 
@@ -173,7 +172,7 @@ def phase_h_email(db, auto_dir, report_path=None):
         for j in (load_publishers() or []):
             if j.get("enabled", True):
                 enabled_publishers.add(j.get("publisher", j["id"]))
-        threshold = PUBLISHER_MAX_CONSECUTIVE_FAILURES  # default 3
+        threshold = CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES  # default 3
         pub_stats = db.get_publisher_page_stats(days=7)
         if pub_stats:
             rows = ""
@@ -230,7 +229,7 @@ def phase_h_email(db, auto_dir, report_path=None):
             sender.send(
                 subject,
                     _render_email_template(
-                        EMAIL_TEMPLATE_NAME,
+                        CFG.EMAIL_TEMPLATE_NAME,
                         report_title=f"PapersCrawler 文献追踪报告 — {date_str}",
                         paper_msg=paper_msg,
                         attachment_section=attachment_section,
@@ -254,7 +253,7 @@ def phase_h_email(db, auto_dir, report_path=None):
             sender.send(
                 subject,
                     _render_email_template(
-                        EMAIL_TEMPLATE_NAME,
+                        CFG.EMAIL_TEMPLATE_NAME,
                         report_title=f"PapersCrawler 文献追踪报告 — {date_str}（无新增）",
                         paper_msg=paper_msg,
                         attachment_section=attachment_section,

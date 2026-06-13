@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import SKIP_PHASE_G
+from config import CFG
 from db.database import DatabaseClient
 from processors.paper_report_generator import generate_report
 
@@ -33,7 +33,7 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         If None, auto mode (write to auto_dir, mark papers reported).
     """
     is_auto = doi_list is None
-    if SKIP_PHASE_G and is_auto:
+    if CFG.SKIP_PHASE_G and is_auto:
         logger.info("Phase G: SKIP_PHASE_G=True, skipping")
         return
     logger.info("--- Phase G: Report generation ---")

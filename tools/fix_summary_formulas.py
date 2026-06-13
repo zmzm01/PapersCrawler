@@ -27,7 +27,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import DB_PATH, LLM_API_CONFIG_DICT_RELE
+from config import CFG, DB_PATH
 from db.database import DatabaseClient, FetchStatus
 from processors.llm_summarize_deepseek import FormulaFixer
 
@@ -151,7 +151,7 @@ def main():
     papers = load_papers(db, doi=args.doi, publisher=args.publisher)
     del db
 
-    fixer = FormulaFixer(llm_api_config=LLM_API_CONFIG_DICT_RELE, force=args.force)
+    fixer = FormulaFixer(llm_api_config=CFG.LLM_API_CONFIG_DICT_RELE, force=args.force)
 
     logger.info(f"共 {len(papers)} 篇论文，正在检测公式格式问题...")
     stats, paper_results = analyze_papers(papers, fixer, verbose=args.verbose, force=args.force)
