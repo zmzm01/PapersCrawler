@@ -4,14 +4,7 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
-| **邮件模板: default 升级 + funny 新模板** | `default.html` 新增 GitHub 开源地址 + 贡献邀请；`funny.html` 搞笑风格（渐变橙粉头、大标题"啊哈哈，论文来咯！"、屎山代码尾）；通过 `settings.yaml` 的 `email.template` 或 WebUI Config 切换 | 06-10 |
-| **Phase F 路径修复** | `phase_f.py:73` 读取 MinerU `full.md` 时路径错误：`DATA_DIR.parent` → `DATA_DIR`（`rel_dir` 相对于 `MINERU_OUTPUT_DIR.parent` = `DATA_DIR` 存储，但 Phase F 用 `DATA_DIR.parent` = 项目根目录拼接，导致 `full.md` 找不到 → 所有论文被 skipped） | 06-10 |
-| **WebUI Send Report Now** | Subscriptions 页新增"发送日报"按钮，调用 `POST /subscriptions/send-report` → 直接执行 `phase_h_email()` 发送今日报告给所有活跃订阅者；新增 i18n 条目；CSS send-report-bar 样式 | 06-10 |
-| **SSE 首尾日志推送** | `_log_event_stream()` 首次连接时发送日志文件尾部 ~200KB 已有内容，让用户立即看到历史日志 | 06-10 |
-| **子进程日志修复** | `_run_phase_subprocess()` 配置子进程 logging (FileHandler + StreamHandler)、移除 `capture_output=True`、添加生命周期日志 | 06-10 |
-| **WebUI 缺失 logger** | `app.py` 在 `logging.basicConfig()` 后补全 `logger = logging.getLogger(__name__)`，修复 6 处潜在的 `NameError` | 06-10 |
-| **Email Template 下拉选择** | Config 页文本输入 → `<select>` 下拉框，自动扫描 `templates/email/*.html`；选择存入 `DATA_DIR/email_template_override.txt` | 06-10 |
-| **报告论文数统计修正** | `phase_h.py` 中 `report_text.count("## ")` → `re.findall(r'(?m)^## (?!目录)[^#]', ...)`，排除 `### ` 子节和 `## 目录` 的误计 | 06-10 |
+| **Pre-fetch 非研究论文检测** | Phase C 新增浏览器启动前的标题前缀检测：从 DB 读取论文标题，按 `settings.yaml` 配置的前缀列表（`erratum`, `author correction:`, `publisher correction:`, `comment on`, `response to`, `publisher's note`）前缀匹配后直接 `delete_paper()` 并记入 `skipped_dois`；post-fetch 同步从子串匹配改为前缀匹配 + config 驱动；pre/post 独立开关，关键词列表用户可配置 | 06-11 |
 | **schedule_daily CLI 开关** | 新增 `--no-reset-publisher` 和 `--no-reset-mineru` 参数（默认均开启重置）；新增 `_run_auto_reset()` 函数封装重置逻辑；日志分别记录各重置开关状态 | 06-10 |
 | **skipped_dois 表** | 新增 `skipped_dois` SQLite 表（doi PRIMARY KEY, reason, created_date），记录被永久删除的论文 DOI；Phase A 发现前同时检查 `paper_doi_exists()` 和 `is_doi_skipped()`；Phase C NonResearchPageError 先 `insert_skipped_doi()` 再 `delete_paper()`（AcceptedPaperError 仅删除不入 skipped_dois，因同 DOI 正式版会重新出现） | 06-10 |
 | **Science og:type 非研究检测** | `ScienceScraper.parse_page()` 当 `dc.Type` 缺失时增加 `og:type` 三级兜底：`og:type` 存在则视为非研究文章（Careers/Working Life 等无 dc.Type 但有 og:type），抛 `NonResearchPageError`；两者均不存在才抛 `PageParseError`（页面结构可能已变） | 06-10 |
