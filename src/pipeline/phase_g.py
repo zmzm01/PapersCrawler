@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import CFG
+from config import CFG, load_keywords
 from db.database import DatabaseClient
 from processors.paper_report_generator import generate_report
 
@@ -75,6 +75,12 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         if isinstance(authors, list) and authors and isinstance(authors[0], dict):
             authors = [a.get("name", "") for a in authors if a.get("name")]
 
+        subfields = []
+        try:
+            subfields = json.loads(p["llm_relevance_subfields"] or "[]")
+        except json.JSONDecodeError:
+            pass
+
         paper_dict = {
             "title": p["title"] or "",
             "authors": authors,
@@ -85,6 +91,9 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
                 or ""
             ),
             "doi": p["doi"] or "",
+            "journal": p["journal"] or "",
+            "publisher": p["publisher"] or "",
+            "matched_subdomains": subfields,
             "page_url": p["page_url"] or "",
             "pdf_url": p["pdf_url"] or "",
             "abstract": p["abstract"] or "",
@@ -96,6 +105,9 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         }
         paper_list.append(paper_dict)
         reported_dois.append(p["doi"])
+
+    # 按期刊 + 日期排序
+    paper_list.sort(key=lambda p: (p.get("journal", "") or "", p.get("date", "") or ""))
 
     if is_auto:
         out_dir = Path(auto_dir)
@@ -110,7 +122,13 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         md_path = out_dir / f"report_{timestamp_str}.md"
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    md_report = generate_report(paper_list, format="markdown", toc=True)
+
+    # 加载子领域定义用于分组报告；无 scope_definition 时回退平铺模式
+    scope_definition = load_keywords().get("scope_definition")
+    md_report = generate_report(
+        paper_list, format="markdown", toc=True,
+        scope_definition=scope_definition,
+    )
     md_path.write_text(md_report, encoding="utf-8")
     logger.info(f"Report saved: {md_path}")
 

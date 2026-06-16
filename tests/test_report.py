@@ -19,6 +19,7 @@ from processors.paper_report_generator import (
     generate_report,
     generate_markdown,
     generate_html,
+    _build_subdomain_labels,
     _fix_latex_backslashes_for_display,
     _adjust_headings,
     _process_results_markdown,
@@ -28,9 +29,21 @@ from processors.paper_report_generator import (
 
 # ---- 测试数据 ----
 
-def _sample_paper():
-    """返回一个完整的示例论文字典。"""
-    return {
+_SCOPE_DEFINITION = {
+    "acceleration": {
+        "description": "本方向研究高功率激光与固体/气体靶相互作用驱动离子加速。",
+        "topics": ["TNSA", "RPA"],
+    },
+    "plasma_physics": {
+        "description": "本方向研究超强激光与等离子体相互作用的基础物理。",
+        "topics": ["Self-focusing", "Plasma channel"],
+    },
+}
+
+
+def _sample_paper(**overrides):
+    """返回一个完整的示例论文字典，支持字段覆盖。"""
+    paper = {
         "title": "用超快光谱探测二维材料中的激子凝聚",
         "authors": ["张三", "李四", "王五"],
         "date": "2025-04-15",
@@ -43,7 +56,13 @@ def _sample_paper():
         "key_setup_and_method": "使用 800nm 泵浦、极紫外探测的 trARPES 系统。",
         "main_results_and_physics": "## 凝聚形成时间\n泵浦后 180~220 fs 建立。\n\n## 动量分布窄化\nFWHM 缩小。",
         "take_home_message": "首次用超快 trARPES 直接观测到激子凝聚的时间动力学。",
+        "matched_subdomains": [],
+        "journal": "Nature Physics",
+        "publisher": "Nature",
+        "discovery_source": "rss",
     }
+    paper.update(overrides)
+    return paper
 
 
 # ---- LaTeX 辅助函数 ----
@@ -174,6 +193,90 @@ def test_generate_html_fragment():
     assert "<!DOCTYPE html>" not in html
     assert "<section>" in html
     assert "超快光谱" in html
+
+
+# ---- 子领域标签映射 ----
+
+_SCOPE_DEF_FOR_LABELS = {
+    "acceleration": {
+        "description": "本方向研究高功率激光与固体/气体靶相互作用驱动离子和质子加速。",
+    },
+    "plasma_physics": {
+        "description": "本方向研究超强激光与等离子体相互作用的基础物理与诊断技术。",
+    },
+    "beam_applications": {
+        "description": "本方向关注激光加速束流的诊断、探测和应用。",
+    },
+    "advanced_technology": {
+        "description": "本方向研究高梯度束流传输与操控技术、等离子体光学元件以及AI。",
+    },
+}
+
+
+def test_build_subdomain_labels_known():
+    """已知子领域应返回正确的中文短标签。"""
+    labels = _build_subdomain_labels(_SCOPE_DEF_FOR_LABELS)
+    assert labels.get("acceleration") == "加速与后加速"
+    assert labels.get("plasma_physics") == "等离子体物理与诊断"
+    assert labels.get("beam_applications") == "束流诊断与辐照"
+    assert labels.get("advanced_technology") == "加速器控制与AI"
+
+
+def test_build_subdomain_labels_empty():
+    """空 scope_definition 返回空字典。"""
+    assert _build_subdomain_labels({}) == {}
+
+
+def test_build_subdomain_labels_fallback_key():
+    """无法识别的描述应返回原始 key 作为标签。"""
+    labels = _build_subdomain_labels({"custom": {"description": "一些自定义研究内容"}})
+    assert labels.get("custom") == "custom"
+
+
+# ---- scope_definition 标签在报告元数据中的显示 ----
+
+def test_report_shows_subdomain_labels():
+    """传入 scope_definition 时，匹配子领域应显示中文短标签。"""
+    papers = [
+        _sample_paper(matched_subdomains=["acceleration"], title="Paper A"),
+    ]
+    md = generate_report(papers, format="markdown", toc=True,
+                         scope_definition=_SCOPE_DEF_FOR_LABELS)
+    # 应显示中文短标签而非原始 key
+    assert "加速与后加速" in md
+    assert "acceleration" not in md
+    # 依旧是平铺模式（## 标题）
+    assert "## Paper A" in md
+
+
+def test_report_shows_subdomain_labels_multi():
+    """多子领域时显示所有标签。"""
+    papers = [
+        _sample_paper(
+            matched_subdomains=["acceleration", "plasma_physics"],
+            title="Paper A",
+        ),
+    ]
+    md = generate_report(papers, format="markdown", toc=True,
+                         scope_definition=_SCOPE_DEF_FOR_LABELS)
+    assert "加速与后加速" in md
+    assert "等离子体物理与诊断" in md
+
+
+def test_report_no_scope_definition():
+    """不传 scope_definition 时，子领域显示原始 key（兼容行为）。"""
+    md = generate_report([_sample_paper(matched_subdomains=["acceleration"])],
+                         format="markdown", toc=True)
+    assert "加速与后加速" not in md
+    assert "acceleration" in md
+
+
+def test_report_empty_subdomain_labels_no_error():
+    """matched_subdomains 为空时不应出现相关方向行。"""
+    md = generate_report([_sample_paper(matched_subdomains=[])],
+                         format="markdown", toc=True,
+                         scope_definition=_SCOPE_DEF_FOR_LABELS)
+    assert "相关方向" not in md
 
 
 # ---- 异常 ----
