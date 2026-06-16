@@ -104,27 +104,52 @@ def _get_effective_skip():
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+def _classify_error(error_text: str) -> str:
+    """Classify an error message into a user-friendly category."""
+    e = (error_text or "").lower()
+    if not e:
+        return "Unknown"
+    patterns = [
+        (["cloudflare", "bot block", "challenge-platform",
+          "cf-ray", "turnstile", "radware", "bot manager"], "Bot / Cloudflare"),
+        (["nonresearchpageerror", "non-research",
+          "not a research article", "nonresearchprefetch"], "Non-research article"),
+        (["timeout", "connection refused", "connection error",
+          "connection unexpectedly closed"], "Network / Timeout"),
+        (["llmapicallerror", "llmresponseparseerror",
+          "llmconfigurationerror", "llmcontextlengthexceed",
+          "api key", "apikey", "401", "402", "429", "500", "502", "503"], "LLM API Error"),
+        (["mineru", "parse_pdf", "pdf parse"], "MinerU Error"),
+        (["pageparseerror", "page structure",
+          "citation_", "no dc.type", "metadata"], "Page Parse Error"),
+        (["empty", "not found", "404", "no mineru"], "Data Missing"),
+        (["publisher disabled"], "Publisher Disabled"),
+    ]
+    for keywords, category in patterns:
+        for kw in keywords:
+            if kw in e:
+                return category
+    return "Other"
+
+
 def _pipeline_status():
     db = DatabaseClient(DB_PATH)
     try:
         db.init_db_papers()
-        papers = db.get_all_papers()
-        total = len(papers)
-        cols = [
-            ("cr_metadata_fetched", "cr_metadata_fetched_status"),
-            ("publisher_page", "publisher_page_fetched_status"),
-            ("semantic_filter", "semantic_filter_status"),
-            ("llm_relevance", "llm_relevance_status"),
-            ("mineru_parse", "mineru_parse_status"),
-            ("llm_summary", "llm_summary_status"),
-        ]
+        total = len(db.get_all_papers())
+        stats = db.get_phase_stats()
         phases = {}
-        for label, col in cols:
-            counts = {"success": 0, "failed": 0, "skipped": 0, "pending": 0}
-            for p in papers:
-                status = p[col] if p[col] else "pending"
-                counts[status] = counts.get(status, 0) + 1
-            phases[label] = counts
+        for ps in stats:
+            counts = ps["status_counts"]
+            out = dict(counts)
+            # Classify error texts into user-friendly categories
+            breakdown: dict[str, int] = {}
+            for err_text in ps["error_texts"]:
+                cat = _classify_error(err_text)
+                breakdown[cat] = breakdown.get(cat, 0) + 1
+            if breakdown:
+                out["failed_breakdown"] = breakdown
+            phases[ps["label"]] = out
         effective_skip = {k: _get_effective_skip().get(k, False) for k in PHASE_ORDER}
         return {"total": total, "phases": phases, "effective_skip": effective_skip}
     finally:
@@ -887,13 +912,17 @@ async def subscriptions_test(email: str):
 
 @app.post("/subscriptions/send-report")
 async def subscriptions_send_report(request: Request):
-    """Send a report to all active subscribers immediately.
+    """Send a report by email.
+
+    If ``emails`` list is provided, sends only to those recipients
+    (selective sending). Otherwise sends to all active subscribers.
 
     If report_filename is provided, resolves it against AUTO_REPORT_DIR
     and USER_REPORT_DIR. Otherwise sends the latest auto report.
     """
     body = await request.json()
     report_filename = body.get("report_filename", "") or ""
+    emails = body.get("emails")  # Optional list[str] for selective sending
 
     report_path = None
     if report_filename:

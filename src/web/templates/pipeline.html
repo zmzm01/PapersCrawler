@@ -73,6 +73,33 @@ function applyPipelineLogFilter() {
 
 function filterPipelineLog() { applyPipelineLogFilter(); }
 
+// Tooltip for error breakdown on bar chart segments
+(function() {
+  const tip = document.createElement('div');
+  tip.className = 'chart-tooltip'; tip.style.display = 'none';
+  document.body.appendChild(tip);
+  let timer = null;
+  window.showTip = function(e, el) {
+    clearTimeout(timer);
+    const raw = el.getAttribute('data-breakdown');
+    if (!raw) return;
+    try {
+      const bd = JSON.parse(raw);
+      const lines = Object.entries(bd).map(([k, v]) => `<span class="tip-line">${k}: ${v}</span>`).join('');
+      if (!lines) return;
+      const status = el.classList.contains('failed') ? 'Failed' : 'Skipped';
+      tip.innerHTML = `<div class="tip-header">${status}</div>${lines}`;
+      const rect = el.getBoundingClientRect();
+      tip.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 280) + 'px';
+      tip.style.top = (rect.top + window.scrollY - tip.offsetHeight - 6) + 'px';
+      tip.style.display = 'block';
+    } catch(e) {}
+  };
+  window.hideTip = function() {
+    timer = setTimeout(() => { tip.style.display = 'none'; }, 200);
+  };
+})();
+
 const CHART_LABELS = {
   cr_metadata_fetched: 'CrossRef',
   publisher_page: 'Publisher',
@@ -147,11 +174,38 @@ async function refreshCharts() {
   legend.className = 'chart-legend';
   legend.innerHTML = '<span class="c-success">■ <span data-i18n="pipeline.success">Success</span></span> <span class="c-failed">■ <span data-i18n="pipeline.failed">Failed</span></span> <span class="c-skipped">■ <span data-i18n="pipeline.skipped">Skipped</span></span> <span class="c-pending">■ <span data-i18n="pipeline.pending">Pending</span></span>';
   container.appendChild(legend);
+  // Render breakdown table below charts
+  renderBreakdown(data.phases);
   // Re-apply i18n on dynamically created content
   if (typeof switchLanguage === 'function') switchLanguage(currentLang);
 }
 refreshCharts();
 setInterval(refreshCharts, 10000);
+
+function renderBreakdown(phases) {
+  // Collect all (phase_label, category, count) rows
+  const rows = [];
+  for (const [key, counts] of Object.entries(phases)) {
+    const bd = counts.failed_breakdown;
+    if (!bd || Object.keys(bd).length === 0) continue;
+    for (const [cat, cnt] of Object.entries(bd)) {
+      rows.push({ phase: CHART_LABELS[key] || key, category: cat, count: cnt });
+    }
+  }
+  if (rows.length === 0) return;
+  const existing = document.getElementById('breakdown-table-wrapper');
+  if (existing) existing.remove();
+  const wrapper = document.createElement('div');
+  wrapper.id = 'breakdown-table-wrapper';
+  wrapper.style.marginTop = '1.5rem';
+  wrapper.innerHTML = `<h3 style="margin-bottom:0.5rem;font-size:1rem;" data-i18n="pipeline.breakdown_title">Failed / Skipped reasons</h3>
+    <table class="config-table">
+      <thead><tr><th>Phase</th><th>Reason</th><th>Count</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td>${r.phase}</td><td>${r.category}</td><td>${r.count}</td></tr>`).join('')}</tbody>
+    </table>`;
+  document.getElementById('phase-charts').after(wrapper);
+  if (typeof switchLanguage === 'function') switchLanguage(currentLang);
+}
 
 function setRunning(phase) {
   document.getElementById('running-status').textContent = phase ? 'Running: ' + phase : '';
