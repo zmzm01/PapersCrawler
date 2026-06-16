@@ -30,6 +30,10 @@ from typing import Dict, List, Union, Optional
 import re
 
 
+# 多领域报告分组（当前未使用，保留供后续扩展）
+_UNCLASSIFIED_KEY = "__unclassified__"
+
+
 def _fix_latex_backslashes_for_display(text: str) -> str:
     """
     将双反斜杠 \\\\ 替换为单反斜杠 \\，恢复 LaTeX 命令用于显示。
@@ -219,11 +223,12 @@ def _authors_str(authors: List[str]) -> str:
 # Markdown 生成
 # ======================================================================
 
-def _make_markdown_section(paper: Dict, heading_base: int = 4) -> str:
+def _make_markdown_section(paper: Dict, heading_level: int = 2,
+                           heading_base: Optional[int] = None) -> str:
     """
     为单篇论文生成 Markdown 片段。
 
-    生成的结构（按顺序）：
+    生成的结构（按顺序，以 heading_level=2 为例）：
     ## {标题}                     ← 固定使用 ## 二级标题（每篇论文的顶级标题）
     **作者**: ...
     **日期**: ...
@@ -242,9 +247,9 @@ def _make_markdown_section(paper: Dict, heading_base: int = 4) -> str:
     ---                           ← 分割线，分隔不同论文
 
     层次设计：
-    - 每篇论文的顶级标题 = ## （2 级）
-    - 论文内部子标题 = ### （3 级）：研究动机、关键方法、主要结果、要点总结
-    - 主要结果内部标题 = 由 heading_base 参数控制（默认 4 级，即 ####）
+    - 每篇论文的顶级标题 = h = heading_level 级（默认 ## 2 级）
+    - 论文内部子标题 = sub_h = heading_level + 1 级（默认 ### 3 级）
+    - 主要结果内部标题 = heading_base 级（默认 heading_level + 2，即 4 级 ####）
 
     Parameters
     ----------
@@ -252,33 +257,51 @@ def _make_markdown_section(paper: Dict, heading_base: int = 4) -> str:
         论文信息字典，包含 title, authors, date, doi, page_url, pdf_url 等元信息字段，
         以及 one_sentence, motivation_and_goal, key_setup_and_method,
         main_results_and_physics, take_home_message 等 LLM 总结字段。
-    heading_base : int
-        main_results_and_physics 内部标题的起始级别，默认为 4。
+    heading_level : int
+        论文标题的 Markdown 标题级别，默认 2（##）。
+    heading_base : int, optional
+        main_results_and_physics 内部标题的起始级别。
+        默认值为 heading_level + 2。
 
     Returns
     -------
     str
         单篇论文的 Markdown 片段。
     """
+    if heading_base is None:
+        heading_base = heading_level + 2
+    h = "#" * heading_level
+    sub_h = "#" * (heading_level + 1)
+
     title = paper.get('title', '无标题')
     authors = _authors_str(paper.get('authors', []))
     date = paper.get('date', '未知')
     doi = paper.get('doi', '')
+    journal = paper.get('journal', '')
+    publisher = paper.get('publisher', '')
+    matched_subdomains = paper.get('matched_subdomains', [])
     page_url = paper.get('page_url', '')
     pdf_url = paper.get('pdf_url', '')
     abstract = _process_text_for_markdown(paper.get('abstract', ''))
-    # 各字段分别处理：普通字段用 _process_text_for_markdown，结果字段用 _process_results_markdown
     one_sentence = _process_text_for_markdown(paper.get('one_sentence', ''))
     motivation = _process_text_for_markdown(paper.get('motivation_and_goal', ''))
     method = _process_text_for_markdown(paper.get('key_setup_and_method', ''))
     results = _process_results_markdown(paper.get('main_results_and_physics', ''), heading_base)
     take_home = _process_text_for_markdown(paper.get('take_home_message', ''))
 
-    md = f"## {title}\n\n"
+    md = f"{h} {title}\n\n"
     md += f"**作者**: {authors}  \n"
     md += f"**日期**: {date}  \n"
+    if journal:
+        md += f"**期刊**: {journal}  \n"
+    if publisher:
+        md += f"**出版社**: {publisher}  \n"
     if doi:
         md += f"**DOI**: [{doi}](https://doi.org/{doi})  \n"
+    if matched_subdomains:
+        labels = paper.get("_subdomain_labels", {})
+        display = [labels.get(k, k) for k in matched_subdomains]
+        md += f"**相关方向**: {', '.join(display)}  \n"
     if page_url:
         md += f"**页面**: [链接]({page_url})  \n"
     if pdf_url:
@@ -287,12 +310,56 @@ def _make_markdown_section(paper: Dict, heading_base: int = 4) -> str:
     if abstract:
         md += f"**原文摘要**: {abstract}\n\n"
     md += f"**一句话**: {one_sentence}\n\n"
-    md += f"### 研究动机与目标\n\n{motivation}\n\n"
-    md += f"### 关键方法与设置\n\n{method}\n\n"
-    md += f"### 主要结果与物理内涵\n\n{results}\n\n"
-    md += f"### 要点总结\n\n{take_home}\n\n"
+    md += f"{sub_h} 研究动机与目标\n\n{motivation}\n\n"
+    md += f"{sub_h} 关键方法与设置\n\n{method}\n\n"
+    md += f"{sub_h} 主要结果与物理内涵\n\n{results}\n\n"
+    md += f"{sub_h} 要点总结\n\n{take_home}\n\n"
     md += "---\n\n"
     return md
+
+
+# ======================================================================
+# 子领域标签映射
+# ======================================================================
+
+
+def _build_subdomain_labels(scope_definition: Dict) -> Dict[str, str]:
+    """从 scope_definition 生成子领域中文短标签。
+
+    从每条 description 的首个有意义短语提取简短标签，用于在报告元数据中显示。
+    例如:
+        "本方向研究高功率激光与固体/气体靶相互作用驱动离子和质子加速。..."
+        → "加速"
+
+    Parameters
+    ----------
+    scope_definition : dict
+        子领域定义字典。
+
+    Returns
+    -------
+    dict
+        ``{subdomain_key: short_label}`` 映射。
+    """
+    labels = {}
+    for key, section in scope_definition.items():
+        desc = section.get("description", "").strip()
+        # 按特异性从高到低匹配关键词，避免模糊匹配覆盖精确匹配
+        if "控制" in desc or "AI" in desc or "智能" in desc:
+            labels[key] = "加速器控制与AI"
+        elif "束流" in desc and "诊断" in desc:
+            labels[key] = "束流诊断与辐照"
+        elif "束流" in desc and "传输" in desc:
+            labels[key] = "束流传输与等离子体光学"
+        elif "加速" in desc and "驱动" in desc:
+            labels[key] = "加速与后加速"
+        elif "等离子体" in desc and "诊断" in desc:
+            labels[key] = "等离子体物理与诊断"
+        elif "尾场" in desc:
+            labels[key] = "尾场加速"
+        else:
+            labels[key] = key  # fallback 保留原始 key
+    return labels
 
 
 def generate_markdown(papers: Union[Dict, List[Dict]], toc: bool = False,
@@ -369,6 +436,9 @@ def _make_html_section(paper: Dict) -> str:
     authors = _authors_str(paper.get('authors', []))
     date = paper.get('date', '未知')
     doi = paper.get('doi', '')
+    journal = paper.get('journal', '')
+    publisher = paper.get('publisher', '')
+    matched_subdomains = paper.get('matched_subdomains', [])
     page_url = paper.get('page_url', '')
     pdf_url = paper.get('pdf_url', '')
     abstract = _process_text_for_html(paper.get('abstract', ''))
@@ -381,8 +451,16 @@ def _make_html_section(paper: Dict) -> str:
     html = f"<section>\n  <h2>{title}</h2>\n"
     html += f"  <p><strong>作者:</strong> {authors}<br>\n"
     html += f"  <strong>日期:</strong> {date}<br>\n"
+    if journal:
+        html += f"  <strong>期刊:</strong> {journal}<br>\n"
+    if publisher:
+        html += f"  <strong>出版社:</strong> {publisher}<br>\n"
     if doi:
         html += f"  <strong>DOI:</strong> <a href=\"https://doi.org/{doi}\">{doi}</a><br>\n"
+    if matched_subdomains:
+        labels = paper.get("_subdomain_labels", {})
+        display = [labels.get(k, k) for k in matched_subdomains]
+        html += f"  <strong>相关方向:</strong> {', '.join(display)}<br>\n"
     if page_url:
         html += f"  <strong>页面:</strong> <a href=\"{page_url}\">{page_url}</a><br>\n"
     if pdf_url:
@@ -485,7 +563,8 @@ def generate_html(papers: Union[Dict, List[Dict]], full_document: bool = True) -
 
 def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
                     toc: bool = False, full_html: bool = True,
-                    results_heading_base: int = 4) -> str:
+                    results_heading_base: int = 4,
+                    scope_definition: Optional[Dict] = None) -> str:
     """
     统一的报告生成接口。
 
@@ -497,6 +576,10 @@ def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
         toc: 仅 Markdown 格式生效。是否在多篇论文时生成目录。
         full_html: 仅 HTML 格式生效。是否返回完整 HTML 文档（含 CSS 样式和 head 元信息）。
         results_heading_base: 仅 Markdown 格式生效。main_results_and_physics 内部标题的起始级别，默认为 4。
+        scope_definition: dict, optional
+            子领域定义字典（来自 keywords.yaml 的 ``scope_definition`` 字段）。
+            传入后用于生成子领域中文短标签（``_subdomain_labels``），
+            平铺显示在每篇论文的元数据行中。
 
     Returns:
         生成的报告字符串。
@@ -506,6 +589,14 @@ def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
     """
     fmt = format.lower()
     if fmt in ('markdown', 'md'):
+        # 如果提供了 scope_definition，为每篇论文添加子领域中文标签
+        if scope_definition:
+            labels = _build_subdomain_labels(scope_definition)
+            if isinstance(papers, dict):
+                papers["_subdomain_labels"] = labels
+            else:
+                for p in papers:
+                    p["_subdomain_labels"] = labels
         return generate_markdown(papers, toc=toc, results_heading_base=results_heading_base)
     elif fmt == 'html':
         return generate_html(papers, full_document=full_html)

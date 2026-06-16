@@ -114,10 +114,19 @@ def phase_h_email(db, auto_dir, report_path=None):
     try:
         pubs = load_publishers()
         enabled_pubs = [j for j in pubs if j.get("enabled", True)]
-        if enabled_pubs:
+        # Deduplicate by journal name (publishers.yaml may have multiple
+        # entries for the same journal, e.g. PRL with 2 RSS feeds)
+        seen_journals = set()
+        unique_pubs = []
+        for j in enabled_pubs:
+            name = j.get("name", j["id"])
+            if name not in seen_journals:
+                seen_journals.add(name)
+                unique_pubs.append(j)
+        if unique_pubs:
             items = "".join(
                 f"<li>{j.get('name', j['id'])} ({j.get('publisher', '')})</li>"
-                for j in enabled_pubs
+                for j in unique_pubs
             )
             journal_list_html = f"<ul style=\"margin:8px 0 0;padding-left:20px;color:#374151;font-size:14px;line-height:1.8;\">{items}</ul>"
     except Exception:
@@ -145,9 +154,10 @@ def phase_h_email(db, auto_dir, report_path=None):
     try:
         kw_cfg = load_keywords()
         scope = kw_cfg.get("scope_definition", {})
+        gates = kw_cfg.get("context_gates", [])
         irr = kw_cfg.get("irrelevant_fields", {})
         if scope:
-            block_text = build_scope_block(scope, irr)
+            block_text = build_scope_block(scope, context_gates=gates, irrelevant_fields=irr)
             block_text = (
                 block_text.replace("&", "&amp;")
                 .replace("<", "&lt;")
@@ -160,9 +170,14 @@ def phase_h_email(db, auto_dir, report_path=None):
                 f"<pre style=\"margin:0;white-space:pre-wrap;word-break:break-word;"
                 f"max-height:400px;overflow-y:auto;font-family:inherit;\">"
                 f"{block_text}</pre></div>"
-                f"<p style=\"margin:12px 0 0;color:#64748b;font-size:13px;"
-                f"line-height:1.5;font-style:italic;\">"
-                f"💡 如果您对筛选关键词有任何改进建议，欢迎直接回复此邮件。</p>"
+                f"<div style=\"margin:16px 0 0;padding:14px;background:#fef3c7;"
+                f"border-left:4px solid #f59e0b;border-radius:4px;\">"
+                f"<p style=\"margin:0;color:#92400e;font-size:13px;"
+                f"line-height:1.6;\">"
+                f"<strong>💡 关于筛选依据</strong>：以上领域定义由 LLM 根据课题组大方向"
+                f"和成员提供的关键词理解生成，<strong>可能存在偏差或遗漏</strong>。"
+                f"如果您对筛选标准有任何改进建议，"
+                f"欢迎直接回复此邮件反馈 🙏</p></div>"
             )
     except Exception:
         pass
