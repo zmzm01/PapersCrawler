@@ -1092,6 +1092,59 @@ class DatabaseClient:
         cur = self.conn.execute("SELECT * FROM papers ORDER BY created_date DESC")
         return cur.fetchall()
 
+    # ── Phase stats (用于 WebUI Pipeline 看板) ────────────────────────────
+
+    def get_phase_stats(self):
+        """获取每个阶段的论文状态分布和错误文本。
+
+        对每个阶段返回:
+            status_counts: dict[str, int] — success/failed/skipped/pending 计数
+            error_texts: list[str]       — status 为 failed/skipped 的论文的原始 error 文本
+
+        Returns:
+            list[dict]: 每个阶段一个 dict, 包含 label / status_counts / error_texts 字段。
+        """
+        phase_configs = [
+            ("cr_metadata_fetched", "cr_metadata_fetched_status", "cr_metadata_fetched_error"),
+            ("publisher_page",      "publisher_page_fetched_status", "publisher_page_fetched_error"),
+            ("semantic_filter",     "semantic_filter_status", "semantic_filter_error"),
+            ("llm_relevance",       "llm_relevance_status", "llm_relevance_error"),
+            ("mineru_parse",        "mineru_parse_status", "mineru_parse_error"),
+            ("llm_summary",         "llm_summary_status", "llm_summary_error"),
+        ]
+        results = []
+        for label, status_col, error_col in phase_configs:
+            # Status counts
+            rows = self.conn.execute(
+                f"SELECT COALESCE({status_col}, 'pending') AS status, COUNT(*) AS cnt "
+                f"FROM papers GROUP BY status"
+            ).fetchall()
+            counts = {"success": 0, "failed": 0, "skipped": 0, "pending": 0}
+            for r in rows:
+                counts[r["status"]] = r["cnt"]
+
+            # Error texts for failed/skipped papers
+            error_texts: list[str] = []
+            err_rows = self.conn.execute(
+                f"SELECT {error_col} FROM papers "
+                f"WHERE {status_col} IN ('failed','skipped') "
+                f"AND {error_col} IS NOT NULL AND {error_col} != ''"
+            ).fetchall()
+            for r in err_rows:
+                error_texts.append(r[error_col])
+
+            results.append({
+                "label": label,
+                "status_counts": counts,
+                "error_texts": error_texts,
+            })
+        return results
+
+
+    # ==================================================================
+    # 通用状态更新方法（向后兼容 + 灵活场景）
+    # ==================================================================
+
     # ==================================================================
     # 通用状态更新方法（向后兼容 + 灵活场景）
     # ==================================================================
