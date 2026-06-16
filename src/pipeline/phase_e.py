@@ -97,7 +97,25 @@ def phase_e_llm_relevance(db):
                     continue
 
                 category = result.get("PredictedCategory", "D")
-                subfields = json.dumps(result.get("MatchedSubfields", []), ensure_ascii=False)
+
+                # 规范化子领域 key：小写化 + 空格→下划线 + 剔除无关字符
+                raw_subfields = result.get("MatchedSubfields", [])
+                known_keys = set(domain_config.get("scope_definition", {}).keys())
+                normalized = []
+                for s in raw_subfields:
+                    s_norm = s.lower().strip().replace(" ", "_")
+                    # 去除可能误带入的标点
+                    s_norm = s_norm.strip(".,;:!?")
+                    if s_norm in known_keys:
+                        normalized.append(s_norm)
+                    else:
+                        logger.debug(
+                            f"Unknown subfield key '{s}' (normalized: '{s_norm}'), "
+                            f"storing as-is for DOI {doi}"
+                        )
+                        normalized.append(s_norm)
+                subfields = json.dumps(normalized, ensure_ascii=False)
+
                 confidence = result.get("Confidence", "low")
                 notes = result.get("Notes", "")
 
