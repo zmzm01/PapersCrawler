@@ -27,7 +27,7 @@
       {% endfor %}
     </select>
   </label>
-  <button class="btn btn-primary" onclick="sendReport()"><i class="fa-solid fa-paper-plane icon-left"></i><span data-i18n="subscriptions.send_report">Send Report Now</span></button>
+  <button class="btn btn-primary" onclick="openSendModal()"><i class="fa-solid fa-paper-plane icon-left"></i><span data-i18n="subscriptions.send_report">Send Report</span></button>
   <span id="send-report-status" class="save-status"></span>
 </div>
 
@@ -41,7 +41,7 @@
   </tr></thead>
   <tbody>
     {% for s in subscribers %}
-    <tr>
+    <tr data-email="{{ s.email }}">
       <td>{{ s.email }}</td>
       <td>{{ s.name or '—' }}</td>
       <td>
@@ -120,24 +120,56 @@ async function testSubscriber(email) {
   }
 }
 
-async function sendReport() {
-  const filename = document.getElementById('report-select').value;
-  const status = document.getElementById('send-report-status');
-  status.textContent = 'Sending...';
-  status.className = 'save-status';
-  const r = await fetch('/subscriptions/send-report', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({report_filename: filename}),
+function openSendModal() {
+  let html = '<div style="margin-bottom:12px;font-size:14px;">' + getI18n('subscriptions.select_recipients') + '</div>';
+  let hasActive = false;
+  document.querySelectorAll('.sub-table tbody tr').forEach(tr => {
+    const email = tr.getAttribute('data-email');
+    const nameTd = tr.querySelector('td:nth-child(2)');
+    const activeBadge = tr.querySelector('.active-badge.on');
+    if (!email || !activeBadge) return;
+    hasActive = true;
+    const name = nameTd ? (nameTd.textContent || '').trim() : '';
+    html += `<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:14px;">
+      <input type="checkbox" class="subscriber-check" value="${email}" checked>
+      <span><strong>${email}</strong>${name ? ' (' + name + ')' : ''}</span>
+    </label>`;
   });
-  const data = await r.json();
-  if (data.ok) {
-    status.textContent = getI18n('subscriptions.send_report_sent');
-    status.className = 'save-status ok';
-  } else {
-    status.textContent = getI18n('subscriptions.send_report_failed', {msg: data.error || 'Unknown'});
-    status.className = 'save-status error';
+  if (!hasActive) {
+    html += '<div style="color:var(--text-muted);padding:8px 0;" data-i18n="subscriptions.no_active">' + getI18n('subscriptions.no_active') + '</div>';
   }
+  const filename = document.getElementById('report-select').value;
+  showModal(
+    getI18n('subscriptions.send_report'),
+    html + '<div id="send-modal-status" class="save-status" style="margin-top:8px;"></div>',
+    getI18n('subscriptions.send_btn'),
+    async () => {
+      const checkedEmails = Array.from(document.querySelectorAll('.subscriber-check:checked')).map(cb => cb.value);
+      if (checkedEmails.length === 0) {
+        document.getElementById('send-modal-status').textContent = getI18n('subscriptions.select_recipients');
+        document.getElementById('send-modal-status').className = 'save-status error';
+        return false;  // prevent modal close
+      }
+      const status = document.getElementById('send-modal-status');
+      status.textContent = getI18n('subscriptions.sending');
+      status.className = 'save-status';
+      const r = await fetch('/subscriptions/send-report', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({report_filename: filename, emails: checkedEmails}),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        status.textContent = getI18n('subscriptions.send_report_sent');
+        status.className = 'save-status ok';
+        return true;  // close modal
+      } else {
+        status.textContent = getI18n('subscriptions.send_report_failed', {msg: data.error || 'Unknown'});
+        status.className = 'save-status error';
+        return false;
+      }
+    },
+  );
 }
 
 async function importFromEnv() {
