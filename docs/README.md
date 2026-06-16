@@ -262,7 +262,7 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 | **Home** | 项目介绍、技术栈标签、架构概览图、Quick Start 三步卡片、出版社/论文统计、快速入门指南 |
 | **Pipeline** | 10 阶段（A-RSS / A-CR 独立）Run/Reset 按钮 + 状态柱状图 + SSE 实时日志。Config 页跳过的阶段按钮灰显不可点击 |
 | **Papers** | 论文列表，默认按入库日期排序（skipped/pending 置底），可选按发表日期排序。展示语义相似度分（可选）和 LLM 相关性分类（A/B/C/D badge + 图例） |
-| **Report** | 勾选有 LLM 总结的论文 → 生成 Markdown 报告 → 浏览器预览 + 下载（写入 `data/reports/user/`） |
+| **Report** | 勾选有 LLM 总结的论文 → 生成 Markdown 报告（按期刊+日期排序，含子领域中文标签）→ 浏览器预览 + 下载（写入 `data/reports/user/`） |
 | **Data Sources** | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源。写入 `data/journal_overrides.json` |
 | **Logs** | 流水线日志（`data/PaperCrawler.log`），支持按级别过滤 |
 | **Subscriptions** | 邮件订阅者管理（添加/删除/启用停用/测试/从 .env 导入/发送日报），Phase H 优先使用 DB 订阅者列表 |
@@ -282,6 +282,15 @@ python tools/debug_publisher_urls.py
 
 # 重置空摘要论文的 Phase D/E/G 状态
 python tools/reset_empty_abstract.py
+
+# 浏览器反爬诊断（Nature Client Challenge）
+python tools/debug_nature_challenge.py
+
+# 浏览器/HTTP 回退对比测试
+python tools/compare_browsers.py <url>
+
+# HTTP fallback 连通性测试
+python tools/test_http_fallback.py <url>
 ```
 
 ## 支持的出版社/期刊
@@ -307,6 +316,16 @@ python tools/reset_empty_abstract.py
 5. **失败熔断** — 同一 publisher 连续 3 篇失败后自动中止
 6. **校园网** — IP Reputation 是 anti-bot 最关键的因素
 
+**Optica 特殊优化**：Optica / Optics Express 是 OA 期刊，CrossRef 返回完整 abstract。
+Phase C 对已有 CrossRef abstract 的 Optica 论文自动跳过浏览器访问（标记 `skipped`），
+仅对 Phase E2 中需要 PDF 下载的论文做延迟页面访问提取 `pdf_url`。详见 `docs/design.md`。
+
+**HTTP 回退**：Nature 和 IOP 在浏览器被拦截时使用纯 HTTP 回退。
+Nature 采用 `requests` 以 `primary` 策略（浏览器前尝试），IOP 采用 `curl_cffi` 以 `fallback` 策略（浏览器后兜底）。
+`curl_cffi` 是可选依赖，未安装时自动回退到浏览器路径。
+
+**Optica OA 跳过**：Optica 论文若已从 CrossRef 获得完整 abstract，Phase C 自动跳过浏览器访问（标记 `skipped`），节省反爬额度。PDF 下载在 Phase E2 延迟处理。
+
 ## 非研究论文预检测（Pre-fetch）
 
 Phase C 启动浏览器前先根据标题前缀（如 `erratum`、`comment on`、`publisher's note` 等）过滤非研究论文，直接删除不入库。开关和关键词列表通过 `settings.yaml` 配置：
@@ -324,6 +343,10 @@ pipeline:
 ```
 
 Science 和 Nature 的 Scraper 还通过 `dc.type` / `og:type` / `altmetric_type` meta 标签做精确检测，覆盖 Pre-fetch 无法识别的非研究文章类型。
+
+**context_gates 消歧**：`keywords.yaml` 中的 `context_gates` 字段定义跨子域的高歧义词汇判定规则。
+例如 `fusion`、`tokamak` 等词匹配时直接归为不相关（D），避免 LLM 误判聚变论文为相关。
+`build_scope_block()` 渲染 scope 时优先展示 context_gates 规则，scope_definition 仅在 gate 不命中时生效。
 
 ## 邮件 HTML 模板
 
