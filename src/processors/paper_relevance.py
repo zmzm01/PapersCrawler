@@ -44,6 +44,7 @@ class PaperRelevanceChecker:
 
     def __init__(self, keywords: dict) -> None:
         self.scope_definition = keywords.get("scope_definition", {})
+        self.context_gates = keywords.get("context_gates", [])
         self.irrelevant_fields = keywords.get("irrelevant_fields", {})
         self.sub_domains_embedding = keywords.get("sub_domains_embedding", {})
 
@@ -162,12 +163,19 @@ class PaperRelevanceChecker:
             可直接发送给 LLM API 的完整提示词字符串。
         """
         from config import build_scope_block
-        scope_block = build_scope_block(self.scope_definition, self.irrelevant_fields)
+        scope_block = build_scope_block(
+            self.scope_definition,
+            context_gates=self.context_gates,
+            irrelevant_fields=self.irrelevant_fields,
+        )
+        # 从 scope_definition 中提取合法的子领域 key 列表供 LLM 参考
+        known_keys = list(self.scope_definition.keys()) if self.scope_definition else []
+        example_keys = known_keys[:2] if len(known_keys) >= 2 else known_keys
         json_example = json.dumps({
             "PredictedCategory": "B",
-            "MatchedSubfields": ["Laser Wakefield Acceleration", "Plasma Diagnostics"],
+            "MatchedSubfields": example_keys,
             "Confidence": "high",
-            "Notes": "The paper directly studies LWFA using capillary discharge waveguide.",
+            "Notes": "The paper studies laser-driven ion acceleration with plasma diagnostics.",
         }, ensure_ascii=False)
 
         template = self._load_relevance_template()
