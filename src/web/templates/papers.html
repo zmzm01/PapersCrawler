@@ -23,8 +23,7 @@
       <th data-i18n="papers.date">Date</th>
       <th data-i18n="papers.title_col">Title</th>
       <th data-i18n="papers.journal">Journal</th>
-      <th data-i18n="papers.score">Semantic</th>
-      <th data-i18n="papers.relevance">LLM Relevance</th>
+      <th data-i18n="papers.relevance">LLM</th>
       <th data-i18n="papers.doi">DOI</th>
     </tr>
   </thead>
@@ -34,16 +33,6 @@
       <td class="td-date">{{ (p.created_date or '—')[:10] if sort_by == 'created' else (p.paperdate_page or p.paperdate_crossref or p.paperdate_rss or '—')[:10] }}</td>
       <td class="td-title">{{ p.title or '—' }}</td>
       <td>{{ p.journal or '—' }}</td>
-      <td>
-        {% if p.semantic_similarity_score is not none %}
-        <div class="score-bar-wrap">
-          <div class="score-bar" style="width:{{ (p.semantic_similarity_score * 100)|round(1) }}%"></div>
-          <span class="score-text">{{ '%.3f'|format(p.semantic_similarity_score) }}</span>
-        </div>
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
       <td>
         {% if p.llm_relevance_status == 'success' %}
           {% set cat = p.llm_relevance_category or '?' %}

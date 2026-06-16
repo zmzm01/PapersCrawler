@@ -938,7 +938,7 @@ async def subscriptions_send_report(request: Request):
     try:
         db.init_db_papers()
         from pipeline.phase_h import phase_h_email
-        phase_h_email(db, AUTO_REPORT_DIR, report_path=report_path)
+        phase_h_email(db, AUTO_REPORT_DIR, report_path=report_path, to_addrs=emails)
         return JSONResponse({"ok": True})
     except Exception as e:
         logger.error(f"Send report failed: {e}")
