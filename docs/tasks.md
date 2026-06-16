@@ -4,10 +4,16 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **Optica CrossRef 驱动 Phase C 跳过** | Optica 是 OA 期刊，CrossRef 返回完整 abstract。Phase C 新增 skip：对 `cr_metadata_fetched_status='success'` 且有 abstract 的 Optica 论文直接标记 `skipped`，跳过浏览器。Phase E2 新增 `OpticaScraper` 延迟页面访问补齐 `pdf_url`。DB 新增 `update_publisher_pdf_url()` 只更新 pdf_url 不覆写 Phase C 状态。 | 06-16 |
+| **报告增强** | Markdown/HTML 报告新增期刊名、出版社、匹配子领域；`phase_g.py` paper_dict 增加 4 个字段；`paper_report_generator.py` 元信息区同步渲染 | 06-15 |
+| **报告简化** | 去除大分类分组（用户反馈不实用）；改为按期刊+日期排序；去除来源行（discovery_source）；匹配子领域改用中文短标签（_build_subdomain_labels）；`_make_markdown_section` 支持动态 heading_level | 06-16 |
+| **子领域输出规范化** | `build_default_prompt()` JSON 示例改用真实 `scope_definition` 中的 key（替代虚构的 "Laser Wakefield Acceleration"）；`relevance.yaml` 增加"Use exactly the sub-domain keys"指令；`phase_e.py` MatchedSubfields 增加 post-processing（小写化、空格→下划线、含标点清理、已知 key 校验），5% 的格式偏差问题已覆盖 | 06-16 |
+| **子领域判断精度修复** | 根据用户反馈调查发现：`plasma_physics` 作为默认项被过度使用（80%）、ICF 聚变论文被误标为 A+plasma_physics、Corrigendum 漏网。修复：`relevance.yaml` 重写 Task — 子领域改为可选（最多 2 个、按关联度排序）、irrelevant_fields 升级为判定规则（匹配即 D）、context_gates 优先于 scope_definition 约束子领域分配；`settings.yaml` NON_RESEARCH_KEYWORDS 增加 "corrigendum" | 06-16 |
 | **CFG 重构** | 运行时配置从模块级裸变量迁移到 `CFG` 持有对象（`types.SimpleNamespace`），消除 `reload_config()` 的 `global` 声明与模块级值副本过期问题。`_apply_settings()` 抽取去重（消除模块加载和 reload 之间 ~80 行重复代码）。删除废弃的 `SKIP_PHASE_A`。全项目 19 个文件更新为 `from config import CFG; CFG.X` 模式。 | 06-11 |
 | **Publisher 统计过滤** | Phase H `detailed.html` 邮件模板中的 publisher 爬取统计现在排除未启用的 publisher（如 Optica `enabled: false` 不再显示 "0 success"），从 `load_publishers()` 构建 `enabled_publishers` set 做过滤 | 06-11 |
 | **Pre-fetch 非研究论文检测** | Phase C 新增浏览器启动前的标题前缀检测：从 DB 读取论文标题，按 `settings.yaml` 配置的前缀列表（`erratum`, `author correction:`, `publisher correction:`, `comment on`, `response to`, `publisher's note`）前缀匹配后直接 `delete_paper()` 并记入 `skipped_dois`；post-fetch 同步从子串匹配改为前缀匹配 + config 驱动；pre/post 独立开关，关键词列表用户可配置 | 06-11 |
 | **schedule_daily CLI 开关** | 新增 `--no-reset-publisher` 和 `--no-reset-mineru` 参数（默认均开启重置）；新增 `_run_auto_reset()` 函数封装重置逻辑；日志分别记录各重置开关状态 | 06-10 |
+| **Keywords YAML 重构** | keywords.yaml 从 6 子域重整为 4 大方向（加速/等离子体/束流应用/先进技术与AI），新增全局 context_gates 消歧层，LWFA 注释保留，sub_domains_embedding 同步更新；`build_scope_block()` 重构支持 3 层渲染；`PaperRelevanceChecker` 和 Phase H 适配新签名 | 06-14 |
 | **skipped_dois 表** | 新增 `skipped_dois` SQLite 表（doi PRIMARY KEY, reason, created_date），记录被永久删除的论文 DOI；Phase A 发现前同时检查 `paper_doi_exists()` 和 `is_doi_skipped()`；Phase C NonResearchPageError 先 `insert_skipped_doi()` 再 `delete_paper()`（AcceptedPaperError 仅删除不入 skipped_dois，因同 DOI 正式版会重新出现） | 06-10 |
 | **Science og:type 非研究检测** | `ScienceScraper.parse_page()` 当 `dc.Type` 缺失时增加 `og:type` 三级兜底：`og:type` 存在则视为非研究文章（Careers/Working Life 等无 dc.Type 但有 og:type），抛 `NonResearchPageError`；两者均不存在才抛 `PageParseError`（页面结构可能已变） | 06-10 |
 | **Nature Client Challenge 检测** | `phase_c.py` bot 检测模式增加 `"javascript is disabled"`（HTML 内容）和 `"client challenge"`（页面标题）关键词，覆盖 Nature 自有 JS 验证拦截页。同时加入异常处理器 `is_bot` 检测（此前仅在空解析结果路径检测），且新增 `og:type` 对应标题信息提取 | 06-10 |
@@ -1527,12 +1533,113 @@ if count:
 - 只影响 `schedule_daily.py`，不影响 `main.py` 全流程（全流程手动跑，用户可自行决定）
 - 简单一行操作，不需要复杂的状态机或计数逻辑
 
+## HTTP Fallback 机制（Nature + IOP, 2026-06-14）
+
+### 背景
+- **Nature**: Fastly Client Challenge 拦截所有自动化浏览器，但 `wget` 可正常获取 HTML → 浏览器问题，非 HTTP 层封锁
+- **IOP**: 大部分文章浏览器可获取，但极个别文章被拦截（wget 也被拦 → 有 TLS 指纹检测）
+
+### 方案
+在 `BasePublisherScraper` 中增加两阶段 HTTP fallback 机制：
+
+**类属性配置**：
+- `http_fallback_mode`: `None` / `"requests"` / `"curl_cffi"`
+- `http_fallback_strategy`: `"primary"`（先 HTTP，失败走浏览器） / `"fallback"`（先浏览器，检测到拦截页后回退 HTTP）
+
+**赋值**：
+- `NatureScraper`: `http_fallback_mode = "requests"`, `http_fallback_strategy = "primary"`
+- `IOPScraper`: `http_fallback_mode = "curl_cffi"`, `http_fallback_strategy = "fallback"`
+
+**`_http_fetch(url, timeout_sec)`**：
+- `"requests"` 模式: `requests.get()` + 浏览器 UA/Headers
+- `"curl_cffi"` 模式: `curl_cffi.requests.get(impersonate="chrome")`（TLS 指纹伪造）
+
+**`_is_bot_page(html, title)`**：
+检测标题中 "Client Challenge"、"Just a moment" 等关键词，或 HTML 中的 CF/Captcha 标记。
+
+**`fetch_page()` 改动**：
+- "primary" 策略：先调 `_http_fetch()`，成功则跳过浏览器导航
+- "fallback" 策略：浏览器导航失败或拿到拦截页后，自动调 `_http_fetch()` 兜底
+- 两种策略都在 HTTP 完全失败时保留原有行为（抛异常或用浏览器 HTML）
+
+### 依赖
+- `curl-cffi 0.15.0`（已安装）— 仅 IOP 回退路径使用，不影响其他 publisher
+
+### 文件改动
+- `src/sources/publisher.py`:
+  - `BasePublisherScraper` 新增 `http_fallback_mode` / `http_fallback_strategy` 类属性
+  - `BasePublisherScraper` 新增 `_http_fetch()` / `_is_bot_page()` 方法
+  - `fetch_page()` 增加两阶段 fallback 逻辑
+  - `NatureScraper` 配置 `requests` + `primary`
+  - `IOPScraper` 配置 `curl_cffi` + `fallback`
+- `tools/compare_browsers.py`: 新文件，Playwright vs Cloakbrowser 对比诊断脚本
+
 # 已知问题
 
 | # | 问题 | 影响 | 状态 |
 |---|------|------|------|
 | K1 | Pipeline 页面 Phase E2 (MinerU) 的日志无法在实时日志窗口中显示。根因推测为子进程 `FileHandler` 块缓冲导致 SSE 文件大小增量检测不到新内容。 | 低（日志仍在文件中，仅 SSE 流不可见） | 待复现后修复 |
 | K2 | `tools/convert_md_to_pdf.py` 使用 pandoc `--mathml` 路径，`\(`/`\[\]` 公式渲染空白。替代方案：`src/processors/md_to_pdf_katex.py`（KaTeX + cloakbrowser，支持公式，**实验性**，标题间距待优化） | 中 | 已提供替代工具 |
+
+# 06-14: Keywords YAML 重构 — scope_definition 重组
+
+## 背景
+
+原来 6 个子域的设计（尾场加速/离子加速/等离子体诊断/束流传输/辐照应用/AI控制）存在两个问题：
+1. 包含了组里**不研究**的 LWFA（尾场加速），post-acceleration 被 GPT 误归类到 LWFA
+2. 组员关心的关键词（EMP/探测器/烧蚀等离子体诊断/post-acceleration/FLASH）散落在错误的子域或缺失
+
+## 决策
+
+### 从 6 子域 → 4 大方向
+
+重新对齐为四大方向（与组内研究的对应关系一致）：
+1. **acceleration**（加速）：激光驱动离子加速 + post-acceleration
+2. **plasma_physics**（等离子体）：激光等离子体物理 + 所有诊断 + FLASH
+3. **beam_applications**（束流应用）：探测器系统 + EMP + 辐照应用
+4. **advanced_technology**（先进技术）：束流传输/等离子体光学 + AI
+
+LWFA 被注释保留，需要时取消注释即可激活。
+
+### 新增 `context_gates` 全局消歧层
+
+高歧义词（plasma、AI）在进入子域匹配前先做语境消歧，减少 fusion/space/semiconductor 等语境下的误判。每个 gate 包含 term + description + relevant_contexts + irrelevant_contexts。
+
+### 设计原则变更
+
+从 "子域作为分类标签" 变成 "子域作为研究方向集合"——加新关键词只需往 topics 后附加一行，无需理解 rules/triggers 等复杂结构。`priority_hint` 作为纯软约束保留。
+
+## 改动文件
+
+- `configs/keywords.yaml`：完全重写结构
+- `src/config.py`：`load_keywords()` 返回新增 `context_gates`；`build_scope_block()` 新增 `context_gates` 参数，渲染 3 层（全局消歧 → 子域 → 不相关领域）
+- `src/processors/paper_relevance.py`：`PaperRelevanceChecker` 存储 `self.context_gates`，传给 `build_scope_block()`
+- `src/pipeline/phase_h.py`：调用 `build_scope_block()` 时传入 `context_gates`
+
+## 验证
+
+测试通过。生成的 scope_block 文本格式：
+
+```
+# Research Scope Definition
+
+# Global Context Rules
+## Term: "plasma"
+...
+Relevant contexts:
+  - ...
+Irrelevant contexts:
+  - ...
+
+# Sub-Domain: acceleration
+Typical relevance level: A
+...
+涉及方向包括：
+- ...
+
+# Irrelevant Fields
+...
+```
 
 **遗留计划**：
 
