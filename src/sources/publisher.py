@@ -80,7 +80,30 @@ class BasePublisherScraper:
         context:             浏览器上下文。
         page:                浏览器 Page 对象。
         html:                当前页面的 HTML 源码字符串。
+
+    HTTP Fallback 机制：
+        部分出版商（如 Nature）的浏览器访问会触发 Fastly Client Challenge 拦截，
+        但纯 HTTP 请求（requests / curl_cffi）可正常获取页面。
+        子类可通过以下类属性配置回退策略：
+
+        http_fallback_mode (str | None):
+            None     — 不使用 HTTP 回退（默认）
+            "requests" — 使用 requests 库
+            "curl_cffi" — 使用 curl_cffi（TLS 指纹伪造）
+        http_fallback_strategy (str):
+            "primary"  — 优先尝试 HTTP，失败后降级到浏览器
+            "fallback" — 先用浏览器，检测到拦截页面后自动回退 HTTP
     """
+
+    # ── HTTP Fallback 配置（子类可覆盖） ──
+    http_fallback_mode: str | None = None
+    http_fallback_strategy: str = "fallback"
+
+    # ── Phase C 跳过配置 ──
+    # 设为 True 时，Phase C 会检查该 publisher 的论文是否已从 CrossRef 获取到
+    # 有效摘要，若是则跳过浏览器访问（减少反爬消耗、加速 Pipeline）。
+    # Optica (OA) 使用此优化，其他 publisher 默认为 False。
+    skip_phase_c_if_crossref_abstract: bool = False
 
     def __init__(self, user_data_dir):
         """初始化基础爬虫。
@@ -104,6 +127,8 @@ class BasePublisherScraper:
 
         使用 cloakbrowser.launch_persistent_context 创建持久化浏览器上下文，
         自动处理浏览器指纹伪装和 Cloudflare 绕过。
+        浏览器启动后额外注入反检测 JS 掩盖自动化特征（如 navigator.webdriver），
+        进一步提升隐身效果。
 
         Args:
             proxy: 可选代理配置字典，格式如 {"server": "http://127.0.0.1:10808"}，
@@ -116,11 +141,122 @@ class BasePublisherScraper:
         )
         self.page = self.context.new_page()
 
+        # ─── 反检测 JS 注入 ───
+        # 覆盖浏览器自动化特征，使指纹更接近真实用户。
+        # 使用 add_init_script 而非 evaluate，确保脚本在每次页面导航前注入，
+        # 而非仅注入到当前（about:blank）页面上下文。
+        # 尤其针对 Nature 的 Fastly Client Challenge 检测。
+        self.page.context.add_init_script("""
+        () => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+        }
+        """)
+
+    # ──────────────────────────────────────────────────────────
+    # HTTP Fallback 机制
+    # ──────────────────────────────────────────────────────────
+
+    def _http_fetch(self, url: str, timeout_sec: int = 30) -> bool:
+        """通过纯 HTTP 请求获取页面 HTML（绕过浏览器 Client Challenge）。
+
+        根据 ``http_fallback_mode`` 选择后端：
+        - "requests": 标准 HTTP 请求（适用于 Nature 等无 TLS 指纹检测的站点）
+        - "curl_cffi": 带浏览器 TLS 指纹伪造的请求（适用于 IOP 等需要 TLS 指纹的站点）
+
+        Args:
+            url:        目标页面 URL。
+            timeout_sec: HTTP 请求超时（秒），默认 30。
+
+        Returns:
+            bool: 成功获取并设置 self.html 返回 True，失败返回 False。
+        """
+        logger = logging.getLogger(__name__)
+        if self.http_fallback_mode == "requests":
+            try:
+                resp = py_requests.get(
+                    url,
+                    timeout=timeout_sec,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                        ),
+                        "Accept": (
+                            "text/html,application/xhtml+xml,"
+                            "application/xml;q=0.9,*/*;q=0.8"
+                        ),
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                )
+                resp.raise_for_status()
+                self.html = resp.text
+                logger.info("HTTP fallback (requests) OK: %s", url[:80])
+                return True
+            except Exception as exc:
+                logger.debug("HTTP fallback (requests) failed: %s", exc)
+                return False
+
+        elif self.http_fallback_mode == "curl_cffi":
+            try:
+                from curl_cffi import requests as curl_req
+                resp = curl_req.get(
+                    url,
+                    impersonate="chrome",
+                    timeout=timeout_sec,
+                )
+                resp.raise_for_status()
+                self.html = resp.text
+                logger.info("HTTP fallback (curl_cffi) OK: %s", url[:80])
+                return True
+            except ImportError:
+                logger.warning("HTTP fallback (curl_cffi) requires 'curl_cffi' package, falling back to browser")
+                return False
+            except Exception as exc:
+                logger.debug("HTTP fallback (curl_cffi) failed: %s", exc)
+                return False
+
+        return False
+
+    def _is_bot_page(self, html: str, title: str = "") -> bool:
+        """检测页面是否为反爬拦截页（而非正常内容页）。
+
+        Args:
+            html:  页面 HTML 源码。
+            title: 页面标题（可选，用于标题级别检测）。
+
+        Returns:
+            bool: 是拦截页返回 True，否则返回 False。
+        """
+        title_lower = title.lower() if title else ""
+        html_lower = html.lower() if html else ""
+        # 从标题检测
+        if any(kw in title_lower for kw in [
+            "client challenge", "challenge", "captcha", "blocked",
+            "access denied", "attention required", "just a moment",
+        ]):
+            return True
+        # 从 HTML 内容检测
+        if any(kw in html_lower for kw in [
+            "cf-browser-verification", "challenge-platform",
+            "_cf_chl_opt", "g-recaptcha",
+        ]):
+            return True
+        return False
+
     def fetch_page(self, url=None, html_path=None, timeout=8000):
         """获取论文页面 HTML 源码。
 
         支持两种模式：
         1. 在线模式：提供 url，通过浏览器访问并获取页面 HTML。
+           若子类配置了 HTTP Fallback（http_fallback_mode），按策略执行：
+           - "primary": 先尝试 HTTP 请求，失败后降级到浏览器。
+           - "fallback": 先用浏览器，检测到拦截页后自动回退 HTTP。
         2. 离线模式：提供 html_path，从本地已保存的 HTML 文件读取内容。
 
         在线模式下会先等待 DOM 加载完成（domcontentloaded），
@@ -130,14 +266,22 @@ class BasePublisherScraper:
         Args:
             url:       论文页面 URL（在线模式）。
             html_path: 本地 HTML 文件路径（离线模式）。
-            timeout:   URL 加载后额外等待时间（毫秒），默认 5000ms，
-                       用于等待 Cloudflare Challenge 自动通过。
+            timeout:   URL 加载后额外等待时间（毫秒），默认 8000ms，
+                        用于等待 Cloudflare Challenge 自动通过。
 
         Raises:
             PageParseError: 如果提供了 html_path 但文件不存在。
         """
         if url:
             self.page_url = url
+
+            # ── 策略 "primary": 先 HTTP，失败再走浏览器 ──
+            if self.http_fallback_mode and self.http_fallback_strategy == "primary":
+                if self._http_fetch(url, timeout_sec=max(timeout // 1000, 30)):
+                    return
+                # HTTP 失败，降级到浏览器
+
+            # ── 浏览器导航（原有逻辑） ──
             try:
                 self.page.goto(url, wait_until="domcontentloaded", timeout=120000)
             except Exception:
@@ -147,6 +291,10 @@ class BasePublisherScraper:
                 try:
                     self.page.goto(self.page.url, wait_until="domcontentloaded", timeout=120000)
                 except Exception as e2:
+                    # 浏览器完全失败 → 尝试 HTTP fallback 兜底
+                    if self.http_fallback_mode and self.http_fallback_strategy == "fallback":
+                        if self._http_fetch(url, timeout_sec=max(timeout // 1000, 30)):
+                            return
                     self._save_error_html(url, "goto_retry_failed")
                     raise PageParseError(
                         f"Navigation failed after retry: {e2}"
@@ -154,6 +302,21 @@ class BasePublisherScraper:
             # 等待 timeout ms，给 Cloudflare Challenge 足够时间自动通过
             self.page.wait_for_timeout(timeout)
             self.html = self.page.content()
+
+            # ── 策略 "fallback": 浏览器拿到拦截页 → 回退 HTTP ──
+            if self.http_fallback_mode and self.http_fallback_strategy == "fallback":
+                title = self.page.title()
+                if self._is_bot_page(self.html, title):
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        "Bot page detected (title=%s), trying HTTP fallback...",
+                        title[:60],
+                    )
+                    if self._http_fetch(url, timeout_sec=max(timeout // 1000, 30)):
+                        return
+                    # HTTP fallback 也失败，保留浏览器拿到的 HTML
+                    logger.warning("HTTP fallback also failed, using browser HTML")
+
         elif html_path:
             html_path = Path(html_path)
             if not html_path.exists():
@@ -481,9 +644,14 @@ class APSScraper(BasePublisherScraper):
 
 
 class NatureScraper(BasePublisherScraper):
+    # Nature 的 Fastly Client Challenge 会拦截所有自动化浏览器，
+    # 但纯 HTTP 请求（wget/requests）可以正常获取。优先走 HTTP。
+    http_fallback_mode = "requests"
+    http_fallback_strategy = "primary"
+
     """Nature 系列期刊爬虫。
 
-    支持 Nature、Nature Physics、Nature Photonics 等 Nature 旗下期刊。
+     支持 Nature、Nature Physics、Nature Photonics 等 Nature 旗下期刊。
 
     边界情况处理：
         - 页面类型过滤：通过 <meta name="dc.type"> 检查是否为 OriginalPaper。
@@ -885,6 +1053,11 @@ class AIPScraper(BasePublisherScraper):
 
 
 class IOPScraper(BasePublisherScraper):
+    # IOP 对部分文章有 TLS 指纹检测（wget 无法获取），
+    # 浏览器失败时用 curl_cffi（带 TLS 指纹伪造）回退。
+    http_fallback_mode = "curl_cffi"
+    http_fallback_strategy = "fallback"
+
     """IOP (Institute of Physics) 期刊爬虫。
 
     支持 IOP Science 平台上的期刊，如 Journal of Physics 系列、
@@ -966,6 +1139,10 @@ class OpticaScraper(BasePublisherScraper):
     支持 Optica、Optics Express、Optics Letters 等 Optica Publishing Group
     旗下的光学领域期刊。
 
+    Optica / Optics Express 是 Open Access 期刊，CrossRef 返回完整 abstract，
+    因此 Phase C 会跳过浏览器访问（通过 ``skip_phase_c_if_crossref_abstract``
+    类属性控制），仅在有需要时才在 Phase E2 做延迟页面访问补齐 pdf_url。
+
     元数据提取策略：
         - 主要依赖 <meta> 标签中的 citation_* 系列元数据。
         - 摘要通过 XPath 定位 div#articleBody 下 h2#Abstract 之后
@@ -981,7 +1158,11 @@ class OpticaScraper(BasePublisherScraper):
         - optica 和 opex 都映射到 publisher: optica，共享同一 browser session
           和连续失败熔断计数器。一个期刊被拦会连带影响另一个。
           如两者都启用，考虑拆分为独立 publisher 标识。
+
+    Attributes:
+        skip_phase_c_if_crossref_abstract: True（Phase C 跳过拥有 Crossref 摘要的论文）
     """
+    skip_phase_c_if_crossref_abstract = True
 
     def parse_page(self):
         """解析 Optica 论文页面。
