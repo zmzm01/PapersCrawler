@@ -14,3 +14,6 @@ configs/prompts/summary.yaml
 
 # 评审记录
 docs/reviews/
+.slim/deepwork/
+!.slim/deepwork/
+!.slim/deepwork/**
