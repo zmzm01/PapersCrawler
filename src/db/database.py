@@ -644,6 +644,30 @@ class DatabaseClient:
         )
         self.conn.commit()
 
+    def update_publisher_pdf_url(self, doi, pdf_url):
+        """
+        仅更新 pdf_url 字段，不改变 Phase C 状态。
+
+        用于 Phase E2 对新论文的延迟页面访问（Optica OA 论文跳过了
+        Phase C 浏览器访问，但在 Phase E2 下载 PDF 前仍需获取 pdf_url）。
+
+        Args:
+            doi:     论文 DOI
+            pdf_url: 从出版商页面提取的 PDF 下载链接
+
+        Raises:
+            DataBaseDOINotExists: DOI 在数据库中不存在
+        """
+        if not self.paper_doi_exists(doi):
+            raise DataBaseDOINotExists(
+                f"DOI {doi} not found in DB, cannot update pdf_url."
+            )
+        self.conn.execute(
+            "UPDATE papers SET pdf_url = ? WHERE doi = ?",
+            (pdf_url, doi),
+        )
+        self.conn.commit()
+
     # ==================================================================
     # Phase E: LLM 相关性判断结果
     # ==================================================================
