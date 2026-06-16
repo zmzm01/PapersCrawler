@@ -375,6 +375,7 @@ def load_keywords():
     Returns:
         dict: {
             "scope_definition": dict[str, {"description": str, "topics": list[str]}],
+            "context_gates": list[dict],
             "irrelevant_fields": {"description": str, "topics": list[str]},
             "sub_domains_embedding": dict[str, str],
         }
@@ -383,6 +384,7 @@ def load_keywords():
     path = CONFIG_DIR / "keywords.yaml"
     empty = {
         "scope_definition": {},
+        "context_gates": [],
         "irrelevant_fields": {"description": "", "topics": []},
         "sub_domains_embedding": {},
     }
@@ -397,19 +399,23 @@ def load_keywords():
         return empty
     return {
         "scope_definition": data.get("scope_definition", {}),
+        "context_gates": data.get("context_gates", []),
         "irrelevant_fields": data.get("irrelevant_fields", {"description": "", "topics": []}),
         "sub_domains_embedding": data.get("sub_domains_embedding", {}),
     }
 
 
-def build_scope_block(scope_definition, irrelevant_fields):
+def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=None):
     """将 scope_definition 格式化为 LLM prompt 中可用的文本块。
 
     Parameters
     ----------
     scope_definition : dict
         key 为子领域标识，value 为 {"description": str, "topics": list[str]}
-    irrelevant_fields : dict
+    context_gates : list[dict], optional
+        全局语境消歧规则，每个元素含 term, description,
+        relevant_contexts, irrelevant_contexts。
+    irrelevant_fields : dict, optional
         {"description": str, "topics": list[str]}
 
     Returns
@@ -421,8 +427,42 @@ def build_scope_block(scope_definition, irrelevant_fields):
         "# Research Scope Definition",
         "",
     ]
+
+    # 1. Global context gates (word sense disambiguation)
+    gates = context_gates or []
+    if gates:
+        lines.append("# Global Context Rules (apply to all sub-domains)")
+        lines.append("")
+        for gate in gates:
+            term = gate.get("term", "")
+            desc = gate.get("description", "").strip()
+            relevant = gate.get("relevant_contexts", [])
+            irrelevant = gate.get("irrelevant_contexts", [])
+            lines.append(f"## Term: \"{term}\"")
+            if desc:
+                lines.append(desc)
+                lines.append("")
+            if relevant:
+                lines.append("Relevant contexts:")
+                for ctx in relevant:
+                    lines.append(f"  - {ctx}")
+                lines.append("")
+            if irrelevant:
+                lines.append("Irrelevant contexts:")
+                for ctx in irrelevant:
+                    lines.append(f"  - {ctx}")
+                lines.append("")
+        lines.append("")
+
+    # 2. Per sub-domain iteration
     for key, section in scope_definition.items():
         lines.append(f"# Sub-Domain: {key}")
+
+        hint = section.get("priority_hint")
+        if hint:
+            lines.append(f"Typical relevance level: {hint}")
+            lines.append("")
+
         lines.append(section.get("description", "").strip())
         lines.append("")
         lines.append("涉及方向包括：")
@@ -430,6 +470,7 @@ def build_scope_block(scope_definition, irrelevant_fields):
             lines.append(f"- {t}")
         lines.append("")
 
+    # 3. Irrelevant fields
     irr = irrelevant_fields or {}
     irr_desc = irr.get("description", "").strip()
     if irr_desc or irr.get("topics"):

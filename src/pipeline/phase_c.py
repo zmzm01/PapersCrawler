@@ -12,7 +12,7 @@ from datetime import datetime
 
 from config import CFG
 from db.database import DatabaseClient, FetchStatus
-from pipeline.base import create_scraper
+from pipeline.base import SCRAPER_MAP, create_scraper
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,39 @@ def phase_c_publisher(db, publishers):
                 except Exception:
                     pass
             continue
+
+        # ── CrossRef 摘要驱动跳过浏览器访问 ──
+        # 对于已从 CrossRef 获取到有效摘要的 publisher（如 Optica OA 期刊），
+        # 跳过浏览器访问以节省反爬额度并加速 Pipeline。
+        # publisher 通过设置 Scraper 类属性 skip_phase_c_if_crossref_abstract=True
+        # 来启用此优化。
+        scraper_class = SCRAPER_MAP.get(publisher, (None,))[0]
+        if (scraper_class
+                and getattr(scraper_class, 'skip_phase_c_if_crossref_abstract', False)):
+            skip_papers = []
+            remain_papers = []
+            for paper in papers:
+                if (paper.get("cr_metadata_fetched_status") == "success"
+                        and paper.get("abstract")):
+                    skip_papers.append(paper)
+                else:
+                    remain_papers.append(paper)
+            if skip_papers:
+                timestamp = str(datetime.now())
+                for paper in skip_papers:
+                    db.update_process_status(
+                        paper["doi"], "publisher_page_fetched_status",
+                        FetchStatus.SKIPPED.value,
+                        "publisher_page_fetched_date", timestamp,
+                    )
+                logger.info(
+                    f"{publisher}: {len(skip_papers)}/{len(papers)} papers "
+                    f"skipped (CrossRef has abstract)"
+                )
+            papers = remain_papers
+            if not papers:
+                logger.info(f"{publisher}: all papers skipped, no browser visit needed")
+                continue
 
         logger.info(f"Processing publisher: {publisher} ({len(papers)} papers)")
 
