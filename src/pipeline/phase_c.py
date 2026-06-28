@@ -7,7 +7,6 @@ import logging
 import random
 import re
 import time
-from collections import defaultdict
 from datetime import datetime
 
 from config import CFG
@@ -95,32 +94,31 @@ def phase_c_publisher(db, publishers):
         logger.info("Phase C: CFG.SKIP_PHASE_C=True, skipping")
         return
 
-    paper_tasks = db.get_pendings("publisher_page_fetched_status")
-    if CFG.MAX_PAPERS_PER_PHASE:
-        paper_tasks = paper_tasks[:CFG.MAX_PAPERS_PER_PHASE]
-    if not paper_tasks:
-        logger.info("Phase C: no pending papers")
-        return
+    logger.info("Phase C: checking pending papers per publisher")
 
-    logger.info(f"Phase C: {len(paper_tasks)} papers pending")
-
-    # 构建已启用 publisher 集合：只要有任一期刊 enabled，该 publisher 就算启用
+    # 构建已启用/禁用 publisher 集合
+    all_publisher_keys = {j["publisher"] for j in publishers}
     enabled_publishers = {
-        j["publisher"] for j in publishers
-        if j.get("enabled", True)
+        j["publisher"] for j in publishers if j.get("enabled", True)
     }
 
-    paper_tasks_grouped = defaultdict(list)
-    for paper_task in paper_tasks:
-        key = paper_task["publisher"] or "unknown"
-        paper_tasks_grouped[key].append(paper_task)
+    total_pending = 0
+    phase_limit = CFG.MAX_PAPERS_PER_PHASE
 
-    for publisher, papers in paper_tasks_grouped.items():
-        # 跳过已禁用的 publisher（不浪费浏览器启动时间）
-        if publisher not in enabled_publishers:
-            logger.info(f"Publisher {publisher} is disabled, skipping {len(papers)} papers")
+    for publisher_key in sorted(all_publisher_keys):
+        # ── 禁用 publisher：标记已有论文为 skipped，不启动浏览器 ──
+        if publisher_key not in enabled_publishers:
+            disabled_papers = db.get_papers_by_status(
+                "publisher_page_fetched_status", "pending",
+            )
+            disabled_for_pub = [
+                p for p in disabled_papers
+                if p["publisher"] == publisher_key
+            ]
+            if not disabled_for_pub:
+                continue
             timestamp = str(datetime.now())
-            for paper in papers:
+            for paper in disabled_for_pub:
                 try:
                     db.update_error_message(
                         paper["doi"], "publisher_page_fetched_status",
@@ -131,48 +129,49 @@ def phase_c_publisher(db, publishers):
                     )
                 except Exception:
                     pass
+            logger.info(
+                f"Publisher {publisher_key} is disabled, "
+                f"skipped {len(disabled_for_pub)} papers"
+            )
             continue
 
-        # ── CrossRef 摘要驱动跳过浏览器访问 ──
-        # 对于已从 CrossRef 获取到有效摘要的 publisher（如 Optica OA 期刊），
-        # 跳过浏览器访问以节省反爬额度并加速 Pipeline。
-        # publisher 通过设置 Scraper 类属性 skip_phase_c_if_crossref_abstract=True
-        # 来启用此优化。
-        scraper_class = SCRAPER_MAP.get(publisher, (None,))[0]
-        if (scraper_class
-                and getattr(scraper_class, 'skip_phase_c_if_crossref_abstract', False)):
-            skip_papers = []
-            remain_papers = []
-            for paper in papers:
-                if (paper.get("cr_metadata_fetched_status") == "success"
-                        and paper.get("abstract")):
-                    skip_papers.append(paper)
-                else:
-                    remain_papers.append(paper)
-            if skip_papers:
-                timestamp = str(datetime.now())
-                for paper in skip_papers:
-                    db.update_process_status(
-                        paper["doi"], "publisher_page_fetched_status",
-                        FetchStatus.SKIPPED.value,
-                        "publisher_page_fetched_date", timestamp,
-                    )
+        # ── 检查该 publisher 是否有论文待抓取 ──
+        scraper_class = SCRAPER_MAP.get(publisher_key, (None,))[0]
+        should_skip_cr = (
+            scraper_class is not None
+            and getattr(scraper_class, 'skip_phase_c_if_crossref_abstract', False)
+        )
+
+        papers = db.get_pending_publisher_papers(
+            publisher_key, skip_crossref_abstract=should_skip_cr,
+        )
+
+        if should_skip_cr:
+            # 记录因已有 CrossRef 摘要而被过滤的论文数
+            all_for_pub = db.get_papers_by_status_and_publisher(
+                "publisher_page_fetched_status", "pending", publisher_key,
+            )
+            filtered = len(all_for_pub) - len(papers)
+            if filtered:
                 logger.info(
-                    f"{publisher}: {len(skip_papers)}/{len(papers)} papers "
+                    f"{publisher_key}: {filtered}/{len(all_for_pub)} papers "
                     f"skipped (CrossRef has abstract)"
                 )
-            papers = remain_papers
-            if not papers:
-                logger.info(f"{publisher}: all papers skipped, no browser visit needed")
-                continue
 
-        logger.info(f"Processing publisher: {publisher} ({len(papers)} papers)")
+        if CFG.MAX_PAPERS_PER_PHASE:
+            papers = papers[:phase_limit]
+
+        if not papers:
+            continue
+
+        total_pending += len(papers)
+        logger.info(f"Processing publisher: {publisher_key} ({len(papers)} papers)")
 
         scraper = None
         try:
-            scraper = create_scraper(publisher)
+            scraper = create_scraper(publisher_key)
         except (ValueError, Exception) as e:
-            logger.error(f"Cannot create scraper for {publisher}: {e}")
+            logger.error(f"Cannot create scraper for {publisher_key}: {e}")
             timestamp = str(datetime.now())
             for paper in papers:
                 try:
@@ -378,7 +377,7 @@ def phase_c_publisher(db, publishers):
                     )
                     consecutive_failures += 1
                     if consecutive_failures >= CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES:
-                        logger.warning(f"Publisher {publisher}: {consecutive_failures} consecutive failures, aborting")
+                        logger.warning(f"Publisher {publisher_key}: {consecutive_failures} consecutive failures, aborting")
                         break
 
                 delay = random.uniform(CFG.PUBLISHER_PAGE_DELAY_MIN, CFG.PUBLISHER_PAGE_DELAY_MAX)
@@ -392,7 +391,7 @@ def phase_c_publisher(db, publishers):
                 except Exception:
                     pass
 
-        logger.info(f"Publisher {publisher} done, cooling 15s...")
+        logger.info(f"Publisher {publisher_key} done, cooling 15s...")
         time.sleep(15)
 
     logger.info("Phase C done")

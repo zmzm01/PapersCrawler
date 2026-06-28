@@ -4,6 +4,12 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **run_weekly.sh 修复** | crontab 下 `--hugo --deploy` 缺 `--all`（只转最新一篇）→ 修复为 `--all --hugo --deploy`；crontab PATH 极简找不到 `hugo`(需 `/usr/local/bin`) 和 `ghp-import`(需 conda bin) → 新增 `export PATH`；`docs/README.md` crontab 示例同步修正 | 06-28 |
+| **Hugo 站点样式增强** | 3 项样式修改：1) 卡片摘要优先使用 `.Description`（显示「日期—共收录 N 篇论文」而非正文片段）；2) 侧栏目录（sticky 260px，仅 h2 层论文标题，scroll-spy 高亮）；3) 文章页正文加宽至 `1100px`（不波及主页列表页）；对应 `convert_reports_to_hugo.py` 的 `_build_description`/`_count_papers` | 06-28 |
+| **Optica Accepted Paper 检测** | `OpticaScraper.parse_page()` 新增 Accepted Paper 检测：检测 `#articleBody` 内 `<em>accepted for publication</em>` 特征时抛 `AcceptedPaperError`；`docs/design.md` 新增「9b. Optica」节描述检测策略与页面特征。 | 06-20 |
+| **Announcement 非研究关键词** | `CFG.NON_RESEARCH_KEYWORDS` 新增 `"announcement:"` 前缀，AIP Announcement 类（如 `Announcement: Physics of Plasmas Early Career Collection 2025`）在 Phase C pre-fetch 阶段即被过滤删除并记入 `skipped_dois`。`docs/design.md` 四级关键词表同步更新。 | 06-20 |
+| **PDF 下载三级兜底** | `BasePublisherScraper.download_pdf()` 新增第三级兜底：浏览器导航下载（`goto + expect_download`），模拟用户点击"Get PDF"按钮触发浏览器原生下载事件，解决 Optica `viewmedia.cfm` 仅响应导航请求的反热链接策略。双路径→三级兜底链（requests → JS fetch → browser navigation）。`docs/design.md` 同步更新下载策略节。148 pytest 全通过。 | 06-20 |
+| **Hugo 报告部署** | 新增 `site/` Hugo 骨架、`tools/convert_reports_to_hugo.py` 转换脚本（--report/--all/--hugo/--deploy/--dry-run）；`run_weekly.sh` 一键报告+邮件+部署；`site/` 不提交 git，gh-pages 由 ghp-import 自动管理；141 pytest 全通过 | 06-16 |
 | **Optica CrossRef 驱动 Phase C 跳过** | Optica 是 OA 期刊，CrossRef 返回完整 abstract。Phase C 新增 skip：对 `cr_metadata_fetched_status='success'` 且有 abstract 的 Optica 论文直接标记 `skipped`，跳过浏览器。Phase E2 新增 `OpticaScraper` 延迟页面访问补齐 `pdf_url`。DB 新增 `update_publisher_pdf_url()` 只更新 pdf_url 不覆写 Phase C 状态。 | 06-16 |
 | **报告增强** | Markdown/HTML 报告新增期刊名、出版社、匹配子领域；`phase_g.py` paper_dict 增加 4 个字段；`paper_report_generator.py` 元信息区同步渲染 | 06-15 |
 | **报告简化** | 去除大分类分组（用户反馈不实用）；改为按期刊+日期排序；去除来源行（discovery_source）；匹配子领域改用中文短标签（_build_subdomain_labels）；`_make_markdown_section` 支持动态 heading_level | 06-16 |

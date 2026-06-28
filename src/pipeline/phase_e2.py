@@ -51,7 +51,7 @@ def phase_e2_mineru(db):
     papers_by_publisher = {}
     for p in papers_with_pdf:
         publisher = p["publisher"] or "__unknown__"
-        papers_by_publisher.setdefault(publisher, []).append(p)
+        papers_by_publisher.setdefault(publisher, []).append(dict(p))
 
     success_count = 0
     failed_count = 0

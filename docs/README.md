@@ -110,9 +110,14 @@ ls data/reports/auto/           # 日报 Markdown
 
 ```cron
 # crontab
-0 2 * * * cd /path/to/PapersCrawler && xvfb-run -a python tools/schedule_daily.py
-0 9 * * 1 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
+# 每日抓取（Phase A→F）
+0 10 * * * /path/to/PapersCrawler/run_daily.sh >> /home/user/crawler_daily.log 2>&1
+# 每周报告 + 部署（Phase G→H + GitHub Pages）
+0 8 * * 1 /path/to/PapersCrawler/run_weekly.sh >> /home/user/crawler_weekly.log 2>&1
 ```
+
+`run_weekly.sh` 在 Phase G/H 之后自动运行 `convert_reports_to_hugo.py --all --hugo --deploy`，
+将最新报告转换为 Hugo 站点并部署到 GitHub Pages。详见 `docs/design.md`「Hugo 报告部署」节。
 
 每天早上检查邮件或 Web UI。周一看汇总报告。
 

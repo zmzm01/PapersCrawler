@@ -15,6 +15,7 @@ configs/prompts/summary.yaml
 # 用户自定义脚本（不要提交）
 run_daily.sh
 run_weekly.sh
+run_hugo_deploy.sh
 
 # SMTP 配置文件（已合并到 .env）
 configs/email.yaml

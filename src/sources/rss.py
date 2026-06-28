@@ -11,12 +11,19 @@ rss.py - RSS 数据源处理模块
 2. 所有需要使用的文件路径均通过方法参数传入，无全局依赖
 3. 使用可复用的 requests.Session 管理连接，提升性能
 """
+import warnings
+
 import requests
 import feedparser
 from pathlib import Path
 from dateutil import parser
 
 from common import Paper
+
+# dateutil.parser.parse() 无法识别 "EST" 等时区缩写时会发出 UnknownTimezoneWarning。
+# 由于 RSS 日期只用于生成 YYYY-MM-DD（时区信息在 strftime 时被丢弃），
+# 直接静默忽略此警告即可。未来版本若升级为异常，可改用 tzinfos 映射。
+warnings.filterwarnings("ignore", category=parser.UnknownTimezoneWarning)
 
 
 class RSSProcessor:
