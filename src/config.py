@@ -224,6 +224,7 @@ CFG.NON_RESEARCH_KEYWORDS = [
     "comment on",
     "response to",
     "publisher's note",
+    "announcement:",
 ]
 
 # ---------- 爬虫参数 ----------

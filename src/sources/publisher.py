@@ -387,11 +387,17 @@ class BasePublisherScraper:
                      timeout: int = 60000) -> bytes:
         """利用已有浏览器上下文下载 PDF。
 
-        先访问文章页面（page_url）建立正确的 referrer/session 上下文，
-        再在当前页面中用 fetch 请求 PDF 链接。
+        三级兜底链，依次尝试，直到成功获取有效 PDF：
+        1. **requests + 浏览器 cookies**：最快速，绕过 CSP/JS 检测，
+           适用于 AIP 等 JS fetch 被 CSP 拦截的场景。
+        2. **JS fetch()**：完全继承浏览器上下文，应对 requests 无法
+           处理的场景（如 cookie 签名校验）。
+        3. **浏览器导航下载**（goto + expect_download）：模拟用户点击
+           "Get PDF" 按钮的完整浏览器导航，适用于 Optica 等仅响应
+           导航请求的服务器。
 
-        这解决了部分出版商（如 APS closed OA）直接访问 pdf_url 会被
-        302 重定向到文章页的问题。
+        先访问文章页面（page_url）建立正确的 referrer/session 上下文，
+        再依次尝试上述三种下载方式。
 
         Args:
             pdf_url:  PDF 下载链接。
@@ -475,6 +481,38 @@ class BasePublisherScraper:
                 pdf_body = bytes(raw) if raw else None
             except Exception as fetch_err:
                 logger.debug(f"JS fetch also failed ({fetch_err})")
+                pdf_body = None
+
+        # 第三级兜底：浏览器直接导航下载
+        #
+        # 部分出版商（如 Optica）的 PDF 链接仅响应浏览器级别的完整导航请求，
+        # fetch() / requests 等子资源请求会被服务器拒绝。此路径模拟用户点击
+        # "Get PDF" 按钮的行为，通过 page.goto() + expect_download() 触发
+        # 浏览器下载事件，绕过服务端的非导航请求检测。
+        #
+        # 注意：使用此路径后，浏览器页面会导航到 PDF 链接（而非原文章页面），
+        # 但每次 download_pdf() 调用在开始时都会 goto(page_url) 重建上下文，
+        # 因此不会影响同 publisher 下一篇文章的下载。
+        if pdf_body is None or pdf_body[:5] != b'%PDF-':
+            logger.debug(
+                "Previous paths returned non-PDF, "
+                "trying browser navigation download..."
+            )
+            try:
+                with self.page.expect_download(timeout=120000) as download_info:
+                    self.page.goto(
+                        pdf_url, wait_until="domcontentloaded", timeout=120000,
+                    )
+                download = download_info.value
+                pdf_body = download.content()
+                logger.info(
+                    f"Browser navigation download succeeded: "
+                    f"{len(pdf_body)} bytes"
+                )
+            except Exception as nav_err:
+                logger.debug(
+                    f"Browser navigation download also failed: {nav_err}"
+                )
                 pdf_body = None
 
         if pdf_body is None or pdf_body[:5] != b'%PDF-':
@@ -1182,10 +1220,25 @@ class OpticaScraper(BasePublisherScraper):
               的第一个 div 兄弟元素，这是 Optica 页面中摘要的固定位置。
              - 提取后使用正则 re.sub(r"\\s+", " ", ...) 清理多余的空白字符。
 
+        Raises:
+            AcceptedPaperError: 当页面是 Optica Accepted Paper（预发表页面不包含
+                                真实摘要和正文，仅有"accepted for publication"提示）。
+
         Returns:
             Paper: 包含提取元数据的 Paper 实例。
         """
         sel = Selector(text=self.html)
+
+        # Accepted Paper 检测（预发表页面，无真实内容）
+        # Optica Accepted Paper 页面在 #articleBody 的 <em> 元素中包含
+        # "This paper has been accepted for publication" 文字。
+        # 与 APS AcceptedPaperError 行为一致：不专门适配选择器，直接跳过。
+        if sel.xpath(
+            '//div[@id="articleBody"]//em[contains(text(), "accepted for publication")]'
+        ):
+            raise AcceptedPaperError(
+                "AcceptedPaper: page structure differs (Accepted Paper, no full text available)"
+            )
 
         # ─── 从 <meta> 标签提取元数据 ───
         title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""
