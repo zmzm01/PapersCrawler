@@ -751,7 +751,7 @@ Phase C 采用两级检测：
 
 **四级 — 关键词 + 空摘要检测**（通用兜底，对所有 publisher 生效）：
 - 条件：`abstract` 为空 `AND` 标题包含以下关键词之一
-- 关键词表：`Erratum`, `Comment on`, `Response to`, `Publisher's Note`
+- 关键词表：`Erratum`, `Comment on`, `Response to`, `Publisher's Note`, `Announcement`
 - 实现位置：`pipeline/phase_c.py` 的 retry 循环内，`parse_page()` 成功后检查
 
 ### 触发后的行为
@@ -796,7 +796,9 @@ Research Briefings、Books & Arts、Obituaries、Careers、Podcasts 等。
 **Config 开关**：`src/config.py` 中 `SKIP_NATURE_NEWS = True`（默认开启）。关闭后 Nature 新闻类文章
 将进入流水线。不推荐关闭——非研究文章在 Phase B 会因为作者数据缺失而标记 failed，但仍会消耗 API 配额。
 
-## 9. APS Accepted Paper 跳过（AcceptedPaperError）
+## 9. Accepted Paper 跳过（AcceptedPaperError）
+
+### 9a. APS
 
 **背景**：APS 在论文正式发表前会发布 Accepted Paper（预接受版本）。这类页面可通过 CrossRef 发现
 （DOI 形如 `10.1103/27t3-61j2`），其访问 URL 路径含 `/accepted/`（例如
@@ -814,8 +816,31 @@ Research Briefings、Books & Arts、Obituaries、Careers、Podcasts 等。
 1. `APSScraper.parse_page()` 检测到 Accepted Paper 特征 → 抛出 `AcceptedPaperError`
 2. 捕获后标记 `publisher_page_fetched_status = 'skipped'`，error 信息：
    `"AcceptedPaper: no full text available"`
-3. 级联跳过 Phase D（语义过滤）和 Phase E（LLM 相关性）——判定其相关性无意义，因为即使相关也无法总结
+3. 级联跳过 Phase D 和 Phase E
 4. 后续阶段（Phase E2/F/G/H）自然跳过
+
+### 9b. Optica
+
+**背景**：与 APS 类似，Optica 在论文正式发表前也会发布 Accepted Paper（预接受页面）。
+这类页面通过 CrossRef 发现后，Phase B（CrossRef 元数据）能获取到 title/authors/journal/date，
+但 abstract 为空（CrossRef 不返回预发布文章的摘要）。当前 Optica 网站对 Accepted Paper
+页面没有 Radware 保护（正式论文受 Radware Bot Manager 保护），约 77KB 的 HTML 可直接访问。
+但页面中不包含有效摘要和 PDF 链接（无 `citation_pdf_url` meta 标签）。
+
+**页面特征**：
+- 核心标识：`#articleBody` 区域内的 `<em>` 元素包含文本
+  `"This paper has been accepted for publication"`
+- 不包含 `citation_pdf_url` meta 标签
+- 有关 title/doi/authors/journal/online_date 的正常 meta 标签
+
+**处理策略**：在 `OpticaScraper.parse_page()` 开头检测上述特征，立即抛出 `AcceptedPaperError`，
+与 APS 统一由 Phase C 的 `AcceptedPaperError` 捕获逻辑处理。
+
+**Phase C 行为**（与 APS 一致）：
+1. `OpticaScraper.parse_page()` 检测到 Accepted Paper 特征 → 抛出 `AcceptedPaperError`
+2. 捕获后从 `papers` 表删除（`db.delete_paper()`）
+3. **不**记入 `skipped_dois`（同 DOI 正式版会在未来出现，Phase A 应能重新发现）
+4. 后续阶段自然跳过
 
 ## 10. Session 缓存自动清理
 
@@ -1229,14 +1254,15 @@ Optica 浏览器访问仍保留以下反爬注意项（仅对 Phase C 未跳过�
    - 提取失败时保留原始 `pdf_url`（跨域链接），后续下载路径仍可用
 3. 下载后**立即保存**到 `data/mineru_output/<safe_doi>/paper.pdf`（不再用 tempfile），保存前校验 `%PDF-` 头部
 
-### 下载优先级（2026-06-07 优化）
+### 下载优先级（2026-06-20 优化，三级兜底链）
 
 ```
-requests + 浏览器 cookies (主, 秒级失败)
-  └── 失败 → JS fetch (兜底, 完整浏览器上下文)
+requests + 浏览器 cookies (第一优先级, 秒级失败)
+  └── 失败 → JS fetch (第二优先级, 浏览器内 fetch)
+         └── 失败 → 浏览器导航下载 (第三优先级, goto + expect_download)
 ```
 
-**主路径：requests + 浏览器 cookies**
+**第一优先级：requests + 浏览器 cookies**
 从浏览器 context 提取登录态 cookies + User-Agent，用 Python requests 做 HTTP 直连下载。
 比 JS fetch 更快的理由：
 - **不受 CSP 限制** — AIP 的 `connect-src` 策略拦截 JS `fetch()`，但 requests 直接通过
@@ -1244,10 +1270,20 @@ requests + 浏览器 cookies (主, 秒级失败)
 - **User-Agent 降级保护** — `navigator.userAgent` 获取失败时使用硬编码 Chrome 120 UA 兜底
 - **覆盖所有 publisher** — 同域 PDF URL + 浏览器 cookie 认证
 
-**兜底：JS fetch**
-- 仅当 requests 路径不可用时触发（预期极少发生）
+**第二优先级：JS fetch**
+- 当 requests 路径不可用时触发
 - 使用 `page.evaluate(fetch(pdf_url))` 继承完整浏览器上下文
-- 保留此路径应对未来可能出现的要求完整 JS 环境才能下载的 publisher
+- 应对 requests 无法复现的浏览器签名校验场景
+
+**第三优先级：浏览器导航下载**（2026-06-20 新增）
+- 当前两条路径均返回非 PDF 内容时触发
+- 使用 `page.goto(pdf_url) + page.expect_download()` 模拟用户点击
+  "Get PDF" 按钮的完整浏览器导航
+- 触发真实的浏览器下载事件，`download.content()` 获取完整二进制内容
+- 专门解决 Optica 等 publisher 仅响应浏览器导航请求的反热链接策略
+  （`Sec-Fetch-Mode: navigate` vs `Sec-Fetch-Mode: cors` 校验差异）
+- 导航到 PDF URL 后页面状态改变，但每次 `download_pdf()` 入口处都会
+  重新 `goto(page_url)` 重建上下文，不影响同 publisher 下篇论文
 
 ### PDF 复用
 
@@ -1288,7 +1324,12 @@ APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的�
 - `page.goto(pdf_url) + response.body()` — 浏览器 PDF viewer 以 stream 消费响应体，
   `response.body()` 返回 None（不等缓冲就消费了）
 - `<a click> + page.expect_download()` — 程序化 `element.click()` 不被视为"用户手势"，
-  `event.isTrusted=false`，不触发下载事件
+  `event.isTrusted=false`，不触发下载事件（用于 AIP，AIP 检测 JS 合成事件）
+- **当前第三级兜底 `goto(pdf_url) + expect_download()` 与上述尝试不同**：
+  - 不依赖 `element.click()`（不触发 isTrusted 检测）
+  - 不依赖 `response.body()`（不关心 PDF viewer 行为）
+  - 直接导航到 PDF URL 触发浏览器原生下载事件
+  - 此方法在 AIP 上可能同样有效，但 AIP 的 requests+cookie 路径已足够快
 
 ## Phase F — LLM 结构化总结
 
@@ -1356,6 +1397,128 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 | `tools/debug_llm_summary.py <doi>` | 调试 LLM Summary JSON 解析失败，打印错误上下文 |
 | `tools/debug_publisher_urls.py` | 用 headful 浏览器诊断 Publisher URL 抓取问题 |
 | `tools/reset_empty_abstract.py` | 重置空摘要论文的 Phase D/E/G 状态 |
+
+# Hugo 报告部署
+
+## 工作流
+
+`run_weekly.sh` 在 Phase G/H 之后自动将报告部署到 GitHub Pages：
+
+```
+run_weekly.sh
+  ├── python tools/schedule_weekly.py          # Phase G + H
+  └── python tools/convert_reports_to_hugo.py --all --hugo --deploy
+                         ↓
+  ├── site/content/reports/report_*.md          # 复制报告 + 加 front matter
+  ├── hugo 构建 → site/public/                  # 生成 HTML
+  └── ghp-import -p -f site/public/ → gh-pages  # 部署
+```
+
+`site/` 为本地 Hugo 基础设施（不提交到 git）。ghp-import 自动创建/更新 `gh-pages` 分支。
+
+## 转换脚本
+
+`tools/convert_reports_to_hugo.py` 支持：
+
+| 参数 | 作用 |
+|------|------|
+| `--report <path>` | 指定报告文件 |
+| `--all` | 转换全部 auto 报告 |
+| `--hugo` | 转换后 `hugo` 构建 |
+| `--deploy` | 构建后 `ghp-import` 部署 |
+| `--dry-run` | 预览 |
+
+说明：
+- `--all` 只处理 `data/reports/auto/` 目录下的报告，排除 user 目录
+- `--all` 会先清理 `site/content/posts/` 再重新写入（确保旧文件删除）
+- `--all` 必须搭配 `--hugo` 才会构建，搭配 `--deploy` 才会部署
+
+## 样式定制
+
+### 技术路线
+
+PaperMod 主题的定制方式：
+
+```
+site/assets/css/extended/custom.css  →  Hugo 自动合并到 stylesheet.css
+site/layouts/list.html               →  覆盖主题列表模板（卡片预览）
+site/layouts/single.html             →  覆盖主题文章模板（侧栏目录）
+site/layouts/partials/toc.html       →  自定义目录组件（h2 only + scroll-spy）
+```
+
+### 1. 卡片摘要 Description
+
+报告中文章卡片默认显示 `.Summary`（自动截断正文前 70 字），因报告含 LaTeX 公式导致首页卡片显示脏内容。修改为优先使用 front matter `description`：
+
+**转换脚本（`convert_reports_to_hugo.py`）**：
+- `_build_description()` — 统计报告中的论文数（`##` 标题数量，排除`目录`）→ 生成 `"2026-06-22 — 共收录 29 篇相关论文"`
+- `_build_front_matter()` — 写入 `description` 字段到 Markdown front matter
+
+**列表模板（`layouts/list.html`）**：
+- 卡片区域优先读取 `.Description`，不存在时才回退到 `.Summary`
+
+### 2. 侧栏目录
+
+PaperMod 内置 TOC 支持（collapsible `.toc` + `ShowToc` 参数），但默认折叠在文章顶部。改为侧栏永久显示：
+
+**文章模板（`layouts/single.html`）**：
+- 新增 `div.post-content-wrapper`（flex 容器），包裹 `aside.toc-sidebar` + `div.post-content`
+- `ShowToc=true` 时才渲染侧栏
+
+**自定义 TOC 组件（`layouts/partials/toc.html`）**：
+- `findRE` 只匹配 `<h2>` 标签（论文标题），排除 `###` 子标题层级
+- 排除报告自身的 `## 目录` heading
+- 始终 `open` 属性（侧栏模式不需要可折叠）
+- 内置 scroll-spy JavaScript：滚动时高亮当前阅读的论文标题
+
+**CSS（`assets/css/extended/custom.css`）**：
+- `.toc-sidebar`：`flex: 0 0 260px`、`position: sticky`、`max-height: calc(100vh - header)`
+- `.toc-sidebar details.toc`：隐藏 `<summary>`、无背景边框、list-style-none
+- `.toc-sidebar .inner a`：hover 变背景色、`border-left` 指示器
+- `<=1100px`：侧栏折叠回文章上方可折叠 TOC
+- `<=768px`：更小字号、自动宽度
+
+### 3. 文章页正文加宽
+
+PaperMod 的 `--main-width: 720px` 适用于所有页面，在 1920px 屏幕上仅占 ~40%。
+
+**CSS 特殊处理**（`assets/css/extended/custom.css`）：
+```css
+body:has(.post-single) .main { --main-width: 1100px; }
+```
+- `body:has(.post-single)` — 仅文章页生效，不波及主页/列表页
+- 主页/列表页保持 `--main-width: 720px`
+- `<=768px` 切回 `auto`
+
+### 每报告配置
+
+转换脚本在每篇报告 front matter 写入：
+```yaml
+---
+description: "2026-06-22 — 共收录 29 篇相关论文"
+ShowToc: true
+TocOpen: true
+---
+```
+
+## 依赖
+
+```bash
+pip install ghp-import
+# Hugo: https://gohugo.io/installation/
+```
+
+## crontab 环境注意事项
+
+`run_weekly.sh` 使用全路径 Python + `set -euo pipefail`。crontab 下需要注意：
+
+```bash
+# crontab 极简 PATH（/usr/bin:/bin），不包含：
+# - /usr/local/bin（hugo）
+# - /path/to/paperscrawler-venv/bin（ghp-import）
+# 修复：脚本内显式 export PATH
+export PATH="/usr/local/bin:/path/to/paperscrawler-venv/bin:${PATH:-}"
+```
 
 # 数据库迁移模式
 

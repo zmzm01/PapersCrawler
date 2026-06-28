@@ -458,6 +458,58 @@ class DatabaseClient:
         """, (status_value,))
         return cur.fetchall()
 
+    def get_pending_publisher_papers(self, publisher, skip_crossref_abstract=False):
+        """获取指定 publisher 待抓取的论文列表。
+
+        Parameters
+        ----------
+        publisher : str
+            Publisher 标识（如 "nature", "aps"）。
+        skip_crossref_abstract : bool
+            为 True 时排除已有有效 CrossRef 摘要的论文（节省浏览器资源）。
+
+        Returns
+        -------
+        list[sqlite3.Row]
+        """
+        self._validate_column("publisher_page_fetched_status")
+        query = """
+            SELECT * FROM papers
+            WHERE publisher_page_fetched_status = 'pending'
+              AND publisher = ?
+        """
+        if skip_crossref_abstract:
+            query += """AND NOT (
+                cr_metadata_fetched_status = 'success'
+                AND abstract IS NOT NULL AND abstract != ''
+            )"""
+        cur = self.conn.execute(query, (publisher,))
+        return cur.fetchall()
+
+    def get_papers_by_status_and_publisher(self, status_field, status_value, publisher):
+        """按状态值和 publisher 筛选论文。
+
+        Parameters
+        ----------
+        status_field : str
+            状态列名（如 "publisher_page_fetched_status"）。
+        status_value : str
+            状态值（如 "pending", "success"）。
+        publisher : str
+            Publisher 标识。
+
+        Returns
+        -------
+        list[sqlite3.Row]
+        """
+        self._validate_column(status_field)
+        cur = self.conn.execute(f"""
+            SELECT * FROM papers
+            WHERE {status_field} = ? AND publisher = ?
+            ORDER BY created_date
+        """, (status_value, publisher))
+        return cur.fetchall()
+
     # ==================================================================
     # Phase A: RSS 基本信息写入
     # ==================================================================

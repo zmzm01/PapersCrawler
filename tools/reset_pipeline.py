@@ -3,6 +3,7 @@
 reset_pipeline.py — 重置流水线状态辅助脚本
 
  子命令：
+  reset-crossref     Phase B CrossRef 元数据查询
   reset-semantic     Phase D 语义相似度分数（仅排序参考）
   reset-relevance    Phase E LLM 相关性判断
   reset-publisher    Phase C Publisher 页面抓取
@@ -11,13 +12,12 @@ reset_pipeline.py — 重置流水线状态辅助脚本
   reset-report       Phase G 报告状态
 
  通用选项：
-  --publisher aps  仅重置指定出版社（如 aps, nature）
-  --all            重置全部（包括 success），仅 reset-summary / reset-relevance 支持
+  --publisher aps    仅重置指定出版社（如 aps, nature）
+  --all              重置全部（包括 success），部分子命令支持
+  --empty-abstract   仅重置成功但摘要为空的历史残留论文
 
  示例：
-  python tools/reset_pipeline.py reset-relevance                # 历史 skipped/failed
-  python tools/reset_pipeline.py reset-relevance --all           # 含 success
-  python tools/reset_pipeline.py reset-relevance --publisher aps # 指定出版社
+  python tools/reset_pipeline.py reset-crossref --empty-abstract --publisher optica
 """
 import argparse
 import sqlite3
@@ -27,6 +27,16 @@ from pathlib import Path
 # 项目根目录（脚本在 tools/ 下，上溯一级）
 PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "papers.db"
+
+# ------------------------------------------------------------------
+# Phase B 重置列（CrossRef 元数据）
+# 重置后触发 Phase B 重新查询 CrossRef API 获取元数据（含摘要）。
+# ------------------------------------------------------------------
+CROSSREF_RESET = [
+    "cr_metadata_fetched_status = 'pending'",
+    "cr_metadata_fetched_error = NULL",
+    "cr_metadata_fetched_date = NULL",
+]
 
 # ------------------------------------------------------------------
 # Phase D 重置列（仅清理语义相似度，不影响 LLM 判断结果）
@@ -75,6 +85,75 @@ def _run_update(sql: str, params: tuple = ()) -> int:
     return n
 
 
+def cmd_reset_crossref(publisher=None, reset_all=False, empty_abstract=False):
+    """重置 Phase B CrossRef 元数据查询状态。
+
+    Parameters
+    ----------
+    publisher : str, optional
+    reset_all : bool
+        重置全部（含 success）。
+    empty_abstract : bool
+        仅重置 success 但摘要为空的论文（历史 bug 残留）。
+    """
+    if empty_abstract:
+        if publisher:
+            where = ("WHERE cr_metadata_fetched_status = 'success'"
+                     " AND (abstract IS NULL OR abstract = '')"
+                     " AND publisher = ?")
+            params = (publisher,)
+        else:
+            where = ("WHERE cr_metadata_fetched_status = 'success'"
+                     " AND (abstract IS NULL OR abstract = '')")
+            params = ()
+        label = "空摘要·已成功"
+    elif reset_all:
+        if publisher:
+            where = "WHERE publisher = ?"
+            params = (publisher,)
+        else:
+            where = ""
+            params = ()
+        label = "全部"
+    else:
+        if publisher:
+            where = ("WHERE cr_metadata_fetched_status IN ('failed', 'skipped')"
+                     " AND publisher = ?")
+            params = (publisher,)
+        else:
+            where = "WHERE cr_metadata_fetched_status IN ('failed', 'skipped')"
+            params = ()
+        label = "仅失败/跳过"
+
+    count_sql = f"SELECT COUNT(*) FROM papers {where}"
+    conn = sqlite3.connect(str(DB_PATH))
+    count = conn.execute(count_sql, params).fetchone()[0]
+    conn.close()
+
+    if count == 0:
+        print(f"无匹配论文（publisher={publisher or '全部'}），无需操作")
+        return
+
+    set_clause = ",\n            ".join(CROSSREF_RESET)
+    sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
+
+    print(f"\n将重置 {count} 篇论文的 CrossRef 元数据状态（{label}，publisher={publisher or '全部'}）")
+    print()
+    print("  受影响的状态列:")
+    print("    cr_metadata_fetched_status   → pending")
+    print("    cr_metadata_fetched_error    → NULL")
+    print("    cr_metadata_fetched_date     → NULL")
+    print("  不受影响（保持不变）:")
+    print("    abstract, publisher_page_*, semantic_*, llm_*, mineru_*, report_*")
+    print("  级联: 无（重新查询后 B→C→D→E→F→G 自然流动，因状态变为 pending）")
+    if not _confirm(count, "CrossRef 元数据状态"):
+        print("已取消")
+        return
+
+    n = _run_update(sql, params)
+    print(f"已重置 {n} 篇论文。重新运行 python src/main.py 即可触发 Phase B 重试。")
+
+
 def cmd_reset_semantic(publisher=None):
     """重置 Phase D 语义相似度分数（仅排序参考）。"""
     where = ""
@@ -114,25 +193,47 @@ def cmd_reset_semantic(publisher=None):
     print(f"已重置 {n} 篇论文。重新运行 python src/main.py 即可触发 Phase D 重算语义分。")
 
 
-def cmd_reset_publisher(publisher=None):
-    """重置 Phase C Publisher 页面抓取失败/跳过的论文。"""
-    exclude_non_research = (
-        "AND (publisher_page_fetched_error IS NULL"
-        " OR publisher_page_fetched_error NOT LIKE 'NonResearchPageError:%')"
-    )
-    if publisher:
-        where = (
-            "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
-            f" {exclude_non_research}"
-            " AND publisher = ?"
-        )
-        params = (publisher,)
+def cmd_reset_publisher(publisher=None, empty_abstract=False):
+    """重置 Phase C Publisher 页面抓取状态。
+
+    Parameters
+    ----------
+    publisher : str, optional
+        仅重置指定出版社。
+    empty_abstract : bool
+        重置 publisher_page_fetched_status 为 success 但摘要为空的历史残留论文。
+        适用于旧版 bug 导致 abstract 为空却标了 success 的情况。
+    """
+    if empty_abstract:
+        if publisher:
+            where = ("WHERE publisher_page_fetched_status = 'success'"
+                     " AND (abstract IS NULL OR abstract = '')"
+                     " AND publisher = ?")
+            params = (publisher,)
+        else:
+            where = ("WHERE publisher_page_fetched_status = 'success'"
+                     " AND (abstract IS NULL OR abstract = '')")
+            params = ()
+        label = "空摘要·已成功"
     else:
-        where = (
-            "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
-            f" {exclude_non_research}"
+        exclude_non_research = (
+            "AND (publisher_page_fetched_error IS NULL"
+            " OR publisher_page_fetched_error NOT LIKE 'NonResearchPageError:%')"
         )
-        params = ()
+        if publisher:
+            where = (
+                "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
+                f" {exclude_non_research}"
+                " AND publisher = ?"
+            )
+            params = (publisher,)
+        else:
+            where = (
+                "WHERE publisher_page_fetched_status IN ('failed', 'skipped')"
+                f" {exclude_non_research}"
+            )
+            params = ()
+        label = "失败/跳过"
 
     count_sql = f"SELECT COUNT(*) FROM papers {where}"
     conn = sqlite3.connect(str(DB_PATH))
@@ -140,7 +241,7 @@ def cmd_reset_publisher(publisher=None):
     conn.close()
 
     if count == 0:
-        print(f"无失败论文（publisher={publisher or '全部'}），无需操作")
+        print(f"无匹配论文（publisher={publisher or '全部'}），无需操作")
         return
 
     sql = f"""
@@ -150,7 +251,7 @@ def cmd_reset_publisher(publisher=None):
     {where}
     """
 
-    print(f"\n将重置 {count} 篇论文的 Publisher 抓取状态（publisher={publisher or '全部'}）")
+    print(f"\n将重置 {count} 篇论文的 Publisher 抓取状态（{label}，publisher={publisher or '全部'}）")
     print()
     print("  受影响的状态列:")
     print("    publisher_page_fetched_status  → pending")
@@ -158,7 +259,10 @@ def cmd_reset_publisher(publisher=None):
     print("  不受影响（保持不变）:")
     print("    publisher_page_fetched_date, 以及所有其他列")
     print("  级联: 无")
-    print("  注意: 跳过 NonResearchPageError（非论文页面重试无意义）")
+    if empty_abstract:
+        print("  注意: 仅重置成功但摘要为空的论文（历史 bug 残留）")
+    else:
+        print("  注意: 跳过 NonResearchPageError（非论文页面重试无意义）")
     if not _confirm(count, "Publisher 抓取状态"):
         print("已取消")
         return
@@ -440,19 +544,58 @@ if __name__ == "__main__":
     )
     p_sem.add_argument("--publisher", help="仅重置指定出版社（如 aps, nature）")
 
-    p_pub = sub.add_parser("reset-publisher",
-        help="重置 Publisher 页面抓取失败/跳过的论文",
+    p_cr = sub.add_parser("reset-crossref",
+        help="重置 CrossRef 元数据查询（Phase B）",
         description=(
-            "将 publisher_page_fetched_status 为 failed / skipped 的论文重置为 pending，"
+            "将 cr_metadata_fetched_status 为 failed / skipped 的论文重置为 pending，"
+            "触发 Phase B 重新查询 CrossRef API 获取元数据和摘要。"
+            "\n\n--empty-abstract 仅重置 status 为 success 但摘要为空的历史残留论文"
+            "（旧版 bug 导致 abstract 为空却标了 success 的情况，常用于 Optica 等优先走 CrossRef 的期刊）。"
+            "\n\n受影响的状态列:"
+            "\n  cr_metadata_fetched_status   → pending"
+            "\n  cr_metadata_fetched_error    → NULL"
+            "\n  cr_metadata_fetched_date     → NULL"
+            "\n  不重置: abstract 及其他所有列"
+            "\n\n示例:"
+            "\n  python tools/reset_pipeline.py reset-crossref --empty-abstract --publisher optica"
+            "\n    → 重置 Optica 中 Phase B 成功但摘要为空的论文"
+            "\n  python tools/reset_pipeline.py reset-crossref --empty-abstract"
+            "\n    → 重置所有出版社中 Phase B 成功但摘要为空的论文"
+            "\n  python tools/reset_pipeline.py reset-crossref --all"
+            "\n    → 重置全部论文的 Phase B 状态（含 success）"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_cr.add_argument("--publisher", help="仅重置指定出版社")
+    p_cr.add_argument("--empty-abstract", action="store_true",
+        help="仅重置成功但摘要为空的论文（历史 bug 残留）")
+    p_cr.add_argument("--all", action="store_true",
+        help="重置全部论文（含 success）")
+
+    p_pub = sub.add_parser("reset-publisher",
+        help="重置 Publisher 页面抓取失败/跳过或空摘要的论文",
+        description=(
+            "默认将 publisher_page_fetched_status 为 failed / skipped 的论文重置为 pending，"
             "触发 Phase C 重试。跳过非论文页面（NonResearchPageError）。"
+            "\n\n使用 --empty-abstract 可重置 status 为 success 但摘要为空的历史残留论文"
+            "（旧版 bug 导致 abstract 为空却标了 success）。"
             "\n\n受影响的状态列:"
             "\n  publisher_page_fetched_status   → pending"
             "\n  publisher_page_fetched_error    → NULL"
             "\n  不重置: 其他所有列"
+            "\n\n示例:"
+            "\n  python tools/reset_pipeline.py reset-publisher"
+            "\n    → 仅重置失败/跳过的论文"
+            "\n  python tools/reset_pipeline.py reset-publisher --empty-abstract"
+            "\n    → 仅重置成功但摘要为空的论文（历史 bug 残留）"
+            "\n  python tools/reset_pipeline.py reset-publisher --empty-abstract --publisher optica"
+            "\n    → 仅重置 Optica 中成功但摘要为空的论文"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_pub.add_argument("--publisher", help="仅重置指定出版社")
+    p_pub.add_argument("--empty-abstract", action="store_true",
+        help="重置 publisher_page_fetched_status 为 success 但摘要为空的历史残留论文")
 
     p_mineru = sub.add_parser("reset-mineru",
         help="重置 MinerU PDF 解析失败/跳过的论文",
@@ -563,8 +706,13 @@ if __name__ == "__main__":
 
     if args.command == "reset-semantic":
         cmd_reset_semantic(args.publisher)
+    elif args.command == "reset-crossref":
+        if args.empty_abstract and args.all:
+            print("--empty-abstract 与 --all 不能同时使用")
+            sys.exit(1)
+        cmd_reset_crossref(args.publisher, reset_all=args.all, empty_abstract=args.empty_abstract)
     elif args.command == "reset-publisher":
-        cmd_reset_publisher(args.publisher)
+        cmd_reset_publisher(args.publisher, empty_abstract=args.empty_abstract)
     elif args.command == "reset-mineru":
         cmd_reset_mineru(args.publisher)
     elif args.command == "reset-relevance":
