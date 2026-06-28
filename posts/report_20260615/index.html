@@ -10,7 +10,7 @@
 <meta name="description" content="2026-06-15 — 共收录 41 篇相关论文">
 <meta name="author" content="">
 <link rel="canonical" href="https://zmzm01.github.io/PapersCrawler/posts/report_20260615/">
-<link crossorigin="anonymous" href="/PapersCrawler/assets/css/stylesheet.0408a7816101d273809c529235e9c3f456ac590882d3482febe019b1063c4fa3.css" integrity="sha256-BAingWEB0nOAnFKSNenD9FasWQiC00gv6&#43;AZsQY8T6M=" rel="preload stylesheet" as="style">
+<link crossorigin="anonymous" href="/PapersCrawler/assets/css/stylesheet.8f1e5469e314f03a8d2352a0b94c5cd78520d3201a647af992b7c4a4ca3314c0.css" integrity="sha256-jx5UaeMU8DqNI1KguUxc14Ug0yAaZHr5krfEpMozFMA=" rel="preload stylesheet" as="style">
 <link rel="icon" href="https://zmzm01.github.io/PapersCrawler/favicon.ico">
 <link rel="icon" type="image/png" sizes="16x16" href="https://zmzm01.github.io/PapersCrawler/favicon-16x16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="https://zmzm01.github.io/PapersCrawler/favicon-32x32.png">
@@ -184,12 +184,13 @@
 </div>
   </header> 
   <div class="post-content-wrapper">
-    <aside class="toc-sidebar"><details class="toc" >
+    <aside id="toc-container" class="toc-container"><details class="toc" open>
     <summary accesskey="c" title="(Alt + C)">
         <span class="title">Table of Contents</span>
     </summary>
 
-    <div class="inner"><ul>
+    <div class="inner">
+        <p class="toc-heading">Contents</p><ul>
             <li>
                 <a href="#%e6%96%87%e7%8c%ae%e6%8a%a5%e5%91%8a" aria-label="文献报告">文献报告</a><ul>
                     
@@ -1088,7 +1089,50 @@
         </ul>
     </div>
 </details>
+<script>
+(function() {
+    const tocLinks = document.querySelectorAll('.toc-container .inner a');
+    if (tocLinks.length === 0) return;
 
+    const headings = Array.from(tocLinks).map(link => {
+        const id = link.getAttribute('href').slice(1);
+        return document.getElementById(id);
+    }).filter(Boolean);
+
+    let activeIndex = 0;
+    const setActive = (idx) => {
+        if (idx === activeIndex) return;
+        if (tocLinks[activeIndex]) tocLinks[activeIndex].classList.remove('active');
+        activeIndex = idx;
+        if (tocLinks[activeIndex]) tocLinks[activeIndex].classList.add('active');
+    };
+
+    
+    if (tocLinks[0]) tocLinks[0].classList.add('active');
+
+    const onScroll = () => {
+        const scrollY = window.scrollY;
+        const offset = 120; 
+        let newIdx = 0;
+        for (let i = headings.length - 1; i >= 0; i--) {
+            if (headings[i] && headings[i].offsetTop - offset <= scrollY) {
+                newIdx = i;
+                break;
+            }
+        }
+        setActive(newIdx);
+    };
+
+    
+    let ticking = false;
+    window.addEventListener('scroll', () => {
+        if (!ticking) {
+            requestAnimationFrame(() => { onScroll(); ticking = false; });
+            ticking = true;
+        }
+    }, { passive: true });
+})();
+</script>
     </aside>
     <div class="post-content md-content"><h1 id="文献报告">文献报告<a hidden class="anchor" aria-hidden="true" href="#文献报告">#</a></h1>
 <h2 id="目录">目录<a hidden class="anchor" aria-hidden="true" href="#目录">#</a></h2>
