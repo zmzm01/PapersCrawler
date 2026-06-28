@@ -190,1043 +190,110 @@
     </summary>
 
     <div class="inner">
-        <p class="toc-heading">Contents</p><ul>
-            <li>
-                <a href="#%e6%96%87%e7%8c%ae%e6%8a%a5%e5%91%8a" aria-label="文献报告">文献报告</a><ul>
-                    
-            <li>
-                <a href="#%e7%9b%ae%e5%bd%95" aria-label="目录">目录</a></li>
-            <li>
-                <a href="#longitudinally-resolved-measurement-of-energy-transfer-efficiency-in-a-plasma-wakefield-accelerator" aria-label="Longitudinally resolved measurement of energy-transfer efficiency in a plasma-wakefield accelerator">Longitudinally resolved measurement of energy-transfer efficiency in a plasma-wakefield accelerator</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%88%86%e6%9e%90" aria-label="主要结果与物理分析">主要结果与物理分析</a><ul>
-                    
-            <li>
-                <a href="#1-%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%85%89%e5%93%8d%e5%ba%94%e6%9b%b2%e7%ba%bf%e7%9a%84%e5%bb%ba%e7%ab%8b%e4%b8%8e%e5%b9%b3%e5%9d%87%e6%95%88%e7%8e%87%e6%b5%8b%e9%87%8f" aria-label="1. 等离子体光响应曲线的建立与平均效率测量">1. 等离子体光响应曲线的建立与平均效率测量</a></li>
-            <li>
-                <a href="#2-%e7%ba%b5%e5%90%91%e5%88%86%e8%be%a8%e6%95%88%e7%8e%87%e6%8f%ad%e7%a4%ba%e5%b0%be%e6%9d%9f%e7%94%b5%e8%8d%b7%e6%8d%9f%e5%a4%b1" aria-label="2. 纵向分辨效率揭示尾束电荷损失">2. 纵向分辨效率揭示尾束电荷损失</a></li>
-            <li>
-                <a href="#3-%e6%a8%a1%e6%8b%9f%e9%aa%8c%e8%af%81%e5%b1%80%e9%83%a8%e8%83%bd%e9%87%8f%e6%b2%89%e7%a7%af%e7%9a%84%e7%ba%bf%e6%80%a7%e5%81%87%e8%ae%be" aria-label="3. 模拟验证局部能量沉积的线性假设">3. 模拟验证局部能量沉积的线性假设</a></li>
-            <li>
-                <a href="#4-%e6%96%b9%e6%b3%95%e7%9a%84%e9%9d%9e%e4%be%b5%e5%85%a5%e6%80%a7%e4%b8%8e%e5%9c%a8%e7%ba%bf%e8%af%8a%e6%96%ad%e8%83%bd%e5%8a%9b" aria-label="4. 方法的非侵入性与在线诊断能力">4. 方法的非侵入性与在线诊断能力</a></li></ul>
-            </li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#synthetic-optical-imaging-in-picongpu" aria-label="Synthetic optical imaging in PIConGPU">Synthetic optical imaging in PIConGPU</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-1" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-1" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-1" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%88%86%e6%9e%90-1" aria-label="主要结果与物理分析">主要结果与物理分析</a><ul>
-                    
-            <li>
-                <a href="#1-%e5%8f%8c%e7%bc%9d%e9%aa%8c%e8%af%81%e8%a7%92%e8%b0%b1%e4%bc%a0%e6%92%ad%e4%b8%8e-pic-%e4%bc%a0%e6%92%ad%e5%8f%8a%e8%a7%a3%e6%9e%90%e7%90%86%e8%ae%ba%e5%90%bb%e5%90%88" aria-label="1. 双缝验证：角谱传播与 PIC 传播及解析理论吻合">1. 双缝验证：角谱传播与 PIC 传播及解析理论吻合</a></li>
-            <li>
-                <a href="#2-%e5%ad%98%e5%82%a8%e5%8d%a0%e7%94%a8%e5%a4%a7%e5%b9%85%e5%89%8a%e5%87%8f" aria-label="2. 存储占用大幅削减">2. 存储占用大幅削减</a></li>
-            <li>
-                <a href="#3-%e9%a6%96%e6%ac%a1%e5%ae%9e%e7%8e%b0%e9%95%bf%e6%8e%a2%e9%92%88%e8%84%89%e5%86%b2%e7%9a%84%e5%8e%9f%e4%bd%8d%e5%90%88%e6%88%90%e9%98%b4%e5%bd%b1%e5%9b%be" aria-label="3. 首次实现长探针脉冲的原位合成阴影图">3. 首次实现长探针脉冲的原位合成阴影图</a></li>
-            <li>
-                <a href="#4-%e6%8f%92%e4%bb%b6%e6%94%af%e6%8c%81%e5%a4%9a%e6%8e%a2%e9%92%88%e8%84%89%e5%86%b2%e4%b8%8e%e5%a4%9a%e5%bb%b6%e6%97%b6%e6%8e%a2%e6%b5%8b" aria-label="4. 插件支持多探针脉冲与多延时探测">4. 插件支持多探针脉冲与多延时探测</a></li></ul>
-            </li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-1" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#longitudinal-dynamics-of-extreme-plasma-based-compression-of-electron-beams" aria-label="Longitudinal dynamics of extreme plasma-based compression of electron beams">Longitudinal dynamics of extreme plasma-based compression of electron beams</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-2" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-2" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-2" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6" aria-label="主要结果与物理机制">主要结果与物理机制</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-2" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#collider-quality-electron-bunches-from-an-all-optical-plasma-photoinjector" aria-label="Collider-quality electron bunches from an all-optical plasma photoinjector">Collider-quality electron bunches from an all-optical plasma photoinjector</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-3" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-3" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-3" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e5%8f%8a%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6" aria-label="主要结果及物理机制">主要结果及物理机制</a><ul>
-                    
-            <li>
-                <a href="#1-%e9%a3%9e%e7%84%a6%e7%82%b9%e6%b3%a8%e5%85%a5%e4%ba%a7%e7%94%9f%e6%a2%af%e5%bd%a2%e6%9d%9f%e5%9b%a2%e4%bc%98%e4%ba%8e%e4%bc%a0%e7%bb%9f%e6%96%b9%e6%a1%88" aria-label="1. 飞焦点注入产生梯形束团，优于传统方案">1. 飞焦点注入产生梯形束团，优于传统方案</a></li>
-            <li>
-                <a href="#2-%e6%b3%a8%e5%85%a5%e6%9d%9f%e5%9b%a2%e7%89%b9%e6%80%a7%e5%8f%af%e8%b0%83%e7%94%b5%e8%8d%b7-%e5%8f%91%e5%b0%84%e5%ba%a6%e5%8f%af%e7%bc%a9%e6%94%be" aria-label="2. 注入束团特性可调：电荷-发射度可缩放">2. 注入束团特性可调：电荷-发射度可缩放</a></li>
-            <li>
-                <a href="#3-%e5%8a%a0%e9%80%9f%e6%ae%b5%e5%ae%9e%e7%8e%b0%e9%ab%98%e6%a2%af%e5%ba%a6%e4%bd%8e%e8%83%bd%e6%95%a3%e5%8a%a0%e9%80%9f" aria-label="3. 加速段实现高梯度、低能散加速">3. 加速段实现高梯度、低能散加速</a></li>
-            <li>
-                <a href="#4-%e5%af%b9%e6%92%9e%e6%9c%ba%e5%93%81%e8%b4%a8%e9%aa%8c%e8%af%81%e4%b8%8e%e5%af%b9%e6%af%94" aria-label="4. 对撞机品质验证与对比">4. 对撞机品质验证与对比</a></li></ul>
-            </li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-3" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#a-simple-yet-high-performance-position-sensitive-detector-with-readout-electronics" aria-label="A simple yet high-performance position-sensitive detector with readout electronics">A simple yet high-performance position-sensitive detector with readout electronics</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-4" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-4" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-4" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c" aria-label="主要结果">主要结果</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-4" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#sparc_lab-facility-for-advanced-acceleration-and-radiation-experiments" aria-label="SPARC_LAB facility for advanced acceleration and radiation experiments">SPARC_LAB facility for advanced acceleration and radiation experiments</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-5" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-5" aria-label="关键方法与设置">关键方法与设置</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e6%a0%b8%e5%bf%83%e9%a9%b1%e5%8a%a8%e7%b3%bb%e7%bb%9f" aria-label="核心驱动系统">核心驱动系统</a><ul>
-                    
-            <li>
-                <a href="#%e9%ab%98%e4%ba%ae%e5%ba%a6sparc%e5%85%89%e6%b3%a8%e5%85%a5%e5%99%a8" aria-label="高亮度SPARC光注入器">高亮度SPARC光注入器</a></li>
-            <li>
-                <a href="#%e9%ab%98%e5%bc%ba%e5%ba%a6flame%e6%bf%80%e5%85%89%e7%b3%bb%e7%bb%9f" aria-label="高强度FLAME激光系统">高强度FLAME激光系统</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%8a%a0%e9%80%9f%e5%b9%b3%e5%8f%b0" aria-label="等离子体加速平台">等离子体加速平台</a></li>
-            <li>
-                <a href="#%e5%85%88%e8%bf%9b%e8%af%8a%e6%96%ad%e7%b3%bb%e7%bb%9f" aria-label="先进诊断系统">先进诊断系统</a></li>
-            <li>
-                <a href="#%e7%94%a8%e6%88%b7%e6%9d%9f%e7%ba%bf" aria-label="用户束线">用户束线</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-5" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e7%94%b5%e5%ad%90%e6%9d%9f%e5%8f%82%e6%95%b0%e4%b8%8e%e5%93%81%e8%b4%a8" aria-label="电子束参数与品质">电子束参数与品质</a></li>
-            <li>
-                <a href="#%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%b0%be%e5%9c%ba%e5%8a%a0%e9%80%9f" aria-label="等离子体尾场加速">等离子体尾场加速</a></li>
-            <li>
-                <a href="#%e8%be%90%e5%b0%84%e6%ba%90%e6%80%a7%e8%83%bd" aria-label="辐射源性能">辐射源性能</a></li>
-            <li>
-                <a href="#%e8%af%8a%e6%96%ad%e6%8a%80%e6%9c%af%e5%88%9b%e6%96%b0" aria-label="诊断技术创新">诊断技术创新</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-5" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#laser-plasma-based-gamma-ray-studies-using-micro-structured-targets" aria-label="Laser plasma based gamma-ray studies using micro-structured targets">Laser plasma based gamma-ray studies using micro-structured targets</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-6" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-6" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-6" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e7%94%b5%e5%ad%90%e8%83%bd%e9%87%8f%e4%b8%8e%e5%85%89%e5%ad%90%e4%ba%a7%e9%a2%9d%e6%98%be%e8%91%97%e6%8f%90%e5%8d%87" aria-label="电子能量与光子产额显著提升">电子能量与光子产额显著提升</a></li>
-            <li>
-                <a href="#%e6%9d%9f%e6%b5%81%e5%8f%91%e6%95%a3%e6%98%be%e8%91%97%e6%94%b9%e5%96%84" aria-label="束流发散显著改善">束流发散显著改善</a></li>
-            <li>
-                <a href="#%e6%bf%80%e5%85%89-%e7%b2%92%e5%ad%90%e8%bd%ac%e6%8d%a2%e6%95%88%e7%8e%87%e5%a4%a7%e5%b9%85%e6%8f%90%e9%ab%98" aria-label="激光-粒子转换效率大幅提高">激光-粒子转换效率大幅提高</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-6" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#strong-field-ionization-and-acceleration-of-heavy-ions-in-the-interaction-of-ultraintense-laser-pulses-with-targets" aria-label="Strong-field ionization and acceleration of heavy ions in the interaction of ultraintense laser pulses with targets">Strong-field ionization and acceleration of heavy ions in the interaction of ultraintense laser pulses with targets</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-7" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-7" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-7" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6-1" aria-label="主要结果与物理机制">主要结果与物理机制</a><ul>
-                    
-            <li>
-                <a href="#1-%e7%94%b5%e7%a6%bb%e7%8e%87--%e7%9a%84%e5%af%b9%e6%af%94" aria-label="1. 电离率 \(W\) 的对比">1. 电离率 \(W\) 的对比</a></li>
-            <li>
-                <a href="#2-%e4%b8%80%e7%bb%b4%e6%a8%a1%e6%8b%9f%e7%9a%84%e7%94%b5%e8%8d%b7%e6%80%81%e5%88%86%e5%b8%83%e5%b7%ae%e5%bc%82" aria-label="2. 一维模拟的电荷态分布差异">2. 一维模拟的电荷态分布差异</a></li>
-            <li>
-                <a href="#3-%e4%ba%8c%e7%bb%b4%e6%a8%a1%e6%8b%9f%e4%b8%ad%e7%a6%bb%e5%ad%90%e5%8a%a0%e9%80%9f%e7%9a%84%e5%a2%9e%e5%bc%ba" aria-label="3. 二维模拟中离子加速的增强">3. 二维模拟中离子加速的增强</a></li>
-            <li>
-                <a href="#4-qed-%e6%95%88%e5%ba%94%e5%87%8f%e5%bc%b1%e6%a8%a1%e5%9e%8b%e5%b7%ae%e5%bc%82" aria-label="4. QED 效应减弱模型差异">4. QED 效应减弱模型差异</a></li></ul>
-            </li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-7" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#laser-field-reconstruction-for-the-modeling-of-laser-plasma-interaction-in-cylindrical-geometry" aria-label="Laser field reconstruction for the modeling of laser-plasma interaction in cylindrical geometry">Laser field reconstruction for the modeling of laser-plasma interaction in cylindrical geometry</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-8" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-8" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-8" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e6%9f%b1%e5%9d%90%e6%a0%87gsa-md%e9%87%8d%e5%bb%ba%e7%b2%be%e5%ba%a6%e6%98%be%e8%91%97%e4%bc%98%e4%ba%8e%e7%ac%9b%e5%8d%a1%e5%b0%94%e7%89%88%e6%9c%ac" aria-label="1. 柱坐标GSA-MD重建精度显著优于笛卡尔版本">1. 柱坐标GSA-MD重建精度显著优于笛卡尔版本</a></li>
-            <li>
-                <a href="#2-%e6%96%b9%e4%bd%8d%e8%a7%92%e9%99%8d%e9%87%87%e6%a0%b7%e5%ae%9e%e7%8e%b0%e5%bf%ab%e9%80%9f%e5%88%9d%e6%ad%a5%e9%87%8d%e5%bb%ba" aria-label="2. 方位角降采样实现快速初步重建">2. 方位角降采样实现快速初步重建</a></li>
-            <li>
-                <a href="#3-%e9%87%8d%e5%bb%balg%e6%a8%a1%e5%bc%8f%e5%8f%af%e7%9b%b4%e6%8e%a5%e8%a7%a3%e6%9e%90%e6%b3%a8%e5%85%a5pic%e6%a8%a1%e6%8b%9f" aria-label="3. 重建LG模式可直接解析注入PIC模拟">3. 重建LG模式可直接解析注入PIC模拟</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-8" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#spectral-deconvolution-without-the-deconvolution-extracting-temperature-from-x-ray-thomson-scattering-spectra-without-the-source-and-instrument-function" aria-label="Spectral deconvolution without the deconvolution: Extracting temperature from x-ray Thomson scattering spectra without the source-and-instrument function">Spectral deconvolution without the deconvolution: Extracting temperature from x-ray Thomson scattering spectra without the source-and-instrument function</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-9" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-9" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-9" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-itcf%e8%a7%a3%e5%8d%b7%e7%a7%af%e7%9a%84%e5%8f%af%e8%a1%8c%e6%80%a7%e9%aa%8c%e8%af%81" aria-label="1. ITCF解卷积的可行性验证">1. ITCF解卷积的可行性验证</a></li>
-            <li>
-                <a href="#2-itcf%e6%af%94%e5%80%bc%e6%b3%95%e5%87%86%e7%a1%ae%e6%8f%90%e5%8f%96%e6%b8%a9%e5%ba%a6" aria-label="2. ITCF比值法准确提取温度">2. ITCF比值法准确提取温度</a></li>
-            <li>
-                <a href="#3-%e5%85%89%e8%b0%b1%e5%99%aa%e5%a3%b0%e4%b8%8e%e5%85%89%e5%ad%90%e7%bb%9f%e8%ae%a1%e7%9a%84%e9%b2%81%e6%a3%92%e6%80%a7" aria-label="3. 光谱噪声与光子统计的鲁棒性">3. 光谱噪声与光子统计的鲁棒性</a></li>
-            <li>
-                <a href="#4-%e8%b0%b1%e4%bb%aa%e5%a4%b1%e9%85%8d%e4%b8%8e%e6%99%b6%e4%bd%93%e5%8f%82%e6%95%b0%e5%b7%ae%e5%bc%82%e7%9a%84%e9%b2%81%e6%a3%92%e6%80%a7" aria-label="4. 谱仪失配与晶体参数差异的鲁棒性">4. 谱仪失配与晶体参数差异的鲁棒性</a></li>
-            <li>
-                <a href="#5-nif%e5%bc%8f%e5%ae%9e%e9%aa%8c%e7%9a%84%e5%ba%94%e7%94%a8%e6%8b%93%e5%b1%95" aria-label="5. NIF式实验的应用拓展">5. NIF式实验的应用拓展</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-9" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#effects-of-realistic-laser-intensity-and-phase-distribution-on-high-charge-laser-wakefield-acceleration" aria-label="Effects of realistic laser intensity and phase distribution on high-charge laser wakefield acceleration">Effects of realistic laser intensity and phase distribution on high-charge laser wakefield acceleration</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-10" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-10" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-10" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%80%e7%9c%9f%e5%ae%9e%e6%bf%80%e5%85%89%e9%99%8d%e4%bd%8e%e8%87%aa%e8%81%9a%e7%84%a6%e5%bc%ba%e5%ba%a6%e5%b9%b6%e5%bb%b6%e7%bc%93%e6%b3%a8%e5%85%a5" aria-label="一、真实激光降低自聚焦强度并延缓注入">一、真实激光降低自聚焦强度并延缓注入</a></li>
-            <li>
-                <a href="#%e4%ba%8c%e9%9d%9e%e7%90%86%e6%83%b3%e6%bf%80%e5%85%89%e5%af%bc%e8%87%b4%e5%b0%be%e5%9c%ba%e9%9e%98%e5%b1%82%e6%a8%a1%e7%b3%8a%e5%8c%96%e6%8a%91%e5%88%b6%e6%97%a9%e6%9c%9f%e6%b3%a8%e5%85%a5" aria-label="二、非理想激光导致尾场鞘层模糊化，抑制早期注入">二、非理想激光导致尾场鞘层模糊化，抑制早期注入</a></li>
-            <li>
-                <a href="#%e4%b8%89%e7%9c%9f%e5%ae%9e%e6%bf%80%e5%85%89%e5%9c%a8%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e4%b8%ad%e6%bc%94%e5%8c%96%e4%b8%ba%e6%a4%ad%e5%9c%86%e5%bd%a2%e6%80%81%e5%b9%b6%e8%a7%a6%e5%8f%91%e6%b3%a8%e5%85%a5" aria-label="三、真实激光在等离子体中演化为椭圆形态并触发注入">三、真实激光在等离子体中演化为椭圆形态并触发注入</a></li>
-            <li>
-                <a href="#%e5%9b%9b%e6%a8%a1%e6%8b%9f%e4%b8%8e%e5%ae%9e%e9%aa%8c%e7%94%b5%e8%8d%b7%e9%87%8f%e5%8f%8a%e8%83%bd%e8%b0%b1%e5%ae%9a%e9%87%8f%e5%90%bb%e5%90%88" aria-label="四、模拟与实验电荷量及能谱定量吻合">四、模拟与实验电荷量及能谱定量吻合</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-10" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#amplification-and-measurement-of-sub-degree-faraday-rotation-based-on-fresnel-reflection-and-division-of-focal-plane-polarimeters" aria-label="Amplification and measurement of sub-degree Faraday rotation based on Fresnel reflection and division-of-focal-plane polarimeters">Amplification and measurement of sub-degree Faraday rotation based on Fresnel reflection and division-of-focal-plane polarimeters</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-11" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-11" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-11" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e9%ab%98%e6%94%be%e5%a4%a7%e5%80%8d%e6%95%b0%e4%b8%8e%e6%b5%8b%e9%87%8f%e7%b2%be%e5%ba%a6" aria-label="1. 高放大倍数与测量精度">1. 高放大倍数与测量精度</a></li>
-            <li>
-                <a href="#2-%e6%b6%88%e9%99%a4%e5%9b%be%e5%83%8f%e9%85%8d%e5%87%86%e8%af%af%e5%b7%ae" aria-label="2. 消除图像配准误差">2. 消除图像配准误差</a></li>
-            <li>
-                <a href="#3-%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e8%87%aa%e8%be%90%e5%b0%84%e5%bd%b1%e5%93%8d%e7%9a%84%e5%ae%9a%e9%87%8f%e8%af%84%e4%bc%b0" aria-label="3. 等离子体自辐射影响的定量评估">3. 等离子体自辐射影响的定量评估</a></li>
-            <li>
-                <a href="#4-%e6%94%be%e5%a4%a7%e5%80%8d%e6%95%b0%e7%9a%84%e7%89%a9%e7%90%86%e6%9e%81%e9%99%90" aria-label="4. 放大倍数的物理极限">4. 放大倍数的物理极限</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-11" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#a-note-on-thermal-effects-in-non-linear-models-for-plasma-based-acceleration" aria-label="A note on thermal effects in non-linear models for plasma-based acceleration">A note on thermal effects in non-linear models for plasma-based acceleration</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-12" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-12" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-12" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c1%e7%b3%bb%e7%bb%bc%e5%b9%b3%e5%9d%87%e4%b8%8e%e6%b6%a8%e8%90%bd" aria-label="结果1：系综平均与涨落">结果1：系综平均与涨落</a></li>
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c2%e6%ba%90%e9%a1%b9%e7%9a%84%e6%b8%a9%e5%ba%a6%e4%be%9d%e8%b5%96%e6%80%a7%e4%b8%8e%e9%9e%98%e5%b1%82%e5%8f%82%e6%95%b0%e9%87%8d%e6%a0%87%e5%ae%9a" aria-label="结果2：源项的温度依赖性与鞘层参数重标定">结果2：源项的温度依赖性与鞘层参数重标定</a></li>
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c3%e7%a9%ba%e6%b3%a1%e5%b0%ba%e5%af%b8%e7%9a%84%e6%94%b6%e7%bc%a9%e6%a0%87%e5%ba%a6%e5%be%8b" aria-label="结果3：空泡尺寸的收缩标度律">结果3：空泡尺寸的收缩标度律</a></li>
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c4%e7%ba%b5%e5%90%91%e7%94%b5%e5%9c%ba%e7%9a%84%e6%a8%a1%e5%9e%8b%e9%aa%8c%e8%af%81" aria-label="结果4：纵向电场的模型验证">结果4：纵向电场的模型验证</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-12" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#data-model-guided-framework-for-systemic-emittance-minimization-in-high-brightness-photoinjectors" aria-label="Data-model-guided framework for systemic emittance minimization in high-brightness photoinjectors">Data-model-guided framework for systemic emittance minimization in high-brightness photoinjectors</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-13" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-13" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-13" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e9%ab%98%e4%bf%9d%e7%9c%9f%e5%b9%b3%e9%a1%b6%e6%bf%80%e5%85%89%e8%84%89%e5%86%b2%e7%9a%84%e7%94%9f%e6%88%90" aria-label="1. 高保真平顶激光脉冲的生成">1. 高保真平顶激光脉冲的生成</a></li>
-            <li>
-                <a href="#2-%e9%80%86%e5%8f%91%e5%b0%84%e5%ba%a6%e6%a8%a1%e5%9e%8b%e7%9a%84%e6%94%b9%e8%bf%9b%e4%b8%8e%e9%aa%8c%e8%af%81" aria-label="2. 逆发射度模型的改进与验证">2. 逆发射度模型的改进与验证</a></li>
-            <li>
-                <a href="#3-%e6%b3%a8%e5%85%a5%e5%99%a8%e5%8f%91%e5%b0%84%e5%ba%a6%e7%9a%84%e5%ae%9e%e9%aa%8c%e4%bc%98%e5%8c%96" aria-label="3. 注入器发射度的实验优化">3. 注入器发射度的实验优化</a></li>
-            <li>
-                <a href="#4-%e5%b9%b3%e9%a1%b6%e6%9d%9f%e5%9b%a2%e7%9a%84fel%e5%87%ba%e5%85%89%e8%b0%83%e8%af%95" aria-label="4. 平顶束团的FEL出光调试">4. 平顶束团的FEL出光调试</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-13" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#plasma-discharge-undulator-concept-theory-and-numerical-study" aria-label="Plasma discharge undulator: Concept, theory, and numerical study">Plasma discharge undulator: Concept, theory, and numerical study</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-14" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-14" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-14" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e6%9d%9f%e6%b5%81%e5%8a%a8%e5%8a%9b%e5%ad%a6%e4%b8%8e%e5%8c%b9%e9%85%8d%e6%b3%a8%e5%85%a5" aria-label="1. 束流动力学与匹配注入">1. 束流动力学与匹配注入</a></li>
-            <li>
-                <a href="#2-%e6%b3%a2%e8%8d%a1%e5%99%a8%e5%bc%ba%e5%ba%a6%e4%b8%8e--%e5%88%86%e5%b8%83" aria-label="2. 波荡器强度与 \(K\) 分布">2. 波荡器强度与 \(K\) 分布</a></li>
-            <li>
-                <a href="#3-%e8%be%90%e5%b0%84%e7%89%b9%e6%80%a7" aria-label="3. 辐射特性">3. 辐射特性</a></li>
-            <li>
-                <a href="#4-%e7%ba%b5%e5%90%91%e5%be%ae%e8%81%9a%e6%9d%9f" aria-label="4. 纵向微聚束">4. 纵向微聚束</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-14" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#modular-quadrupole-array-capture-line-for-plasma-accelerated-electrons" aria-label="Modular quadrupole array capture line for plasma-accelerated electrons">Modular quadrupole array capture line for plasma-accelerated electrons</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-15" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-15" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-15" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e6%a8%a1%e5%9d%97%e5%8c%96fodo%e9%98%b5%e5%88%97%e7%9a%84%e6%9d%9f%e6%b5%81%e5%85%89%e5%ad%a6%e7%89%b9%e6%80%a7" aria-label="1. 模块化FODO阵列的束流光学特性">1. 模块化FODO阵列的束流光学特性</a></li>
-            <li>
-                <a href="#2-%e5%8f%af%e8%b0%83%e8%b0%90halbach%e5%9b%9b%e6%9e%81%e9%80%8f%e9%95%9c%e8%ae%be%e8%ae%a1%e4%b8%8e%e5%8e%9f%e5%9e%8b%e6%b5%8b%e9%87%8f" aria-label="2. 可调谐Halbach四极透镜设计与原型测量">2. 可调谐Halbach四极透镜设计与原型测量</a></li>
-            <li>
-                <a href="#3-%e5%ae%8c%e6%95%b4%e6%9d%9f%e7%ba%bf%e4%bc%a0%e8%be%93%e4%b8%8e%e8%83%bd%e8%b0%b1%e6%b5%8b%e9%87%8f%e6%80%a7%e8%83%bd" aria-label="3. 完整束线传输与能谱测量性能">3. 完整束线传输与能谱测量性能</a></li>
-            <li>
-                <a href="#4-%e8%af%af%e5%b7%ae%e5%88%86%e6%9e%90%e4%b8%8e%e6%9d%9f%e6%b5%81%e7%a8%b3%e5%ae%9a%e6%80%a7" aria-label="4. 误差分析与束流稳定性">4. 误差分析与束流稳定性</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-15" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#laser-driven-x-ray-radiation-from-nanoarraygas-hybrid-plasma-target" aria-label="Laser-driven x-ray radiation from nanoarray–gas hybrid plasma target">Laser-driven x-ray radiation from nanoarray–gas hybrid plasma target</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-16" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-16" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-16" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e6%b7%b7%e5%90%88%e9%9d%b6%e6%98%be%e8%91%97%e5%a2%9e%e5%bc%ba%e8%be%90%e5%b0%84%e5%bc%ba%e5%ba%a6" aria-label="混合靶显著增强辐射强度">混合靶显著增强辐射强度</a></li>
-            <li>
-                <a href="#%e8%be%90%e5%b0%84%e5%85%89%e5%ad%90%e8%83%bd%e9%87%8f%e5%8f%af%e8%b0%83%e4%b8%94%e7%ac%a6%e5%90%88%e6%a0%87%e5%ba%a6%e5%be%8b" aria-label="辐射光子能量可调且符合标度律">辐射光子能量可调且符合标度律</a></li>
-            <li>
-                <a href="#%e5%af%b9%e7%94%b5%e5%ad%90%e6%9d%9f%e5%93%81%e8%b4%a8%e5%85%b7%e6%9c%89%e8%89%af%e5%a5%bd%e9%b2%81%e6%a3%92%e6%80%a7" aria-label="对电子束品质具有良好鲁棒性">对电子束品质具有良好鲁棒性</a></li>
-            <li>
-                <a href="#%e7%ba%b3%e7%b1%b3%e9%98%b5%e5%88%97%e5%87%a0%e4%bd%95%e7%bb%93%e6%9e%84%e5%bd%b1%e5%93%8d%e8%be%90%e5%b0%84%e7%89%b9%e6%80%a7" aria-label="纳米阵列几何结构影响辐射特性">纳米阵列几何结构影响辐射特性</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-16" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#theory-of-beam-driven-nonlinear-plasma-wake-and-interior-waves" aria-label="Theory of beam-driven nonlinear plasma wake and interior waves">Theory of beam-driven nonlinear plasma wake and interior waves</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-17" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-17" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-17" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e9%9d%9e%e7%ba%bf%e6%80%a7%e5%86%85%e6%b3%a2%e7%9a%84%e5%ad%98%e5%9c%a8%e4%b8%8e%e7%89%b9%e6%80%a7" aria-label="1. 非线性内波的存在与特性">1. 非线性内波的存在与特性</a></li>
-            <li>
-                <a href="#2-%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%b0%be%e5%9c%ba%e6%b3%a2%e5%8f%8a%e5%8f%98%e6%8d%a2%e6%af%94" aria-label="2. 等离子体尾场波及变换比">2. 等离子体尾场波及变换比</a></li>
-            <li>
-                <a href="#3-%e6%97%a0%e5%b0%be%e5%9c%ba%e7%9a%84%e5%86%85%e6%b3%a2%e5%b1%80%e5%9f%9f%e5%8c%96" aria-label="3. 无尾场的内波局域化">3. 无尾场的内波局域化</a></li>
-            <li>
-                <a href="#4-%e6%b3%a2%e7%a0%b4%e7%a2%8e%e9%98%88%e5%80%bc" aria-label="4. 波破碎阈值">4. 波破碎阈值</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-17" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#over-8-hours-of-continuous-operation-of-a-free-electron-laser-driven-by-a-laser-plasma-accelerator" aria-label="Over 8 hours of continuous operation of a free-electron laser driven by a laser-plasma accelerator">Over 8 hours of continuous operation of a free-electron laser driven by a laser-plasma accelerator</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-18" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-18" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-18" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e8%b6%85-10-%e5%b0%8f%e6%97%b6%e7%a8%b3%e5%ae%9a%e7%94%b5%e5%ad%90%e6%9d%9f%e4%ba%a7%e7%94%9f" aria-label="1. 超 10 小时稳定电子束产生">1. 超 10 小时稳定电子束产生</a></li>
-            <li>
-                <a href="#2-%e8%b6%85%e8%bf%87-8-%e5%b0%8f%e6%97%b6%e8%bf%9e%e7%bb%ad-fel-%e8%bf%90%e8%a1%8c" aria-label="2. 超过 8 小时连续 FEL 运行">2. 超过 8 小时连续 FEL 运行</a></li>
-            <li>
-                <a href="#3-%e5%8f%82%e6%95%b0%e7%9b%b8%e5%85%b3%e6%80%a7%e6%8f%ad%e7%a4%ba%e6%bd%9c%e5%9c%a8%e4%b8%8d%e7%a8%b3%e5%ae%9a%e6%ba%90" aria-label="3. 参数相关性揭示潜在不稳定源">3. 参数相关性揭示潜在不稳定源</a></li>
-            <li>
-                <a href="#4-%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6%e4%b8%8e%e9%99%90%e5%88%b6%e5%88%86%e6%9e%90" aria-label="4. 物理机制与限制分析">4. 物理机制与限制分析</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-18" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#precision-alignment-and-tolerance-of-a-plasma-wakefield-accelerator-in-a-laser-ionized-plasma-source" aria-label="Precision alignment and tolerance of a plasma wakefield accelerator in a laser-ionized plasma source">Precision alignment and tolerance of a plasma wakefield accelerator in a laser-ionized plasma source</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-19" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-19" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-19" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e4%bd%99%e8%be%89%e5%85%89%e5%af%b9%e5%87%86%e6%8a%80%e6%9c%af" aria-label="1. 等离子体余辉光对准技术">1. 等离子体余辉光对准技术</a></li>
-            <li>
-                <a href="#2-%e6%a8%aa%e5%90%91%e5%81%8f%e7%a7%bb%e5%ae%b9%e9%99%90%e6%b5%8b%e9%87%8f" aria-label="2. 横向偏移容限测量">2. 横向偏移容限测量</a></li>
-            <li>
-                <a href="#3-%e8%a7%92%e5%90%91%e5%a4%b1%e5%87%86%e5%ae%b9%e9%99%90" aria-label="3. 角向失准容限">3. 角向失准容限</a></li>
-            <li>
-                <a href="#4-%e5%87%a0%e4%bd%95%e6%a8%a1%e5%9e%8b%e7%9a%84%e9%80%82%e7%94%a8%e6%80%a7" aria-label="4. 几何模型的适用性">4. 几何模型的适用性</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-19" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#beam-transverse-dynamics-in-laser-plasma-accelerators" aria-label="Beam transverse dynamics in laser-plasma accelerators">Beam transverse dynamics in laser-plasma accelerators</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-20" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-20" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-20" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%af%86%e5%ba%a6%e5%b9%b3%e5%8f%b0%e4%b8%ad%e7%9a%84%e5%8f%91%e5%b0%84%e5%ba%a6%e5%a2%9e%e9%95%bf%e4%b8%8e%e5%8c%b9%e9%85%8d%e6%9d%a1%e4%bb%b6" aria-label="1. 等离子体密度平台中的发射度增长与匹配条件">1. 等离子体密度平台中的发射度增长与匹配条件</a></li>
-            <li>
-                <a href="#2-%e5%8f%98%e8%81%9a%e7%84%a6%e9%80%9a%e9%81%93%e4%b8%ad%e5%8c%b9%e9%85%8d%e7%9a%84%e6%99%ae%e9%80%82%e6%80%a7" aria-label="2. 变聚焦通道中匹配的普适性">2. 变聚焦通道中匹配的普适性</a></li>
-            <li>
-                <a href="#3-%e5%af%86%e5%ba%a6%e6%96%9c%e5%9d%a1%e4%b8%ad%e7%9a%84%e5%8f%91%e5%b0%84%e5%ba%a6%e8%a1%8c%e4%b8%ba%e5%8f%8a%e5%85%b6%e4%b8%8e%e4%bc%a0%e8%be%93%e7%ba%bf%e7%9a%84%e8%80%a6%e5%90%88" aria-label="3. 密度斜坡中的发射度行为及其与传输线的耦合">3. 密度斜坡中的发射度行为及其与传输线的耦合</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-20" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#thomson-scattering-with-gain" aria-label="Thomson Scattering with Gain">Thomson Scattering with Gain</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-21" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-21" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-21" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e5%a2%9e%e7%9b%8a%e5%af%bc%e8%87%b4%e6%95%a3%e5%b0%84%e5%85%89%e8%b0%b1%e7%9a%84stokes%e5%8f%8dstokes%e4%b8%8d%e5%af%b9%e7%a7%b0%e6%80%a7%e5%a2%9e%e5%bc%ba" aria-label="1. 增益导致散射光谱的Stokes/反Stokes不对称性增强">1. 增益导致散射光谱的Stokes/反Stokes不对称性增强</a></li>
-            <li>
-                <a href="#2-epw%e8%b0%b1%e7%9a%84%e5%a2%9e%e7%9b%8a%e4%bf%ae%e6%ad%a3%e8%a7%a3%e5%86%b3%e4%ba%86%e9%95%bf%e6%9c%9f%e5%ad%98%e5%9c%a8%e7%9a%84%e6%8b%9f%e5%90%88%e7%9f%9b%e7%9b%be" aria-label="2. EPW谱的增益修正解决了长期存在的拟合矛盾">2. EPW谱的增益修正解决了长期存在的拟合矛盾</a></li>
-            <li>
-                <a href="#3-iaw%e5%b3%b0%e4%b8%8d%e5%af%b9%e7%a7%b0%e6%80%a7%e6%97%a0%e9%9c%80%e4%be%9d%e8%b5%96%e5%bc%82%e5%b8%b8%e7%94%b5%e5%ad%90%e6%bc%82%e7%a7%bb%e9%80%9f%e5%ba%a6" aria-label="3. IAW峰不对称性无需依赖异常电子漂移速度">3. IAW峰不对称性无需依赖异常电子漂移速度</a></li>
-            <li>
-                <a href="#4-%e5%bf%bd%e7%95%a5%e5%a2%9e%e7%9b%8a%e5%af%bc%e8%87%b4%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%8f%82%e6%95%b0%e6%8e%a8%e6%96%ad%e8%af%af%e5%b7%ae%e9%9a%8f%e5%bc%ba%e5%ba%a6%e5%a2%9e%e5%a4%a7" aria-label="4. 忽略增益导致等离子体参数推断误差随强度增大">4. 忽略增益导致等离子体参数推断误差随强度增大</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-21" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#all-optically-controllable-electron-and-x-ray-sources-from-microchannel-guided-direct-laser-acceleration" aria-label="All-optically controllable electron and X-ray sources from microchannel-guided direct laser acceleration">All-optically controllable electron and X-ray sources from microchannel-guided direct laser acceleration</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-22" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-22" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-22" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e9%ab%98%e7%94%b5%e8%8d%b7%e5%87%86%e7%9b%b4%e4%b8%94%e5%8f%91%e6%95%a3%e7%9a%84%e7%94%b5%e5%ad%90%e6%9d%9f" aria-label="1. 高电荷、准直且发散的电子束">1. 高电荷、准直且发散的电子束</a></li>
-            <li>
-                <a href="#2-%e7%94%b5%e5%ad%90%e6%9d%9f%e7%a9%ba%e9%97%b4%e5%88%86%e5%b8%83%e4%b8%8e%e9%80%9a%e9%81%93%e6%b3%a8%e5%85%a5%e6%a8%a1%e5%bc%8f%e7%9a%84%e5%85%b3%e8%81%94" aria-label="2. 电子束空间分布与通道注入模式的关联">2. 电子束空间分布与通道注入模式的关联</a></li>
-            <li>
-                <a href="#3-%e7%8e%af%e5%bd%a2%e8%bd%ab%e8%87%b4%e8%be%90%e5%b0%84-x-%e5%b0%84%e7%ba%bf%e6%ba%90%e5%8f%8a%e5%85%b6%e7%89%b9%e6%80%a7" aria-label="3. 环形轫致辐射 X 射线源及其特性">3. 环形轫致辐射 X 射线源及其特性</a></li>
-            <li>
-                <a href="#4-%e9%95%bf%e9%80%9a%e9%81%93%e4%b8%ad%e7%9a%84%e7%94%b5%e5%ad%90%e5%8a%a8%e5%8a%9b%e5%ad%a6%e4%b8%8e%e5%87%86%e7%9b%b4%e6%9c%ba%e5%88%b6" aria-label="4. 长通道中的电子动力学与准直机制">4. 长通道中的电子动力学与准直机制</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-22" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#pushing-the-frontiers-of-light-magnetized-plasma-lenses-and-chirp-tailoring-for-extreme-intensities" aria-label="Pushing the frontiers of light: magnetized plasma lenses and chirp tailoring for extreme intensities">Pushing the frontiers of light: magnetized plasma lenses and chirp tailoring for extreme intensities</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-23" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-23" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-23" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c-1%e6%9c%80%e4%bd%b3%e5%8f%82%e6%95%b0%e4%b8%8b%e7%9a%84%e9%ab%98%e6%95%88%e8%81%9a%e7%84%a6%e4%b8%8e%e5%8e%8b%e7%bc%a9" aria-label="主要结果 1：最佳参数下的高效聚焦与压缩">主要结果 1：最佳参数下的高效聚焦与压缩</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c-2%e5%95%81%e5%95%be%e4%b8%8e%e7%a3%81%e5%9c%ba%e4%bc%98%e5%8c%96%e5%af%b9%e8%84%89%e5%86%b2%e8%b4%a8%e9%87%8f%e7%9a%84%e5%bd%b1%e5%93%8d" aria-label="主要结果 2：啁啾与磁场优化对脉冲质量的影响">主要结果 2：啁啾与磁场优化对脉冲质量的影响</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c-3%e7%b3%bb%e7%bb%9f%e5%8f%82%e6%95%b0%e7%bc%a9%e6%94%be%e5%ae%9a%e5%be%8b" aria-label="主要结果 3：系统参数缩放定律">主要结果 3：系统参数缩放定律</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-23" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#machine-learning-based-closed-orbit-correction-for-steady-state-microbunching-storage-ring" aria-label="Machine learning based closed orbit correction for steady state microbunching storage ring">Machine learning based closed orbit correction for steady state microbunching storage ring</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-24" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-24" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-24" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e5%8d%95%e6%ac%a1%e6%a0%a1%e6%ad%a3%e7%b2%be%e5%ba%a6%e5%a4%a7%e5%b9%85%e4%bc%98%e4%ba%8esvd" aria-label="单次校正精度大幅优于SVD">单次校正精度大幅优于SVD</a></li>
-            <li>
-                <a href="#%e4%b8%a4%e6%ac%a1%e8%bf%ad%e4%bb%a3%e5%8d%b3%e5%8f%af%e6%bb%a1%e8%b6%b3--m%e7%ba%a7%e8%a6%81%e6%b1%82" aria-label="两次迭代即可满足 \(10\) \(\mu\)m级要求">两次迭代即可满足 \(10\) \(\mu\)m级要求</a></li>
-            <li>
-                <a href="#%e6%8a%97%e5%99%aa%e5%a3%b0%e4%b8%8e%e9%98%b2%e9%a5%b1%e5%92%8c%e8%83%bd%e5%8a%9b%e7%aa%81%e5%87%ba" aria-label="抗噪声与防饱和能力突出">抗噪声与防饱和能力突出</a></li>
-            <li>
-                <a href="#%e9%ab%98%e6%96%af%e8%bf%87%e7%a8%8b%e5%ba%94%e5%af%b9bpm%e6%95%85%e9%9a%9c" aria-label="高斯过程应对BPM故障">高斯过程应对BPM故障</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-24" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#development-of-radiation-tolerant-beam-imaging-via-multimode-fiber-and-synthetic-data-driven-machine-learning" aria-label="Development of radiation-tolerant beam imaging via multimode fiber and synthetic data-driven machine learning">Development of radiation-tolerant beam imaging via multimode fiber and synthetic data-driven machine learning</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-25" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-25" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-25" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e5%90%88%e6%88%90%e6%95%b0%e6%8d%ae%e7%9a%84%e6%9c%89%e6%95%88%e6%80%a7%e4%b8%8e%e5%a4%9a%e6%a0%b7%e6%80%a7" aria-label="合成数据的有效性与多样性">合成数据的有效性与多样性</a></li>
-            <li>
-                <a href="#%e6%9d%9f%e5%89%96%e9%9d%a2%e9%87%8d%e5%bb%ba%e7%b2%be%e5%ba%a6" aria-label="束剖面重建精度">束剖面重建精度</a></li>
-            <li>
-                <a href="#%e8%af%af%e5%b7%ae%e5%bd%b1%e5%93%8d%e5%9b%a0%e7%b4%a0" aria-label="误差影响因素">误差影响因素</a></li>
-            <li>
-                <a href="#mmf%e5%8f%a0%e5%8a%a0%e6%80%a7%e7%9a%84%e5%ae%9e%e9%aa%8c%e9%aa%8c%e8%af%81" aria-label="MMF叠加性的实验验证">MMF叠加性的实验验证</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-25" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#efficient-generation-of-a-100-nc-electron-beam-via-self-mode-transition-from-lwfa-to-pwfa" aria-label="Efficient generation of a 100 nC electron beam via self-mode transition from LWFA to PWFA">Efficient generation of a 100 nC electron beam via self-mode transition from LWFA to PWFA</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-26" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-26" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-26" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e5%ae%9e%e9%aa%8c%e8%a7%82%e6%b5%8b" aria-label="实验观测">实验观测</a></li>
-            <li>
-                <a href="#%e6%a8%a1%e6%8b%9f%e6%8f%ad%e7%a4%ba%e7%9a%84%e4%b8%89%e9%98%b6%e6%ae%b5%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6" aria-label="模拟揭示的三阶段物理机制">模拟揭示的三阶段物理机制</a></li>
-            <li>
-                <a href="#%e5%af%86%e5%ba%a6%e4%be%9d%e8%b5%96%e4%b8%8e%e8%83%bd%e8%b0%b1%e7%89%b9%e5%be%81" aria-label="密度依赖与能谱特征">密度依赖与能谱特征</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-26" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#injection-and-acceleration-of-electrons-by-radially-polarized-laser-pulses-in-a-plasma-channel" aria-label="Injection and acceleration of electrons by radially polarized laser pulses in a plasma channel">Injection and acceleration of electrons by radially polarized laser pulses in a plasma channel</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-27" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-27" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-27" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e7%94%b5%e5%ad%90%e6%b3%a8%e5%85%a5%e4%b8%8e%e8%83%bd%e8%b0%b1%e8%a7%92%e5%88%86%e5%b8%83" aria-label="1. 电子注入与能谱角分布">1. 电子注入与能谱角分布</a></li>
-            <li>
-                <a href="#2-%e6%9c%80%e5%a4%a7%e7%94%b5%e5%ad%90%e8%83%bd%e9%87%8f%e6%bc%94%e5%8c%96%e4%b8%8e%e7%ba%b5%e5%90%91%e5%8a%a0%e9%80%9f%e6%9c%ba%e5%88%b6" aria-label="2. 最大电子能量演化与纵向加速机制">2. 最大电子能量演化与纵向加速机制</a></li>
-            <li>
-                <a href="#3-%e6%9d%9f%e6%b5%81%e7%94%b5%e6%b5%81%e4%b8%8e%e7%a9%ba%e9%97%b4%e5%88%86%e5%b8%83" aria-label="3. 束流电流与空间分布">3. 束流电流与空间分布</a></li>
-            <li>
-                <a href="#4-%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6%e5%af%b9%e6%af%94%e4%b8%8e%e8%83%bd%e6%a0%87%e4%bc%b0%e8%ae%a1" aria-label="4. 物理机制对比与能标估计">4. 物理机制对比与能标估计</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-27" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#laguerregaussian-pulses-for-spin-polarized-ion-beam-acceleration" aria-label="Laguerre–Gaussian pulses for spin-polarized ion beam acceleration">Laguerre–Gaussian pulses for spin-polarized ion beam acceleration</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-28" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-28" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-28" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e6%a8%a1%e6%8b%9f%e7%bb%93%e6%9e%9c" aria-label="主要模拟结果">主要模拟结果</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-28" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#limitations-of-emittance-and-source-size-measurement-of-laser-accelerated-electron-beams-using-the-pepper-pot-mask-method" aria-label="Limitations of emittance and source size measurement of laser-accelerated electron beams using the pepper-pot mask method">Limitations of emittance and source size measurement of laser-accelerated electron beams using the pepper-pot mask method</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-29" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-29" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-29" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e8%83%a1%e6%a4%92%e7%93%b6%e6%96%b9%e6%b3%95%e5%ad%98%e5%9c%a8%e4%b8%89%e4%b8%aa%e5%8f%91%e5%b0%84%e5%ba%a6%e5%93%8d%e5%ba%94%e5%8c%ba%e5%9f%9f" aria-label="1. 胡椒瓶方法存在三个发射度响应区域">1. 胡椒瓶方法存在三个发射度响应区域</a></li>
-            <li>
-                <a href="#2-%e5%8d%8a%e5%bd%b1%e5%8d%b7%e7%a7%af%e6%96%b9%e6%b3%95%e6%94%b9%e5%96%84%e4%bd%8e%e5%8f%91%e5%b0%84%e5%ba%a6%e5%88%86%e8%be%a8%e7%8e%87%e4%bd%86%e4%bb%8d%e6%9c%89%e6%9e%81%e9%99%90" aria-label="2. 半影卷积方法改善低发射度分辨率但仍有极限">2. 半影卷积方法改善低发射度分辨率但仍有极限</a></li>
-            <li>
-                <a href="#3-%e5%ae%9e%e9%aa%8c%e6%b5%8b%e9%87%8f%e9%aa%8c%e8%af%81%e6%96%b9%e6%b3%95%e5%b1%80%e9%99%90%e5%b9%b6%e4%b8%8e%e7%8b%ac%e7%ab%8b%e8%af%8a%e6%96%ad%e4%b8%80%e8%87%b4" aria-label="3. 实验测量验证方法局限并与独立诊断一致">3. 实验测量验证方法局限并与独立诊断一致</a></li>
-            <li>
-                <a href="#4-%e6%8e%a9%e6%a8%a1%e5%87%a0%e4%bd%95%e5%8f%82%e6%95%b0%e5%af%b9%e6%96%b9%e6%b3%95%e9%80%82%e7%94%a8%e8%8c%83%e5%9b%b4%e7%9a%84%e5%bd%b1%e5%93%8d" aria-label="4. 掩模几何参数对方法适用范围的影响">4. 掩模几何参数对方法适用范围的影响</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-29" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#customized-bayesian-optimization-for-efficient-beam-tuning-at-the-facility-for-rare-isotope-beams" aria-label="Customized Bayesian optimization for efficient beam tuning at the facility for rare isotope beams">Customized Bayesian optimization for efficient beam tuning at the facility for rare isotope beams</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-30" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-30" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-30" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e5%bc%82%e6%ad%a5bo%e6%b6%88%e9%99%a4%e6%9c%ba%e5%99%a8%e9%97%b2%e7%bd%ae%e6%97%b6%e9%97%b4" aria-label="1. 异步BO消除机器闲置时间">1. 异步BO消除机器闲置时间</a></li>
-            <li>
-                <a href="#2-%e6%88%90%e6%9c%ac%e6%84%9f%e7%9f%a5%e8%b0%83%e8%8a%82%e9%99%8d%e4%bd%8e%e7%a1%ac%e4%bb%b6%e7%ad%89%e5%be%85%e5%bc%80%e9%94%80" aria-label="2. 成本感知调节降低硬件等待开销">2. 成本感知调节降低硬件等待开销</a></li>
-            <li>
-                <a href="#3-%e5%a4%8d%e5%90%88%e7%9b%ae%e6%a0%87%e6%9e%84%e9%80%a0%e4%b8%8e%e6%ad%a3%e5%88%99%e5%8c%96%e6%8f%90%e5%8d%87%e6%94%b6%e6%95%9b%e5%b9%b3%e6%bb%91%e6%80%a7" aria-label="3. 复合目标构造与正则化提升收敛平滑性">3. 复合目标构造与正则化提升收敛平滑性</a></li>
-            <li>
-                <a href="#4-%e5%85%88%e9%aa%8c%e5%9d%87%e5%80%bc%e8%be%85%e5%8a%a9%e5%ae%9e%e7%8e%b0%e8%bf%91%e4%b9%8e%e7%9e%ac%e6%97%b6%e7%9a%84%e5%9c%a8%e7%ba%bf%e8%b0%83%e8%b0%90" aria-label="4. 先验均值辅助实现近乎瞬时的在线调谐">4. 先验均值辅助实现近乎瞬时的在线调谐</a></li>
-            <li>
-                <a href="#5-%e5%b1%80%e9%83%a8%e6%90%9c%e7%b4%a2%e5%8a%a0%e9%80%9f%e9%ab%98%e7%bb%b4%e7%a9%ba%e9%97%b4%e5%86%85%e7%9a%84%e6%94%b6%e6%95%9b" aria-label="5. 局部搜索加速高维空间内的收敛">5. 局部搜索加速高维空间内的收敛</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-30" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#broadband-laser-absorption-study-based-on-radiochromic-film-combined-with-fiber-optic-probes-at-the-low-coherence-kunwu-laser-facility" aria-label="Broadband laser absorption study based on radiochromic film combined with fiber-optic probes at the low-coherence Kunwu laser facility">Broadband laser absorption study based on radiochromic film combined with fiber-optic probes at the low-coherence Kunwu laser facility</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-31" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-31" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-31" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e6%bf%80%e5%85%89%e5%90%b8%e6%94%b6%e6%95%88%e7%8e%87%e6%98%be%e8%91%97%e6%8f%90%e5%8d%87" aria-label="1. 激光吸收效率显著提升">1. 激光吸收效率显著提升</a></li>
-            <li>
-                <a href="#2-%e5%8f%97%e6%bf%80%e5%b8%83%e9%87%8c%e6%b8%8a%e6%95%a3%e5%b0%84sbs%e8%a2%ab%e5%bc%ba%e7%83%88%e6%8a%91%e5%88%b6" aria-label="2. 受激布里渊散射（SBS）被强烈抑制">2. 受激布里渊散射（SBS）被强烈抑制</a></li>
-            <li>
-                <a href="#3-%e5%8f%97%e6%bf%80%e6%8b%89%e6%9b%bc%e6%95%a3%e5%b0%84srs%e5%87%ba%e7%8e%b0%e5%8f%8d%e5%b8%b8%e5%a2%9e%e5%bc%ba" aria-label="3. 受激拉曼散射（SRS）出现反常增强">3. 受激拉曼散射（SRS）出现反常增强</a></li>
-            <li>
-                <a href="#4-rcf-%e8%af%8a%e6%96%ad%e5%ae%9e%e7%8e%b0%e5%a4%a7%e7%ab%8b%e4%bd%93%e8%a7%92%e8%bf%9e%e7%bb%ad%e5%88%86%e5%b8%83%e6%b5%8b%e9%87%8f" aria-label="4. RCF 诊断实现大立体角连续分布测量">4. RCF 诊断实现大立体角连续分布测量</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-31" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#study-of-fully-coupled-three-dimensional-envelope-instability-using-automatic-differentiation" aria-label="Study of fully coupled three-dimensional envelope instability using automatic differentiation">Study of fully coupled three-dimensional envelope instability using automatic differentiation</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-32" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-32" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-32" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e6%97%a0%e8%80%a6%e5%90%88%e6%97%b6%e7%9a%84%e4%b8%8d%e7%a8%b3%e5%ae%9a%e5%b8%a6" aria-label="无耦合时的不稳定带">无耦合时的不稳定带</a></li>
-            <li>
-                <a href="#%e5%85%a8%e8%80%a6%e5%90%88%e5%bc%95%e5%85%a5%e7%9a%84%e6%96%b0%e4%b8%8d%e7%a8%b3%e5%ae%9a%e5%b8%a6" aria-label="全耦合引入的新不稳定带">全耦合引入的新不稳定带</a></li>
-            <li>
-                <a href="#%e4%b8%8d%e7%a8%b3%e5%ae%9a%e6%80%a7%e6%9c%ba%e5%88%b6%e5%88%86%e6%9e%90" aria-label="不稳定性机制分析">不稳定性机制分析</a></li>
-            <li>
-                <a href="#%e5%8f%82%e6%95%b0%e6%89%ab%e6%8f%8f%e4%b8%ad%e7%9a%84%e8%80%a6%e5%90%88%e6%95%88%e5%ba%94" aria-label="参数扫描中的耦合效应">参数扫描中的耦合效应</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-32" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#nanometer-scale-proton-focusing-via-density-gradient-induced-intrinsic-focusing-electric-fields" aria-label="Nanometer-scale proton focusing via density-gradient-induced intrinsic focusing electric fields">Nanometer-scale proton focusing via density-gradient-induced intrinsic focusing electric fields</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-33" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-33" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-33" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e5%be%84%e5%90%91%e5%af%86%e5%ba%a6%e6%a2%af%e5%ba%a6%e8%af%b1%e5%af%bc%e7%9a%84%e8%81%9a%e7%84%a6%e7%94%b5%e5%9c%ba" aria-label="1. 径向密度梯度诱导的聚焦电场">1. 径向密度梯度诱导的聚焦电场</a></li>
-            <li>
-                <a href="#2-%e7%ba%b3%e7%b1%b3%e5%b0%ba%e5%ba%a6%e8%b4%a8%e5%ad%90%e6%9d%9f%e7%9a%84%e8%81%9a%e7%84%a6%e4%b8%8e%e9%ab%98%e5%87%86%e7%9b%b4" aria-label="2. 纳米尺度质子束的聚焦与高准直">2. 纳米尺度质子束的聚焦与高准直</a></li>
-            <li>
-                <a href="#3-%e5%8a%a0%e9%80%9f%e6%9c%ba%e5%88%b6%e4%b8%8e%e8%83%bd%e9%87%8f%e5%af%b9%e5%af%86%e5%ba%a6%e6%a2%af%e5%ba%a6%e7%9a%84%e6%95%8f%e6%84%9f%e6%80%a7" aria-label="3. 加速机制与能量对密度梯度的敏感性">3. 加速机制与能量对密度梯度的敏感性</a></li>
-            <li>
-                <a href="#4-%e6%9c%ba%e5%88%b6%e7%9a%84%e9%b2%81%e6%a3%92%e6%80%a7%e4%b8%8e%e5%8f%82%e6%95%b0%e7%a9%ba%e9%97%b4" aria-label="4. 机制的鲁棒性与参数空间">4. 机制的鲁棒性与参数空间</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-33" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#alternative-mechanism-to-accelerate-ions-from-magnetized-thin-foil-using-standing-whistler-wave" aria-label="Alternative mechanism to accelerate ions from magnetized thin foil using standing whistler wave">Alternative mechanism to accelerate ions from magnetized thin foil using standing whistler wave</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-34" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-34" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-34" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e5%93%a8%e5%a3%b0%e6%b3%a2%e9%a9%bb%e6%b3%a2%e4%b8%8e%e5%91%a8%e6%9c%9f%e6%80%a7%e5%af%86%e5%ba%a6%e7%bb%93%e6%9e%84%e7%9a%84%e5%bd%a2%e6%88%90" aria-label="1. 哨声波驻波与周期性密度结构的形成">1. 哨声波驻波与周期性密度结构的形成</a></li>
-            <li>
-                <a href="#2-%e8%b4%a8%e5%ad%90%e8%83%bd%e9%87%8f%e7%9a%84%e6%8c%af%e8%8d%a1%e8%a1%8c%e4%b8%ba%e4%b8%8e%e9%a9%bb%e6%b3%a2%e5%a2%9e%e5%bc%batnsa%e6%9c%ba%e5%88%b6" aria-label="2. 质子能量的振荡行为与驻波增强TNSA机制">2. 质子能量的振荡行为与驻波增强TNSA机制</a></li>
-            <li>
-                <a href="#3-%e6%9d%9f%e6%b5%81%e5%87%86%e7%9b%b4%e6%80%a7%e7%9a%84%e6%98%be%e8%91%97%e6%94%b9%e5%96%84" aria-label="3. 束流准直性的显著改善">3. 束流准直性的显著改善</a></li>
-            <li>
-                <a href="#4-%e7%94%b5%e5%ad%90%e5%8a%a0%e7%83%ad%e4%b8%8e%e8%83%bd%e9%87%8f%e5%90%b8%e6%94%b6%e5%a2%9e%e5%bc%ba" aria-label="4. 电子加热与能量吸收增强">4. 电子加热与能量吸收增强</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-34" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#proton-acceleration-via-high-power-laser-interactions-with-near-critical-density-foam-targets" aria-label="Proton acceleration via high-power laser interactions with near-critical-density foam targets">Proton acceleration via high-power laser interactions with near-critical-density foam targets</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-35" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-35" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-35" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e8%b4%a8%e5%ad%90%e8%83%bd%e9%87%8f%e4%b8%8e%e4%ba%a7%e9%a2%9d%e6%8f%90%e5%8d%87" aria-label="1. 质子能量与产额提升">1. 质子能量与产额提升</a></li>
-            <li>
-                <a href="#2-%e5%a4%9a%e9%9d%b6%e6%b3%95%e5%90%91%e9%9e%98%e5%b1%82%e5%8a%a0%e9%80%9fmulti-tnsa%e6%9c%ba%e5%88%b6" aria-label="2. 多靶法向鞘层加速（multi-TNSA）机制">2. 多靶法向鞘层加速（multi-TNSA）机制</a></li>
-            <li>
-                <a href="#3-%e5%a2%9e%e5%bc%ba%e6%bf%80%e5%85%89%e5%90%b8%e6%94%b6%e4%b8%8e%e8%83%bd%e9%87%8f%e8%80%a6%e5%90%88" aria-label="3. 增强激光吸收与能量耦合">3. 增强激光吸收与能量耦合</a></li>
-            <li>
-                <a href="#4-%e8%b4%a8%e5%ad%90%e6%9d%9f%e5%87%86%e7%9b%b4" aria-label="4. 质子束准直">4. 质子束准直</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-35" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#laser-focusing-equivalence-behavior-of-mass-limited-targets-in-laser-particle-acceleration" aria-label="Laser focusing equivalence behavior of mass-limited targets in laser particle acceleration">Laser focusing equivalence behavior of mass-limited targets in laser particle acceleration</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-36" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-36" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-36" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e8%b4%a8%e5%ad%90%e8%83%bd%e9%87%8f%e9%9a%8f%e9%9d%b6%e5%8f%82%e6%95%b0%e7%9a%84%e5%8f%98%e5%8c%96" aria-label="质子能量随靶参数的变化">质子能量随靶参数的变化</a></li>
-            <li>
-                <a href="#%e6%bf%80%e5%85%89%e8%81%9a%e7%84%a6%e7%ad%89%e6%95%88%e6%95%88%e5%ba%94" aria-label="激光聚焦等效效应">激光聚焦等效效应</a></li>
-            <li>
-                <a href="#%e8%a7%a3%e6%9e%90%e6%8e%a8%e5%af%bc%e6%9c%80%e4%bc%98%e5%9c%86%e7%9b%98%e5%8d%8a%e5%be%84" aria-label="解析推导最优圆盘半径">解析推导最优圆盘半径</a></li>
-            <li>
-                <a href="#%e7%94%b5%e5%ad%90%e5%af%86%e5%ba%a6%e6%bc%94%e5%8c%96%e4%b8%8e%e6%a8%aa%e5%90%91%e8%bf%90%e5%8a%a8" aria-label="电子密度演化与横向运动">电子密度演化与横向运动</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-36" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#spectral-phase-control-for-optimized-ionization-injection-in-laser-wakefield-acceleration" aria-label="Spectral phase control for optimized ionization injection in laser wakefield acceleration">Spectral phase control for optimized ionization injection in laser wakefield acceleration</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-37" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-37" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-37" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e8%b4%9d%e5%8f%b6%e6%96%af%e4%bc%98%e5%8c%96%e5%ae%9e%e7%8e%b0%e9%ab%98%e5%93%81%e8%b4%a8%e7%94%b5%e5%ad%90%e6%9d%9f" aria-label="1. 贝叶斯优化实现高品质电子束">1. 贝叶斯优化实现高品质电子束</a></li>
-            <li>
-                <a href="#2-pic%e6%a8%a1%e6%8b%9f%e9%aa%8c%e8%af%81%e4%b8%8e%e5%8f%82%e6%95%b0%e6%89%ab%e6%8f%8f" aria-label="2. PIC模拟验证与参数扫描">2. PIC模拟验证与参数扫描</a></li>
-            <li>
-                <a href="#3-%e6%ad%a3%e5%81%8f%e6%96%9c%e8%84%89%e5%86%b2%e5%a2%9e%e5%bc%ba%e5%b1%80%e5%9f%9f%e5%8c%96%e6%b3%a8%e5%85%a5%e7%9a%84%e7%89%a9%e7%90%86%e6%9c%ba%e5%88%b6" aria-label="3. 正偏斜脉冲增强局域化注入的物理机制">3. 正偏斜脉冲增强局域化注入的物理机制</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-37" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#differentiable-simulations-for-particle-tracking-in-accelerators-analysis-benchmarking-and-optimization" aria-label="Differentiable simulations for particle tracking in accelerators: Analysis, benchmarking, and optimization">Differentiable simulations for particle tracking in accelerators: Analysis, benchmarking, and optimization</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-38" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-38" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-38" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e6%a2%af%e5%ba%a6%e8%ae%a1%e7%ae%97%e7%b2%be%e5%ba%a6%e4%b8%8e%e4%b8%80%e8%87%b4%e6%80%a7" aria-label="梯度计算精度与一致性">梯度计算精度与一致性</a></li>
-            <li>
-                <a href="#%e8%ae%a1%e7%ae%97%e6%95%88%e7%8e%87%e5%af%b9%e6%af%94" aria-label="计算效率对比">计算效率对比</a></li>
-            <li>
-                <a href="#%e7%89%a9%e7%90%86%e8%a7%a3%e9%87%8a" aria-label="物理解释">物理解释</a></li>
-            <li>
-                <a href="#%e4%bc%98%e5%8c%96%e6%80%a7%e8%83%bd" aria-label="优化性能">优化性能</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-38" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#conical-coil-focusing-of-laser-plasma-accelerated-proton-beams-for-applications" aria-label="Conical coil focusing of laser-plasma accelerated proton beams for applications">Conical coil focusing of laser-plasma accelerated proton beams for applications</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-39" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-39" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-39" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e5%8f%8c%e8%9e%ba%e7%ba%bf%e7%ae%a1%e7%b3%bb%e7%bb%9f%e7%9a%84%e8%81%9a%e7%84%a6%e6%80%a7%e8%83%bd%e5%af%b9%e6%af%94" aria-label="1. 双螺线管系统的聚焦性能对比">1. 双螺线管系统的聚焦性能对比</a></li>
-            <li>
-                <a href="#2-%e4%bd%8e%e8%83%bd%e8%b4%a8%e5%ad%90%e7%9a%84%e7%89%b9%e6%ae%8a%e8%a1%8c%e4%b8%ba" aria-label="2. 低能质子的特殊行为">2. 低能质子的特殊行为</a></li>
-            <li>
-                <a href="#3-%e5%8f%91%e5%b0%84%e5%ba%a6%e4%b8%8e%e7%9b%b8%e7%a9%ba%e9%97%b4%e6%bc%94%e5%8c%96" aria-label="3. 发射度与相空间演化">3. 发射度与相空间演化</a></li>
-            <li>
-                <a href="#4-%e6%b0%b4%e9%9d%b6%e5%89%82%e9%87%8f%e6%b2%89%e7%a7%af%e4%b8%8e-flash-%e5%89%82%e9%87%8f%e7%8e%87%e9%aa%8c%e8%af%81" aria-label="4. 水靶剂量沉积与 FLASH 剂量率验证">4. 水靶剂量沉积与 FLASH 剂量率验证</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-39" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#proton-acceleration-associated-with-sheet-crossing-in-petawatt-laser-irradiated-nanometer-foils" aria-label="Proton Acceleration Associated with Sheet Crossing in Petawatt-Laser-Irradiated Nanometer Foils">Proton Acceleration Associated with Sheet Crossing in Petawatt-Laser-Irradiated Nanometer Foils</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-40" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-40" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-40" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c1%e8%b4%a8%e5%ad%90%e5%8a%a0%e9%80%9f%e6%80%a7%e8%83%bd%e4%b8%8e%e6%9c%80%e4%bc%98%e9%9d%b6%e5%8e%9a" aria-label="结果1：质子加速性能与最优靶厚">结果1：质子加速性能与最优靶厚</a></li>
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c2sheet-crossing%e6%9c%ba%e5%88%b6%e4%b8%8e%e8%b4%a8%e5%ad%90%e8%b5%b7%e6%ba%90" aria-label="结果2：Sheet crossing机制与质子起源">结果2：Sheet crossing机制与质子起源</a></li>
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c3%e8%83%bd%e9%87%8f%e6%a0%87%e5%ba%a6%e5%be%8b" aria-label="结果3：能量标度律">结果3：能量标度律</a></li>
-            <li>
-                <a href="#%e7%bb%93%e6%9e%9c4%e9%9d%b6%e8%ae%be%e8%ae%a1%e5%ae%9e%e7%8e%b0%e5%a4%9a%e8%83%bd%e9%87%8f%e6%9d%9f" aria-label="结果4：靶设计实现多能量束">结果4：靶设计实现多能量束</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-40" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#beam-realignment-with-emittance-preservation-in-a-plasma-wakefield-accelerator-stage" aria-label="Beam Realignment with Emittance Preservation in a Plasma Wakefield-Accelerator Stage">Beam Realignment with Emittance Preservation in a Plasma Wakefield-Accelerator Stage</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-41" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-41" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-41" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e9%a9%b1%e5%8a%a8%e6%9d%9f%e8%af%b1%e5%af%bc%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8%e7%9a%84%e5%88%86%e7%b1%bb%e4%b8%8e%e4%bd%9c%e7%94%a8n%e5%9c%a8--%e7%9a%84%e6%ac%a0%e8%81%9a%e7%84%a6%e5%8c%ba%e7%a6%bb%e5%ad%90%e6%9c%aa%e5%9c%a8-witness-%e6%9d%9f%e4%b9%8b%e5%89%8d%e5%88%b0%e8%be%be%e8%bd%b4%e7%ba%bf%e4%bd%86%e5%90%91%e8%bd%b4%e6%b1%87%e8%81%9a%e4%bd%bf%e8%bd%b4%e4%b8%8a%e7%a6%bb%e5%ad%90%e5%af%86%e5%ba%a6%e6%94%be%e5%a4%a7%e6%8f%90%e4%be%9b%e9%9d%9e%e7%ba%bf%e6%80%a7%e8%81%9a%e7%84%a6%e5%8a%9b%e4%b8%ba%e6%9d%9f%e6%b5%81%e5%86%8d%e5%87%86%e7%9b%b4%e5%88%9b%e9%80%a0%e6%9d%a1%e4%bb%b6%e8%bf%87%e8%81%9a%e7%84%a6%e5%8c%ba%e7%a6%bb%e5%ad%90%e5%9c%a8-witness-%e6%9d%9f%e5%89%8d%e5%b7%b2%e7%a9%bf%e8%bf%87%e8%bd%b4%e7%ba%bf%e5%bd%a2%e6%88%90%e6%9b%b4%e5%a4%8d%e6%9d%82%e7%9a%84%e6%a8%aa%e5%90%91%e7%bb%93%e6%9e%84nn-2-%e6%97%a0%e9%a9%b1%e5%8a%a8%e6%9d%9f%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8%e6%97%b6%e7%9a%84%e6%9d%9f%e6%b5%81%e8%a1%8c%e4%b8%ban%e4%bd%8e%e5%af%86%e5%ba%a6%e9%a9%b1%e5%8a%a8%e6%9d%9f%e4%b8%8d%e5%bc%95%e8%b5%b7%e6%98%be%e8%91%97%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8witness-%e6%9d%9f%e8%87%aa%e7%94%9f%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8%e8%99%bd%e6%8a%91%e5%88%b6-hosing%e4%bd%86%e6%9d%9f%e6%b5%81%e5%80%be%e6%96%9c%e7%bb%95%e5%a4%b4%e9%83%a8%e6%8c%af%e8%8d%a1%e6%8c%af%e5%b9%85%e7%94%b1%e5%a4%b4%e9%83%a8%e5%88%9d%e5%a7%8b%e5%81%8f%e7%a7%bb%e5%86%b3%e5%ae%9a%e8%8b%a5%e5%a4%b4%e9%83%a8%e6%9c%89%e5%81%8f%e7%a7%bb%e6%95%b4%e4%b8%aa%e6%9d%9f%e6%b5%81%e5%b0%86%e5%88%9a%e6%80%a7%e6%8c%af%e8%8d%a1%e5%af%bc%e8%87%b4%e6%8c%81%e7%bb%ad%e5%8f%91%e5%b0%84%e5%ba%a6%e5%a2%9e%e9%95%bfnn-3-%e9%a9%b1%e5%8a%a8%e6%9d%9f%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8%e5%ae%9e%e7%8e%b0%e5%86%8d%e5%87%86%e7%9b%b4%e5%8f%8a%e5%8f%91%e5%b0%84%e5%ba%a6%e4%bb%a3%e4%bb%b7n%e4%bd%bf%e7%94%a8%e8%be%83%e9%ab%98%e5%af%86%e5%ba%a6%e9%a9%b1%e5%8a%a8%e6%9d%9f%e5%9c%a8-witness-%e6%9d%9f%e5%a4%b4%e9%83%a8%e4%ba%a7%e7%94%9f%e7%ba%a6--%e7%9a%84%e7%a6%bb%e5%ad%90%e5%af%86%e5%ba%a6%e5%a4%b4%e9%83%a8%e7%94%b5%e5%ad%90%e5%9c%a8%e9%9d%9e%e7%ba%bf%e6%80%a7%e5%9c%ba%e4%b8%ad%e7%9b%b8%e6%b7%b7%e5%90%88%e7%9b%b8%e7%a9%ba%e9%97%b4%e5%af%86%e5%ba%a6%e6%bc%94%e5%8c%96%e8%a1%a8%e6%98%8e%e5%86%85%e5%b1%82%e7%b2%92%e5%ad%90-betatron-%e9%a2%91%e7%8e%87%e5%a2%9e%e5%a4%a7%e8%b4%a8%e5%bf%83%e6%8c%af%e8%8d%a1%e8%a2%ab%e9%98%bb%e5%b0%bc%e5%85%a8%e6%9d%9f%e9%87%8d%e6%96%b0%e5%af%b9%e9%bd%90%e9%a9%b1%e5%8a%a8%e6%9d%9f%e8%bd%b4%e7%ba%bf%e5%9c%a8%e6%97%a0%e6%96%9c%e5%9d%a1%e7%9a%84%e5%9d%87%e5%8c%80%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e4%b8%ad%e8%af%a5%e8%bf%87%e7%a8%8b%e9%80%a0%e6%88%90%e4%b8%8d%e5%8f%af%e6%8e%a5%e5%8f%97%e7%9a%84%e5%8f%91%e5%b0%84%e5%ba%a6%e5%a2%9e%e9%95%bfnn-4-%e5%87%86%e7%bb%9d%e7%83%ad%e6%96%9c%e5%9d%a1%e7%bb%93%e5%90%88%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8%e7%9a%84%e5%ae%8c%e5%85%a8%e5%8c%b9%e9%85%8d%e4%b8%8e%e5%87%86%e7%9b%b4n%e9%87%87%e7%94%a8%e5%9b%be-4a-%e6%89%80%e7%a4%ba%e7%9a%84%e5%af%86%e5%ba%a6%e6%96%9c%e5%9d%a1%e5%8f%8c%e6%9d%9f%e4%bb%8e%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%85%a5%e5%8f%a3%e4%bb%a5%e5%8c%b9%e9%85%8d%e7%9a%84--%e5%92%8c--%e6%b3%a8%e5%85%a5%e6%96%9c%e5%9d%a1%e5%86%85%e6%9d%9f%e6%96%91%e9%80%90%e6%b8%90%e5%87%8f%e5%b0%8f%e7%a6%bb%e5%ad%90%e8%bf%90%e5%8a%a8%e8%a2%ab%e7%bb%9d%e7%83%ad%e8%a7%a6%e5%8f%91%e6%9d%9f%e6%b5%81%e9%80%82%e5%ba%94%e9%9d%9e%e7%ba%bf%e6%80%a7%e5%8a%9b%e5%88%9d%e5%a7%8b%e5%81%8f%e7%a7%bb--%e5%9c%a8%e6%96%9c%e5%9d%a1%e6%9c%ab%e7%ab%af%e8%a2%ab%e5%8e%8b%e7%bc%a9-95%e5%b9%b3%e5%8f%b0%e5%86%85%e8%bf%9b%e4%b8%80%e6%ad%a5%e6%b6%88%e9%99%a4%e6%9c%80%e7%bb%88%e8%b4%a8%e5%bf%83%e5%81%8f%e7%a7%bb-%e5%bd%92%e4%b8%80%e5%8c%96%e5%8f%91%e5%b0%84%e5%ba%a6%e5%a2%9e%e9%95%bf%e4%bb%85-44%e8%83%bd%e9%87%8f%e5%88%86%e6%95%a3-1%e9%a9%b1%e5%8a%a8%e6%9d%9f%e8%87%b3-witness-%e6%9d%9f%e8%83%bd%e9%87%8f%e4%bc%a0%e8%be%93%e6%95%88%e7%8e%87-50%e8%af%a5%e6%96%b9%e6%a1%88%e5%90%8c%e6%97%b6%e5%ae%9e%e7%8e%b0%e4%ba%86%e6%9d%9f%e6%b5%81%e5%87%86%e7%9b%b4%e4%bd%8e%e5%8f%91%e5%b0%84%e5%ba%a6%e5%92%8c%e8%83%bd%e9%87%8f%e5%88%86%e6%95%a3%e5%a2%9e%e9%95%bf%e5%8f%8a%e9%ab%98%e6%95%88%e7%8e%87" aria-label="1. 驱动束诱导离子运动的分类与作用\n在 \(n_{b,d}/n_0=100\) 的“欠聚焦”区，离子未在 witness 束之前到达轴线，但向轴汇聚使轴上离子密度放大（\(A_0\approx10\)），提供非线性聚焦力，为束流再准直创造条件。过聚焦区（\(n_{b,d}/n_0=570\)）离子在 witness 束前已穿过轴线，形成更复杂的横向结构。\n\n## 2. 无驱动束离子运动时的束流行为\n低密度驱动束（\(n_{b,d}/n_0=5.9\)）不引起显著离子运动。witness 束自生离子运动虽抑制 hosing，但束流倾斜绕头部振荡，振幅由头部初始偏移决定。若头部有偏移，整个束流将刚性振荡，导致持续发射度增长。\n\n## 3. 驱动束离子运动实现再准直及发射度代价\n使用较高密度驱动束（\(n_{b,d}/n_0=100\)）在 witness 束头部产生约 \(A_0\approx10\) 的离子密度。头部电子在非线性场中相混合（相空间密度演化表明内层粒子 betatron 频率增大），质心振荡被阻尼，全束重新对齐驱动束轴线。在无斜坡的均匀等离子体中，该过程造成不可接受的发射度增长。\n\n## 4. 准绝热斜坡结合离子运动的完全匹配与准直\n采用图 4(a) 所示的密度斜坡，双束从等离子体入口以匹配的 \(\alpha_{mi}\) 和 \(\sigma_{mi}\) 注入。斜坡内束斑逐渐减小，离子运动被绝热触发，束流适应非线性力。初始偏移 \(x_{bi}=\sigma_m\) 在斜坡末端被压缩 95%，平台内进一步消除，最终质心偏移 \(|x_b/\sigma_m|=0.01\)。归一化发射度增长仅 4.4%，能量分散 &lt;1%，驱动束至 witness 束能量传输效率 50%。该方案同时实现了束流准直、低发射度和能量分散增长及高效率。">1. 驱动束诱导离子运动的分类与作用\n在 \(n_{b,d}/n_0=100\) 的“欠聚焦”区，离子未在 witness 束之前到达轴线，但向轴汇聚使轴上离子密度放大（\(A_0\approx10\)），提供非线性聚焦力，为束流再准直创造条件。过聚焦区（\(n_{b,d}/n_0=570\)）离子在 witness 束前已穿过轴线，形成更复杂的横向结构。\n\n## 2. 无驱动束离子运动时的束流行为\n低密度驱动束（\(n_{b,d}/n_0=5.9\)）不引起显著离子运动。witness 束自生离子运动虽抑制 hosing，但束流倾斜绕头部振荡，振幅由头部初始偏移决定。若头部有偏移，整个束流将刚性振荡，导致持续发射度增长。\n\n## 3. 驱动束离子运动实现再准直及发射度代价\n使用较高密度驱动束（\(n_{b,d}/n_0=100\)）在 witness 束头部产生约 \(A_0\approx10\) 的离子密度。头部电子在非线性场中相混合（相空间密度演化表明内层粒子 betatron 频率增大），质心振荡被阻尼，全束重新对齐驱动束轴线。在无斜坡的均匀等离子体中，该过程造成不可接受的发射度增长。\n\n## 4. 准绝热斜坡结合离子运动的完全匹配与准直\n采用图 4(a) 所示的密度斜坡，双束从等离子体入口以匹配的 \(\alpha_{mi}\) 和 \(\sigma_{mi}\) 注入。斜坡内束斑逐渐减小，离子运动被绝热触发，束流适应非线性力。初始偏移 \(x_{bi}=\sigma_m\) 在斜坡末端被压缩 95%，平台内进一步消除，最终质心偏移 \(|x_b/\sigma_m|=0.01\)。归一化发射度增长仅 4.4%，能量分散 &lt;1%，驱动束至 witness 束能量传输效率 50%。该方案同时实现了束流准直、低发射度和能量分散增长及高效率。</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-41" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#surface-wave-electron-acceleration-from-flat-foils-at-parallel-laser-incidence" aria-label="Surface Wave Electron Acceleration from Flat Foils at Parallel Laser Incidence">Surface Wave Electron Acceleration from Flat Foils at Parallel Laser Incidence</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-42" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-42" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-42" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e5%ae%9e%e9%aa%8c%e7%bb%93%e6%9e%9c" aria-label="主要实验结果">主要实验结果</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-42" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#greater-than-1000-fold-gain-in-a-free-electron-laser-driven-by-a-laser-plasma-accelerator-with-high-reliability" aria-label="Greater than 1000-fold Gain in a Free-Electron Laser Driven by a Laser-Plasma Accelerator with High Reliability">Greater than 1000-fold Gain in a Free-Electron Laser Driven by a Laser-Plasma Accelerator with High Reliability</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-43" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-43" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-43" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e6%8c%87%e6%95%b0%e5%a2%9e%e7%9b%8a%e4%b8%8e%e5%a2%9e%e7%9b%8a%e9%95%bf%e5%ba%a6%e6%b5%8b%e9%87%8f%e6%a8%a1%e5%bc%8fi" aria-label="1. 指数增益与增益长度测量（模式i）">1. 指数增益与增益长度测量（模式i）</a></li>
-            <li>
-                <a href="#2-%e9%ab%98%e5%8f%af%e9%9d%a0%e6%80%a7%e8%bf%90%e8%a1%8c%e6%a8%a1%e5%bc%8fii" aria-label="2. 高可靠性运行（模式ii）">2. 高可靠性运行（模式ii）</a></li>
-            <li>
-                <a href="#3-sase%e6%a8%a1%e5%bc%8f%e7%bb%9f%e8%ae%a1%e7%89%b9%e6%80%a7" aria-label="3. SASE模式统计特性">3. SASE模式统计特性</a></li>
-            <li>
-                <a href="#4-%e5%a2%9e%e7%9b%8a%e9%a5%b1%e5%92%8c%e5%8f%97%e9%99%90%e4%b8%8e%e6%b3%a2%e8%8d%a1%e5%99%a8%e5%a4%b1%e5%87%86%e5%88%86%e6%9e%90" aria-label="4. 增益饱和受限与波荡器失准分析">4. 增益饱和受限与波荡器失准分析</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-43" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#towards-the-generation-of-petawatt-near-infrared-few-cycle-light-pulses-via-forward-raman-amplification-in-plasma" aria-label="Towards the Generation of Petawatt Near-Infrared Few-Cycle Light Pulses via Forward Raman Amplification in Plasma">Towards the Generation of Petawatt Near-Infrared Few-Cycle Light Pulses via Forward Raman Amplification in Plasma</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-44" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-44" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-44" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#1-%e7%ba%bf%e6%80%a7%e5%89%8d%e5%90%91%e6%8b%89%e6%9b%bc%e6%94%be%e5%a4%a7%e5%a2%9e%e9%95%bf%e7%8e%87%e4%b8%8e%e5%af%86%e5%ba%a6%e4%be%9d%e8%b5%96" aria-label="1. 线性前向拉曼放大增长率与密度依赖">1. 线性前向拉曼放大增长率与密度依赖</a></li>
-            <li>
-                <a href="#2-%e9%9d%9e%e7%ba%bf%e6%80%a7%e9%98%b6%e6%ae%b5%e7%9a%84%e8%b6%85%e8%be%90%e5%b0%84%e6%a0%87%e5%ba%a6%e5%be%8b%e4%b8%8e--%e8%84%89%e5%86%b2%e6%bc%94%e5%8c%96" aria-label="2. 非线性阶段的超辐射标度律与 \(\pi\) 脉冲演化">2. 非线性阶段的超辐射标度律与 \(\pi\) 脉冲演化</a></li>
-            <li>
-                <a href="#3-1d-pic-%e6%a8%a1%e6%8b%9f%e9%aa%8c%e8%af%81%e9%ab%98%e5%bc%ba%e5%ba%a6%e6%94%be%e5%a4%a7%e4%b8%8e%e8%87%aa%e5%8e%8b%e7%bc%a9" aria-label="3. 1D PIC 模拟验证高强度放大与自压缩">3. 1D PIC 模拟验证高强度放大与自压缩</a></li>
-            <li>
-                <a href="#4-%e5%8f%82%e6%95%b0%e4%be%9d%e8%b5%96%e6%80%a7%e4%b8%8e-3d-%e6%a8%a1%e6%8b%9f%e9%aa%8c%e8%af%81" aria-label="4. 参数依赖性与 3D 模拟验证">4. 参数依赖性与 3D 模拟验证</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-44" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#efficient-six-dimensional-phase-space-reconstructions-from-experimental-measurements-using-generative-machine-learning" aria-label="Efficient six-dimensional phase space reconstructions from experimental measurements using generative machine learning">Efficient six-dimensional phase space reconstructions from experimental measurements using generative machine learning</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-45" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-45" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-45" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e5%90%88%e6%88%90%e9%ab%98%e6%96%af%e6%9d%9f%e9%87%8d%e5%bb%ba" aria-label="合成高斯束重建">合成高斯束重建</a></li>
-            <li>
-                <a href="#%e5%90%88%e6%88%90%e9%9d%9e%e7%ba%bf%e6%80%a7%e6%9d%9f%e9%87%8d%e5%bb%ba" aria-label="合成非线性束重建">合成非线性束重建</a></li>
-            <li>
-                <a href="#%e5%8f%91%e5%b0%84%e5%ba%a6%e4%ba%a4%e6%8d%a2eex%e7%b1%bb%e6%9d%9f%e9%87%8d%e5%bb%ba" aria-label="发射度交换（EEX）类束重建">发射度交换（EEX）类束重建</a></li>
-            <li>
-                <a href="#%e5%ae%9e%e9%aa%8c%e6%bc%94%e7%a4%ba" aria-label="实验演示">实验演示</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-45" aria-label="要点总结">要点总结</a></li></ul>
-            </li>
-            <li>
-                <a href="#beam-shaping-using-an-ultrahigh-vacuum-multileaf-collimator-and-emittance-exchange-beamline" aria-label="Beam shaping using an ultrahigh vacuum multileaf collimator and emittance exchange beamline">Beam shaping using an ultrahigh vacuum multileaf collimator and emittance exchange beamline</a><ul>
-                    
-            <li>
-                <a href="#%e7%a0%94%e7%a9%b6%e5%8a%a8%e6%9c%ba%e4%b8%8e%e7%9b%ae%e6%a0%87-46" aria-label="研究动机与目标">研究动机与目标</a></li>
-            <li>
-                <a href="#%e5%85%b3%e9%94%ae%e6%96%b9%e6%b3%95%e4%b8%8e%e8%ae%be%e7%bd%ae-46" aria-label="关键方法与设置">关键方法与设置</a></li>
-            <li>
-                <a href="#%e4%b8%bb%e8%a6%81%e7%bb%93%e6%9e%9c%e4%b8%8e%e7%89%a9%e7%90%86%e5%86%85%e6%b6%b5-46" aria-label="主要结果与物理内涵">主要结果与物理内涵</a><ul>
-                    
-            <li>
-                <a href="#%e6%a8%a1%e6%8b%9f%e9%aa%8c%e8%af%81%e7%a6%bb%e6%95%a3%e5%8f%b6%e7%89%87%e4%b8%8e%e5%85%89%e6%bb%91%e6%8e%a9%e6%a8%a1%e7%9a%84%e5%8a%9f%e8%83%bd%e7%ad%89%e6%95%88%e6%80%a7" aria-label="模拟验证离散叶片与光滑掩模的功能等效性">模拟验证离散叶片与光滑掩模的功能等效性</a></li>
-            <li>
-                <a href="#%e5%ae%9e%e9%aa%8c%e4%ba%a7%e7%94%9f%e5%9b%9b%e7%a7%8d%e5%85%b8%e5%9e%8b%e7%ba%b5%e5%90%91%e6%9d%9f%e6%b5%81%e5%89%96%e9%9d%a2" aria-label="实验产生四种典型纵向束流剖面">实验产生四种典型纵向束流剖面</a></li>
-            <li>
-                <a href="#%e5%8a%a8%e6%80%81%e5%8f%af%e9%87%8d%e6%9e%84%e6%80%a7%e5%bc%80%e8%be%9f%e5%9c%a8%e7%ba%bf%e4%bc%98%e5%8c%96%e6%96%b0%e8%8c%83%e5%bc%8f" aria-label="动态可重构性开辟在线优化新范式">动态可重构性开辟在线优化新范式</a></li></ul>
-            </li>
-            <li>
-                <a href="#%e8%a6%81%e7%82%b9%e6%80%bb%e7%bb%93-46" aria-label="要点总结">要点总结</a>
-            </li>
-        </ul>
-        </li>
-        </ul>
-        </li>
-        </ul>
+        <p class="toc-heading">Contents</p>
+        <ul><li>
+                    <a href="#longitudinally-resolved-measurement-of-energy-transfer-efficiency-in-a-plasma-wakefield-accelerator" aria-label="Longitudinally resolved measurement of energy-transfer efficiency in a plasma-wakefield accelerator">Longitudinally resolved measurement of energy-transfer efficiency in a plasma-wakefield accelerator</a>
+                </li><li>
+                    <a href="#synthetic-optical-imaging-in-picongpu" aria-label="Synthetic optical imaging in PIConGPU">Synthetic optical imaging in PIConGPU</a>
+                </li><li>
+                    <a href="#longitudinal-dynamics-of-extreme-plasma-based-compression-of-electron-beams" aria-label="Longitudinal dynamics of extreme plasma-based compression of electron beams">Longitudinal dynamics of extreme plasma-based compression of electron beams</a>
+                </li><li>
+                    <a href="#collider-quality-electron-bunches-from-an-all-optical-plasma-photoinjector" aria-label="Collider-quality electron bunches from an all-optical plasma photoinjector">Collider-quality electron bunches from an all-optical plasma photoinjector</a>
+                </li><li>
+                    <a href="#a-simple-yet-high-performance-position-sensitive-detector-with-readout-electronics" aria-label="A simple yet high-performance position-sensitive detector with readout electronics">A simple yet high-performance position-sensitive detector with readout electronics</a>
+                </li><li>
+                    <a href="#sparc_lab-facility-for-advanced-acceleration-and-radiation-experiments" aria-label="SPARC_LAB facility for advanced acceleration and radiation experiments">SPARC_LAB facility for advanced acceleration and radiation experiments</a>
+                </li><li>
+                    <a href="#%e6%a0%b8%e5%bf%83%e9%a9%b1%e5%8a%a8%e7%b3%bb%e7%bb%9f" aria-label="核心驱动系统">核心驱动系统</a>
+                </li><li>
+                    <a href="#%e7%ad%89%e7%a6%bb%e5%ad%90%e4%bd%93%e5%8a%a0%e9%80%9f%e5%b9%b3%e5%8f%b0" aria-label="等离子体加速平台">等离子体加速平台</a>
+                </li><li>
+                    <a href="#%e5%85%88%e8%bf%9b%e8%af%8a%e6%96%ad%e7%b3%bb%e7%bb%9f" aria-label="先进诊断系统">先进诊断系统</a>
+                </li><li>
+                    <a href="#%e7%94%a8%e6%88%b7%e6%9d%9f%e7%ba%bf" aria-label="用户束线">用户束线</a>
+                </li><li>
+                    <a href="#laser-plasma-based-gamma-ray-studies-using-micro-structured-targets" aria-label="Laser plasma based gamma-ray studies using micro-structured targets">Laser plasma based gamma-ray studies using micro-structured targets</a>
+                </li><li>
+                    <a href="#strong-field-ionization-and-acceleration-of-heavy-ions-in-the-interaction-of-ultraintense-laser-pulses-with-targets" aria-label="Strong-field ionization and acceleration of heavy ions in the interaction of ultraintense laser pulses with targets">Strong-field ionization and acceleration of heavy ions in the interaction of ultraintense laser pulses with targets</a>
+                </li><li>
+                    <a href="#laser-field-reconstruction-for-the-modeling-of-laser-plasma-interaction-in-cylindrical-geometry" aria-label="Laser field reconstruction for the modeling of laser-plasma interaction in cylindrical geometry">Laser field reconstruction for the modeling of laser-plasma interaction in cylindrical geometry</a>
+                </li><li>
+                    <a href="#spectral-deconvolution-without-the-deconvolution-extracting-temperature-from-x-ray-thomson-scattering-spectra-without-the-source-and-instrument-function" aria-label="Spectral deconvolution without the deconvolution: Extracting temperature from x-ray Thomson scattering spectra without the source-and-instrument function">Spectral deconvolution without the deconvolution: Extracting temperature from x-ray Thomson scattering spectra without the source-and-instrument function</a>
+                </li><li>
+                    <a href="#effects-of-realistic-laser-intensity-and-phase-distribution-on-high-charge-laser-wakefield-acceleration" aria-label="Effects of realistic laser intensity and phase distribution on high-charge laser wakefield acceleration">Effects of realistic laser intensity and phase distribution on high-charge laser wakefield acceleration</a>
+                </li><li>
+                    <a href="#amplification-and-measurement-of-sub-degree-faraday-rotation-based-on-fresnel-reflection-and-division-of-focal-plane-polarimeters" aria-label="Amplification and measurement of sub-degree Faraday rotation based on Fresnel reflection and division-of-focal-plane polarimeters">Amplification and measurement of sub-degree Faraday rotation based on Fresnel reflection and division-of-focal-plane polarimeters</a>
+                </li><li>
+                    <a href="#a-note-on-thermal-effects-in-non-linear-models-for-plasma-based-acceleration" aria-label="A note on thermal effects in non-linear models for plasma-based acceleration">A note on thermal effects in non-linear models for plasma-based acceleration</a>
+                </li><li>
+                    <a href="#data-model-guided-framework-for-systemic-emittance-minimization-in-high-brightness-photoinjectors" aria-label="Data-model-guided framework for systemic emittance minimization in high-brightness photoinjectors">Data-model-guided framework for systemic emittance minimization in high-brightness photoinjectors</a>
+                </li><li>
+                    <a href="#plasma-discharge-undulator-concept-theory-and-numerical-study" aria-label="Plasma discharge undulator: Concept, theory, and numerical study">Plasma discharge undulator: Concept, theory, and numerical study</a>
+                </li><li>
+                    <a href="#modular-quadrupole-array-capture-line-for-plasma-accelerated-electrons" aria-label="Modular quadrupole array capture line for plasma-accelerated electrons">Modular quadrupole array capture line for plasma-accelerated electrons</a>
+                </li><li>
+                    <a href="#laser-driven-x-ray-radiation-from-nanoarraygas-hybrid-plasma-target" aria-label="Laser-driven x-ray radiation from nanoarray–gas hybrid plasma target">Laser-driven x-ray radiation from nanoarray–gas hybrid plasma target</a>
+                </li><li>
+                    <a href="#theory-of-beam-driven-nonlinear-plasma-wake-and-interior-waves" aria-label="Theory of beam-driven nonlinear plasma wake and interior waves">Theory of beam-driven nonlinear plasma wake and interior waves</a>
+                </li><li>
+                    <a href="#over-8-hours-of-continuous-operation-of-a-free-electron-laser-driven-by-a-laser-plasma-accelerator" aria-label="Over 8 hours of continuous operation of a free-electron laser driven by a laser-plasma accelerator">Over 8 hours of continuous operation of a free-electron laser driven by a laser-plasma accelerator</a>
+                </li><li>
+                    <a href="#precision-alignment-and-tolerance-of-a-plasma-wakefield-accelerator-in-a-laser-ionized-plasma-source" aria-label="Precision alignment and tolerance of a plasma wakefield accelerator in a laser-ionized plasma source">Precision alignment and tolerance of a plasma wakefield accelerator in a laser-ionized plasma source</a>
+                </li><li>
+                    <a href="#beam-transverse-dynamics-in-laser-plasma-accelerators" aria-label="Beam transverse dynamics in laser-plasma accelerators">Beam transverse dynamics in laser-plasma accelerators</a>
+                </li><li>
+                    <a href="#thomson-scattering-with-gain" aria-label="Thomson Scattering with Gain">Thomson Scattering with Gain</a>
+                </li><li>
+                    <a href="#all-optically-controllable-electron-and-x-ray-sources-from-microchannel-guided-direct-laser-acceleration" aria-label="All-optically controllable electron and X-ray sources from microchannel-guided direct laser acceleration">All-optically controllable electron and X-ray sources from microchannel-guided direct laser acceleration</a>
+                </li><li>
+                    <a href="#pushing-the-frontiers-of-light-magnetized-plasma-lenses-and-chirp-tailoring-for-extreme-intensities" aria-label="Pushing the frontiers of light: magnetized plasma lenses and chirp tailoring for extreme intensities">Pushing the frontiers of light: magnetized plasma lenses and chirp tailoring for extreme intensities</a>
+                </li><li>
+                    <a href="#machine-learning-based-closed-orbit-correction-for-steady-state-microbunching-storage-ring" aria-label="Machine learning based closed orbit correction for steady state microbunching storage ring">Machine learning based closed orbit correction for steady state microbunching storage ring</a>
+                </li><li>
+                    <a href="#development-of-radiation-tolerant-beam-imaging-via-multimode-fiber-and-synthetic-data-driven-machine-learning" aria-label="Development of radiation-tolerant beam imaging via multimode fiber and synthetic data-driven machine learning">Development of radiation-tolerant beam imaging via multimode fiber and synthetic data-driven machine learning</a>
+                </li><li>
+                    <a href="#efficient-generation-of-a-100-nc-electron-beam-via-self-mode-transition-from-lwfa-to-pwfa" aria-label="Efficient generation of a 100 nC electron beam via self-mode transition from LWFA to PWFA">Efficient generation of a 100 nC electron beam via self-mode transition from LWFA to PWFA</a>
+                </li><li>
+                    <a href="#injection-and-acceleration-of-electrons-by-radially-polarized-laser-pulses-in-a-plasma-channel" aria-label="Injection and acceleration of electrons by radially polarized laser pulses in a plasma channel">Injection and acceleration of electrons by radially polarized laser pulses in a plasma channel</a>
+                </li><li>
+                    <a href="#laguerregaussian-pulses-for-spin-polarized-ion-beam-acceleration" aria-label="Laguerre–Gaussian pulses for spin-polarized ion beam acceleration">Laguerre–Gaussian pulses for spin-polarized ion beam acceleration</a>
+                </li><li>
+                    <a href="#limitations-of-emittance-and-source-size-measurement-of-laser-accelerated-electron-beams-using-the-pepper-pot-mask-method" aria-label="Limitations of emittance and source size measurement of laser-accelerated electron beams using the pepper-pot mask method">Limitations of emittance and source size measurement of laser-accelerated electron beams using the pepper-pot mask method</a>
+                </li><li>
+                    <a href="#customized-bayesian-optimization-for-efficient-beam-tuning-at-the-facility-for-rare-isotope-beams" aria-label="Customized Bayesian optimization for efficient beam tuning at the facility for rare isotope beams">Customized Bayesian optimization for efficient beam tuning at the facility for rare isotope beams</a>
+                </li><li>
+                    <a href="#broadband-laser-absorption-study-based-on-radiochromic-film-combined-with-fiber-optic-probes-at-the-low-coherence-kunwu-laser-facility" aria-label="Broadband laser absorption study based on radiochromic film combined with fiber-optic probes at the low-coherence Kunwu laser facility">Broadband laser absorption study based on radiochromic film combined with fiber-optic probes at the low-coherence Kunwu laser facility</a>
+                </li><li>
+                    <a href="#study-of-fully-coupled-three-dimensional-envelope-instability-using-automatic-differentiation" aria-label="Study of fully coupled three-dimensional envelope instability using automatic differentiation">Study of fully coupled three-dimensional envelope instability using automatic differentiation</a>
+                </li><li>
+                    <a href="#nanometer-scale-proton-focusing-via-density-gradient-induced-intrinsic-focusing-electric-fields" aria-label="Nanometer-scale proton focusing via density-gradient-induced intrinsic focusing electric fields">Nanometer-scale proton focusing via density-gradient-induced intrinsic focusing electric fields</a>
+                </li><li>
+                    <a href="#alternative-mechanism-to-accelerate-ions-from-magnetized-thin-foil-using-standing-whistler-wave" aria-label="Alternative mechanism to accelerate ions from magnetized thin foil using standing whistler wave">Alternative mechanism to accelerate ions from magnetized thin foil using standing whistler wave</a>
+                </li><li>
+                    <a href="#proton-acceleration-via-high-power-laser-interactions-with-near-critical-density-foam-targets" aria-label="Proton acceleration via high-power laser interactions with near-critical-density foam targets">Proton acceleration via high-power laser interactions with near-critical-density foam targets</a>
+                </li><li>
+                    <a href="#laser-focusing-equivalence-behavior-of-mass-limited-targets-in-laser-particle-acceleration" aria-label="Laser focusing equivalence behavior of mass-limited targets in laser particle acceleration">Laser focusing equivalence behavior of mass-limited targets in laser particle acceleration</a>
+                </li><li>
+                    <a href="#spectral-phase-control-for-optimized-ionization-injection-in-laser-wakefield-acceleration" aria-label="Spectral phase control for optimized ionization injection in laser wakefield acceleration">Spectral phase control for optimized ionization injection in laser wakefield acceleration</a>
+                </li><li>
+                    <a href="#differentiable-simulations-for-particle-tracking-in-accelerators-analysis-benchmarking-and-optimization" aria-label="Differentiable simulations for particle tracking in accelerators: Analysis, benchmarking, and optimization">Differentiable simulations for particle tracking in accelerators: Analysis, benchmarking, and optimization</a>
+                </li><li>
+                    <a href="#conical-coil-focusing-of-laser-plasma-accelerated-proton-beams-for-applications" aria-label="Conical coil focusing of laser-plasma accelerated proton beams for applications">Conical coil focusing of laser-plasma accelerated proton beams for applications</a>
+                </li><li>
+                    <a href="#proton-acceleration-associated-with-sheet-crossing-in-petawatt-laser-irradiated-nanometer-foils" aria-label="Proton Acceleration Associated with Sheet Crossing in Petawatt-Laser-Irradiated Nanometer Foils">Proton Acceleration Associated with Sheet Crossing in Petawatt-Laser-Irradiated Nanometer Foils</a>
+                </li><li>
+                    <a href="#beam-realignment-with-emittance-preservation-in-a-plasma-wakefield-accelerator-stage" aria-label="Beam Realignment with Emittance Preservation in a Plasma Wakefield-Accelerator Stage">Beam Realignment with Emittance Preservation in a Plasma Wakefield-Accelerator Stage</a>
+                </li><li>
+                    <a href="#surface-wave-electron-acceleration-from-flat-foils-at-parallel-laser-incidence" aria-label="Surface Wave Electron Acceleration from Flat Foils at Parallel Laser Incidence">Surface Wave Electron Acceleration from Flat Foils at Parallel Laser Incidence</a>
+                </li><li>
+                    <a href="#greater-than-1000-fold-gain-in-a-free-electron-laser-driven-by-a-laser-plasma-accelerator-with-high-reliability" aria-label="Greater than 1000-fold Gain in a Free-Electron Laser Driven by a Laser-Plasma Accelerator with High Reliability">Greater than 1000-fold Gain in a Free-Electron Laser Driven by a Laser-Plasma Accelerator with High Reliability</a>
+                </li><li>
+                    <a href="#towards-the-generation-of-petawatt-near-infrared-few-cycle-light-pulses-via-forward-raman-amplification-in-plasma" aria-label="Towards the Generation of Petawatt Near-Infrared Few-Cycle Light Pulses via Forward Raman Amplification in Plasma">Towards the Generation of Petawatt Near-Infrared Few-Cycle Light Pulses via Forward Raman Amplification in Plasma</a>
+                </li><li>
+                    <a href="#efficient-six-dimensional-phase-space-reconstructions-from-experimental-measurements-using-generative-machine-learning" aria-label="Efficient six-dimensional phase space reconstructions from experimental measurements using generative machine learning">Efficient six-dimensional phase space reconstructions from experimental measurements using generative machine learning</a>
+                </li><li>
+                    <a href="#beam-shaping-using-an-ultrahigh-vacuum-multileaf-collimator-and-emittance-exchange-beamline" aria-label="Beam shaping using an ultrahigh vacuum multileaf collimator and emittance exchange beamline">Beam shaping using an ultrahigh vacuum multileaf collimator and emittance exchange beamline</a>
+                </li></ul>
     </div>
 </details>
 <script>
@@ -1252,7 +319,7 @@
 
     const onScroll = () => {
         const scrollY = window.scrollY;
-        const offset = 120; 
+        const offset = 120;
         let newIdx = 0;
         for (let i = headings.length - 1; i >= 0; i--) {
             if (headings[i] && headings[i].offsetTop - offset <= scrollY) {
@@ -1263,7 +330,6 @@
         setActive(newIdx);
     };
 
-    
     let ticking = false;
     window.addEventListener('scroll', () => {
         if (!ticking) {
