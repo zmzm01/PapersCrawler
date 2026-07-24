@@ -36,6 +36,10 @@ logging.basicConfig(
 )
 
 from pipeline.runner import run_weekly
+from config import _check_mineru_token
+
+# 在 logging.basicConfig 配置完成后再检测 token，避免 warning 偷装默认 handler
+_check_mineru_token()
 
 if __name__ == "__main__":
     run_weekly()

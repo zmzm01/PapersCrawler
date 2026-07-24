@@ -595,7 +595,10 @@ def reload_config():
         _apply_settings(_settings)
 
 
-_check_mineru_token()
+# 注意：_check_mineru_token() 不再在模块导入时自动调用。
+# 原因：logging.warning/error 会触发 logging.basicConfig() 偷装默认 handler，
+# 导致入口脚本后续的 logging.basicConfig(...) 失效（root 已有 handler 时为空操作）。
+# 入口脚本必须在 logging.basicConfig(...) 之后显式调用 _check_mineru_token()。
 
 
 # ==================================================================
