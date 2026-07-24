@@ -121,6 +121,22 @@ class CrossrefClient:
         )
 
     # ---------------------------------------------------------
+    # 上下文管理器支持（自动关闭 Session）
+    # ---------------------------------------------------------
+
+    def close(self) -> None:
+        """关闭 HTTP Session，释放连接池资源。"""
+        if self.session is not None:
+            self.session.close()
+            self.session = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    # ---------------------------------------------------------
     # Public API（公开方法）
     # ---------------------------------------------------------
 
