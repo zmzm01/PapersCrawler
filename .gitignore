@@ -20,10 +20,9 @@ run_hugo_deploy.sh
 # SMTP 配置文件（已合并到 .env）
 configs/email.yaml
 
-# 评审记录
+# 评审记录 & AI 辅助文件（本地开发用，不提交）
 docs/reviews/
-.slim/deepwork/
-!.slim/deepwork/
-!.slim/deepwork/**
+.slim/
+AGENTS.md
 site/
 site/public/
