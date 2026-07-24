@@ -172,7 +172,8 @@ llm:
   summary:   { model: deepseek-v4-pro, thinking: enabled }
   concurrent_max: 100
 pipeline:
-  crossref_lookback_days: 1     # A-CR 回溯天数
+  crossref_lookback_days: 1     # A-CR 日常回溯天数
+  crossref_lookback_days_max: 7 # A-CR 故障补漏上限（智能回溯）
   max_papers_per_phase: 0       # 0 = 不限制
   skip_nature_news: true
   prefetch_non_research: true   # 浏览器前过滤非论文
@@ -234,6 +235,19 @@ python tools/fix_summary_formulas.py --dry-run --verbose  # 预览模式
 python tools/fix_summary_formulas.py --doi <doi>          # 单篇
 python tools/fix_summary_formulas.py --force              # 强制修复所有字段
 ```
+
+### 手动 PDF 导入
+
+当 Phase E2 因反爬/网络问题反复下载失败时，可手动下载 PDF 后导入，下次调度自动复用、跳过下载直接进入 MinerU 解析。
+
+```bash
+python tools/import_local_pdf.py --doi <DOI> --pdf <PATH_TO_PDF>
+# 例：python tools/import_local_pdf.py --doi 10.1038/s41567-026-03184-9 --pdf ~/Downloads/paper.pdf
+```
+
+- 校验 `%PDF-` 头部后落盘到 `data/mineru_output/<safe_doi>/paper.pdf`
+- 重置 DB 中该 DOI 的 `mineru_parse_status` 为 `pending`，下次 daily 调度自动处理
+- 退出码：1=文件不存在/异常，2=非 PDF 头部，3=DB 无该 DOI 记录（PDF 已落盘，需先跑 Phase A-E 让论文入库）
 
 ### 诊断
 
