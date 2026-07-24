@@ -4,6 +4,12 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **CrossRef 智能回溯（故障补漏）** | 新增 `CFG.CROSSREF_LOOKBACK_DAYS_MAX`（默认 7 天），`phase_a_crossref` 启动时读 `data/state/last_run.json`（gitignored）决策实际回溯窗口：`max(1, today - last_successful_run)`，封顶 max。首次运行（无 JSON）退化为默认 1 天，JSON 损坏也降级为默认。A-CR 阶段执行完所有期刊后原子写入当日时间戳（`.tmp` → `rename`），仅 A-CR 成功即更新（RSS 故障不阻塞 CrossRef 补漏）。新增 `tests/test_phase_a_lookback.py`（14 个单测覆盖：首次/正常/故障/封顶/JSON 损坏/原子写入），158 pytest 全通过。`docs/design.md` 新增「11b. CrossRef 智能回溯」节，`docs/README.md` settings.yaml 章节同步。**动机**：cron 漏跑或机器故障时，A-CR 默认 1 天回溯无法补救之前遗漏的论文；智能回溯让日常零开销、故障自动补漏。 | 07-20 |
+| **手动 PDF 导入工具** | 新增 `tools/import_local_pdf.py`：单篇模式手动导入本地 PDF，绕过 Phase E2 反复下载失败。用法 `python tools/import_local_pdf.py --doi <DOI> --pdf <PATH>`。流程：校验文件存在 + `%PDF-` 头部 → 计算 `safe_doi`（规则与 `phase_e2.py:149` 一致）→ 复制到 `MINERU_OUTPUT_DIR/<safe_doi>/paper.pdf`（复用 `src/config.py` 常量，不硬编码）→ 重置 DB 中该 DOI 的 `mineru_parse_status='pending'`、`mineru_parse_error=NULL`、`mineru_parse_date=NULL`（不动 `pdf_url`/`mineru_output_dir`/`doi`）。下次 daily 调度跑 Phase E2 时命中现有 PDF 复用逻辑（`phase_e2.py:155-162`）跳过下载直接交给 MinerU。退出码：1=文件不存在/异常，2=非 PDF 头部，3=DB 无该 DOI 记录（PDF 已落盘）。sys.path 处理与 `tools/schedule_daily.py` 一致。设计决策：方案 A（独立脚本，不改 pipeline）+ 单篇模式 + 只重置状态不自动续跑，风险最低。 | 07-20 |
+| **MinerU Token 检测日志劫持修复** | 修复 `_check_mineru_token()` 在 `config.py` 模块导入时自动调用导致的日志系统劫持 bug。根因：`logging.warning()` 便捷函数在 root logger 无 handler 时会自动调用 `basicConfig()` 偷装默认 `StreamHandler`（WARNING 级别），导致入口脚本后续的 `logging.basicConfig(...)` 成为空操作（`basicConfig` 语义为"仅当 root 无 handler 时才配置"）。后果：自定义 `RotatingFileHandler` 失效（日志文件不再增长），root 级别锁在 WARNING（所有 DEBUG/INFO 被过滤）。用户观察到"WARNING 后就没有输出了"正是此现象。修复：1) `config.py:586` 删除模块级 `_check_mineru_token()` 调用，改为导出函数供入口显式调用；2) 4 个入口（`src/main.py`、`tools/schedule_daily.py`、`tools/schedule_weekly.py`、`src/web/app.py`）在 `logging.basicConfig(...)` 之后显式调用 `_check_mineru_token()`；3) `config.py` 新增注释说明此反模式的原因。验证：模拟 10 天后过期 token，新顺序下 DEBUG/INFO 正常输出，root handler 单一；旧顺序反证 root level 锁在 30(WARNING)，DEBUG/INFO 被吞。 | 07-20 |
+| **20260713 报告生成缺陷修复** | 修复 4 项报告生成缺陷：1) Cambridge 摘要 URL 误用——`CambridgeScraper.parse_page` 盲信 `citation_abstract` meta，部分文章该标签为首版 PDF 图片 URL，新增 `_validate_cambridge_abstract` 校验（URL/图片扩展名→置空）；2) 字面量 `\n` 未转换——LLM JSON 输出 `\\n` 经 json.loads 解码为字面量 `\n`（反斜杠+n）而非真实换行，导致 `_adjust_headings` 行首 `^#` 正则失配，新增 `_convert_literal_newlines`（`\n` 后非字母时转真实换行，保护 `\nabla`/`\neq`/`\nu` 等 LaTeX 命令），在 `_process_text_for_markdown` 与 `_process_results_markdown` 中调用；3) 相关方向标签错配——`_build_subdomain_labels` 贪婪子串匹配把 `plasma_physics`（描述含"控制"）误判为"加速器控制与AI"，改为固定 `_SUBDOMAIN_LABEL_MAP` 按 key 查表；4) Hugo PaperMod TOC 层级——`hugo.yaml` 新增 `markup.tableOfContents: {startLevel:2, endLevel:2}` 限定目录仅收录 h2 论文标题。新增 3 个测试（字面量换行、LaTeX 保护、Cambridge URL 拒绝），更新 `test_build_subdomain_labels_known`（`advanced_technology` 标签改为"束流传输与等离子体光学"），144 pytest 全通过。 | 07-14 |
+| **回退自定义 Hugo 模板，改用 PaperMod 原生布局** | 用户反馈 20260608 排版溢出未解决，判定自定义 flex 侧栏布局是根因。回退：1) 删除 `site/layouts/single.html`（自定义 flex 侧栏模板）→ 回退到主题原生 `single.html`（块级布局，TOC 为可折叠 `<details>` 渲染在正文上方）；2) 删除 `site/layouts/partials/toc.html`（自定义 h2-only + scroll-spy 目录）→ 回退到原生 `toc.html`（匹配 h1-h6 生成嵌套目录树）；3) `custom.css` 移除 `--main-width:1100px` 加宽、`.post-content-wrapper` flex 容器、`.toc-container` 侧栏样式，仅保留 `.post-content p,.post-content li { overflow-wrap:break-word; word-break:break-word; }` 不可见兜底；4) 保留 `list.html`（卡片 `.Description` 优先，与溢出无关）与 `extend_head.html`（KaTeX 渲染）。hugo 构建成功，编译 CSS 中 `post-content-wrapper`/`toc-container`/`--main-width:1100px` 全部消失，原生 `.post-content{margin:30px 0}` 块级布局生效。 | 07-13 |
+| **20260608 报告排版溢出修复** | 根因：`paper_report_generator.py` 仅对 `main_results_and_physics` 字段做 heading re-leveling（`_adjust_headings`），其余 LLM 字段（motivation/method/take_home）经 `_process_text_for_markdown` 直通，LLM 在 `key_setup_and_method` 字段中输出的 `##` 子标题未被降级，渲染为 h2 破坏文档层级（TOC 侧栏将其列为独立论文条目，flex 布局下长 CJK+数学 token 溢出）。修复：1) `_make_markdown_section` 中 motivation/method/take_home 改用 `_process_results_markdown`（含 LaTeX 修复 + heading re-leveling + 换行转换），`abstract`/`one_sentence` 保留原处理；2) `custom.css` 新增 `.post-content { min-width:0; overflow-wrap:break-word; word-break:break-word; }` 兜底；3) `convert_reports_to_hugo.py` 新增 `_validate_heading_structure` 检测错位 `##` 子标题（缺 `---` 分隔符）+ h1 计数，hugo stderr 成功时也输出，`--all` 删除改为仅删 `source: auto` 的文件；4) 回溯修复 20260608 源文件与 Hugo content 中 6 处错位标题（`##`→`####`、`###`→`#####`）。20 pytest 通过，hugo 构建成功。 | 07-13 |
 | **run_weekly.sh 修复** | crontab 下 `--hugo --deploy` 缺 `--all`（只转最新一篇）→ 修复为 `--all --hugo --deploy`；crontab PATH 极简找不到 `hugo`(需 `/usr/local/bin`) 和 `ghp-import`(需 conda bin) → 新增 `export PATH`；`docs/README.md` crontab 示例同步修正 | 06-28 |
 | **Hugo 站点样式增强** | 3 项样式修改：1) 卡片摘要优先使用 `.Description`（显示「日期—共收录 N 篇论文」而非正文片段）；2) 侧栏目录（sticky 260px，仅 h2 层论文标题，scroll-spy 高亮）；3) 文章页正文加宽至 `1100px`（不波及主页列表页）；对应 `convert_reports_to_hugo.py` 的 `_build_description`/`_count_papers` | 06-28 |
 | **Optica Accepted Paper 检测** | `OpticaScraper.parse_page()` 新增 Accepted Paper 检测：检测 `#articleBody` 内 `<em>accepted for publication</em>` 特征时抛 `AcceptedPaperError`；`docs/design.md` 新增「9b. Optica」节描述检测策略与页面特征。 | 06-20 |
@@ -1653,3 +1659,193 @@ Typical relevance level: A
 |---|------|------|
 | P2 | `get_all_papers()` 全表加载 | 改为 COUNT 聚合查询 |
 | P3 | `SemanticFilter` 类级缓存 | 避免多次加载 sentence-transformers 模型 |
+
+# 2026-07-13 — 20260608 报告排版溢出修复（heading 层级 + CSS 兜底 + 部署脚本加固）
+
+## 背景
+
+用户反馈：Hugo 渲染的 20260608 报告正文不自动换行，文字宽度超出页面边界。其余 4 份报告（20260615/20260622/20260629/20260706）渲染正常。任务：定位根因 + review Hugo 部署模块。
+
+## 根因（已确认）
+
+20260608 报告中 SPARC_LAB 论文（#6）的 `key_setup_and_method` 字段内含 `##`（h2）子标题：
+
+- `## 核心驱动系统`、`## 等离子体加速平台`、`## 先进诊断系统`、`## 用户束线`
+- 以及 `### 高亮度SPARC光注入器`、`### 高强度FLAME激光系统` 子子标题
+
+这些子标题在最终报告里渲染在 `### 关键方法与设置` 之下，本应是 h4/h5 层级，却以 h2 直通。
+
+**代码路径缺陷**：`paper_report_generator.py` 中
+- `main_results_and_physics` 字段经 `_process_results_markdown()` → 内部调 `_adjust_headings()` 将最低层级上移到 `base_level=4`（`####`）
+- `motivation` / `method` / `take_home` 字段经 `_process_text_for_markdown()`，**不调** `_adjust_headings`，LLM 输出的 `##` 原样直通
+
+LLM 在 `key_setup_and_method` 字段中输出的 `##` 子标题未被降级，渲染为 h2 后：
+1. TOC 侧栏（`toc.html` 只匹配 `<h2>`）将这些中文子标题列为独立论文条目
+2. 错位的 h2 切断了文档层级，flex 布局（`.post-content-wrapper` 260px TOC + 内容）下内容宽度计算异常
+3. 长 CJK + 内联数学 `\(...\)` token 串（KaTeX 将 `\(...\)` 视为单个不可断行的 inline 元素）无法换行，溢出页面
+
+其余 4 份报告的 LLM 输出恰好将子标题放在 `main_results_and_physics` 字段中（被 `_adjust_headings` 正确降级），故未触发。
+
+## 修复（4 处，均已验证）
+
+### 1. `src/processors/paper_report_generator.py`（根因修复）
+
+`_make_markdown_section`（约 285-290 行）中 `motivation` / `method` / `take_home` 从 `_process_text_for_markdown(...)` 改为 `_process_results_markdown(..., heading_base)`。
+
+- 现在 4 个 LLM 摘要字段（motivation/method/results/take_home）统一走 LaTeX 修复 + heading re-leveling + 换行转换
+- `abstract` / `one_sentence` 仍用 `_process_text_for_markdown`（这两个字段不期望出现 heading）
+- `_process_results_markdown` 名称保留（`tests/test_report.py` 导入它），仅更新 docstring 说明其已通用化
+- 同步更新模块 docstring（line 9、18）与 `_make_markdown_section` docstring
+
+### 2. `site/assets/css/extended/custom.css`（CSS 兜底）
+
+新增：
+```css
+.post-content { min-width: 0; overflow-wrap: break-word; word-break: break-word; }
+.post-content p, .post-content li { overflow-wrap: break-word; word-break: break-word; }
+```
+- `min-width: 0` 允许 flex 子项收缩到内容尺寸以下
+- `overflow-wrap: break-word` 让长不可断行 CJK+数学 token 串可换行
+- **未** 给 `.katex` 加 `white-space: normal`（会扭曲数学渲染）
+
+### 3. `tools/convert_reports_to_hugo.py`（部署模块加固）
+
+- 新增 `_validate_heading_structure(content, src_name) -> list[str]`：检测 (a) h1 数量 ≠ 1；(b) `##` 标题在两个 `##` 之间缺少 `---` 分隔符（即 20260608 缺陷模式——LLM 字段泄漏的错位子标题）。返回警告字符串，集成进 `convert_report()`，**打印警告但不阻断转换**。
+- Hugo 构建 stderr 处理：成功时也输出 stderr（含 warning/info），不再仅失败时打印。
+- `--all` 删除安全性：改为仅删除 front matter `source: "auto"` 的内容文件（逐文件读取 front matter），避免误删用户自写、匹配 `report_*.md` 的报告。
+
+### 4. 回溯修复 20260608 内容
+
+同时修补源文件 `data/reports/auto/report_20260608.md` 与 Hugo 内容 `site/content/posts/report_20260608.md`：
+
+| 原标题 | 修复后 |
+|------|------|
+| `## 核心驱动系统` | `#### 核心驱动系统` |
+| `### 高亮度SPARC光注入器` | `##### 高亮度SPARC光注入器` |
+| `### 高强度FLAME激光系统` | `##### 高强度FLAME激光系统` |
+| `## 等离子体加速平台` | `#### 等离子体加速平台` |
+| `## 先进诊断系统` | `#### 先进诊断系统` |
+| `## 用户束线` | `#### 用户束线` |
+
+行尾两空格硬换行保留。
+
+## 验证
+
+- `python -m pytest tests/test_report.py -x -q` → 20 passed
+- `hugo` 构建（`site/`）→ exit 0
+- 渲染 HTML `site/public/posts/report_20260608/index.html`：48 个 h2（47 论文 + 目录），错位子标题全部降为 `<h4>`，grep 确认无 `<h2...id="核心驱动系统"` 等
+- `_validate_heading_structure` 合成坏输入测试：输出警告 `疑似错位的 ## 子标题 (缺少 --- 分隔符)`；修复后输入无警告
+- 转换脚本对修复后的 20260608 dry-run：无警告
+
+## 经验教训
+
+- **字段间处理不一致是隐蔽 bug 源**：4 个 LLM 摘要字段本应同质，却因历史原因走两条不同处理路径。统一处理路径后根因消失。
+- **防御性 CSS 不可省**：即便上游 heading 层级正确，长 CJK + KaTeX 内联数学 token 串仍可能溢出。`overflow-wrap: break-word` + `min-width: 0` 是 flex 布局下渲染 CJK 学术内容的必要兜底。
+- **部署脚本应做结构校验**：`convert_reports_to_hugo.py` 此前只做格式转换，不校验 heading 层级。新增的 `_validate_heading_structure` 在转换时打印警告，能在 LLM 再次输出错位标题时及早暴露，而非等到渲染后人工发现。
+- **`--all` 删除范围应收敛**：原实现按 glob 删除 `report_*.md`，可能误伤用户自写报告。改为按 front matter `source` 字段过滤后，仅清理自动报告。
+
+# 2026-07-13 — 回退自定义 Hugo 模板，改用 PaperMod 原生布局
+
+## 背景
+
+前一轮修复（heading re-leveling + CSS 兜底 + 内容回溯修补）后，用户反馈 20260608 报告排版溢出仍未解决。用户判定自定义 flex 侧栏布局是根因，决定回退到 PaperMod 原生样式，不再自定义目录与宽度。
+
+## 变更
+
+### 1. 删除自定义文章模板
+
+- 删除 `site/layouts/single.html`（自定义 flex 侧栏模板：`div.post-content-wrapper` + `aside.toc-container` + `div.post-content`）
+- 回退到主题原生 `site/themes/PaperMod/layouts/single.html`：TOC 作为可折叠 `<details class="toc">` 渲染在正文上方，正文为简单块级布局（无 flex）
+
+### 2. 删除自定义 TOC 组件
+
+- 删除 `site/layouts/partials/toc.html`（自定义 h2-only 匹配 + 排除 `## 目录` + scroll-spy JS）
+- 回退到主题原生 `site/themes/PaperMod/layouts/_partials/toc.html`：匹配全部 `<h[1-6]>` 生成嵌套目录树，支持 `UseHugoToc` 与 `TocOpen` 参数
+
+### 3. 精简 custom.css
+
+`site/assets/css/extended/custom.css` 移除：
+- `body:has(.post-single) .main { --main-width: 1100px; }`（文章页加宽）
+- `.post-content-wrapper` flex 容器及全部子规则
+- `.toc-container` 侧栏样式（sticky / scroll-spy / scrollbar / 响应式折叠）
+- `.post-content { min-width: 0; ... }`（flex 子项收缩，块级布局下无意义）
+
+仅保留一条不可见兜底：
+```css
+.post-content p, .post-content li { overflow-wrap: break-word; word-break: break-word; }
+```
+PaperMod 原生 CSS 只对 `pre code` 设了 `word-break`，段落文本没有。此规则不改变视觉样式，仅防止长 CJK + KaTeX 内联数学 token 串溢出。
+
+### 4. 保留项
+
+- `site/layouts/list.html` — 卡片摘要 `.Description` 优先（与溢出无关，用户未要求回退）
+- `site/layouts/partials/extend_head.html` — KaTeX 数学渲染脚本（必需）
+- `hugo.yaml` 的 `ShowToc: true` — 原生 TOC 全局启用
+- 每报告 front matter 的 `ShowToc: true` / `TocOpen: true` — 原生 TOC 显示并默认展开
+
+## 验证
+
+- `hugo --cleanDestinationDir` → exit 0
+- 编译 CSS `stylesheet.*.css` 中 `post-content-wrapper` / `toc-container` / `--main-width:1100px` 全部为 0 匹配（自定义布局彻底移除）
+- 原生 `.post-content{margin:30px 0}` 块级布局生效
+- 原生 `<details class="toc">` 已渲染在 20260608 报告正文上方
+- `overflow-wrap:break-word` / `word-break:break-word` 仍在编译 CSS 中（兜底保留）
+- 20260608 报告 48 个 h2（47 论文 + 目录），错位子标题仍为 h4（前一轮内容修补保持）
+
+## 经验教训
+
+- **flex 侧栏布局对长 CJK + 数学 token 不友好**：flex 容器中子项的 `min-content` 宽度由最长不可断行 token 决定，即便设 `min-width:0`，KaTeX 渲染后的 inline 元素仍可能撑破容器。块级布局下正文独占全宽，问题自然消失。
+- **优先用主题原生能力**：PaperMod 自带可折叠 TOC + 合理的 `--main-width`，自定义侧栏与加宽虽美观但引入了原生不存在的布局风险。回退原生是更稳健的工程选择。
+- **不可见兜底 CSS 可保留**：`overflow-wrap` 不改变视觉样式，只防止溢出，与"使用原生样式"不冲突。
+
+## 20260713 报告生成缺陷修复（07-14）
+
+### 背景
+
+用户反馈 20260713 报告存在 4 项需修复缺陷（超长公式与简版报告经用户决策跳过）。
+
+### 1. Cambridge 摘要 URL 误用
+
+**根因**：`CambridgeScraper.parse_page()`（`src/sources/publisher.py`）盲信 `citation_abstract` meta 标签。部分 Cambridge 文章（hpl.2026.10180、hpl.2026.10183）该标签内容为首版 PDF 图片 URL（`//static.cambridge.org/content/id/.../firstPage-pdf-xxx.jpg`），直接采用导致报告摘要变成一串链接。
+
+**修复**：新增 `CambridgeScraper._validate_cambridge_abstract` 类方法 + `_ABSTRACT_URL_PATTERN` 正则。若内容以 `//`、`http(s)://` 开头，或以图片/PDF 扩展名结尾，视为无效链接置空并记 warning 日志。
+
+### 2. 字面量 `\n` 未转换（第 1 篇主要结果字段）
+
+**根因**：LLM 在 JSON Output 模式下偶尔输出 `\\n`（双反斜杠+n），`json.loads` 解码为字面量 `\n`（反斜杠+n 两个字符）而非真实换行。`_process_results_markdown` 按 `'\n'` 切行时整段仍是一行，内部 `##` 标题不在行首，`_adjust_headings` 的 `^#{1,6}` 正则失配，标题未被重定级，内容"变成一团"。
+
+**修复**：新增 `_convert_literal_newlines`（`paper_report_generator.py`），用正则 `r'\\n(?![a-zA-Z])'` 将字面量 `\n`（后不跟字母）转为真实换行。负向先行断言保护 LaTeX 命令 `\nabla`、`\neq`、`\nu`、`\newline` 等不被破坏。在 `_process_text_for_markdown` 与 `_process_results_markdown` 中于 `_fix_latex_backslashes_for_display` 之后、`_adjust_headings`/`split` 之前调用。
+
+### 3. 相关方向标签错配
+
+**根因**：`_build_subdomain_labels()`（`paper_report_generator.py`）基于 description 子串匹配生成标签。`plasma_physics` 描述含"控制"（"等离子体通道形成与控制"）→ 命中 `if '控制' in desc: labels[key] = '加速器控制与AI'` → 错配。`advanced_technology` 同样命中。DB subfields 正确，仅显示标签错。
+
+**修复**：废弃子串匹配，改用固定 `_SUBDOMAIN_LABEL_MAP` 按 subdomain key 直接查表：
+```
+acceleration → 加速与后加速
+plasma_physics → 等离子体物理与诊断
+beam_applications → 束流诊断与辐照
+advanced_technology → 束流传输与等离子体光学
+laser_wakefield_acceleration → 尾场加速
+```
+未在表中的 key 回退为 key 本身。新增子领域只需在映射表补一行。
+
+### 4. Hugo PaperMod TOC 层级
+
+**根因**：用户澄清指 Hugo PaperMod 渲染后的侧边目录收录了论文内部子标题（h3/h4），希望只保留到论文标题（h2）层级。
+
+**修复**：`site/hugo.yaml` 的 `markup` 节新增 `tableOfContents: {startLevel: 2, endLevel: 2, ordered: false}`，限定 TOC 仅收录 h2。
+
+### 测试
+
+- `test_process_results_markdown_literal_newline`：字面量 `\n` 转换 + 标题重定级
+- `test_convert_literal_newlines_preserves_latex`：LaTeX 命令保护
+- `test_cambridge_scraper_abstract_url_rejected`：URL 伪摘要拒绝
+- `test_build_subdomain_labels_known`：`advanced_technology` 标签更新为"束流传输与等离子体光学"
+- 全套 144 pytest 通过
+
+### 经验教训
+
+- **不要盲信 meta 标签内容语义**：`citation_abstract` 名字暗示摘要文本，但 Cambridge 部分页面实际存放图片 URL。外部数据源的内容语义需校验，不能仅凭标签名假设。
+- **JSON 转义边界陷阱**：LLM JSON Output 模式下换行符的转义层级（`\\n` → 字面量 `\n` vs 真实换行）易混淆，处理时需显式规范化，且注意保护同形 LaTeX 命令。
+- **子串匹配标签是脆弱设计**：description 文本会同时包含多方向关键词，贪婪子串匹配必然产生歧义。key→label 固定映射表无歧义、可维护、新增成本极低，应优先采用。

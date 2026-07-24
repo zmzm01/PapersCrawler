@@ -428,6 +428,48 @@ SELECT discovery_source, COUNT(*) FROM papers GROUP BY discovery_source;
 1. **增量模式统一**：A-CR 默认只查过去 1 天（`CROSSREF_LOOKBACK_DAYS=1`），与 RSS 的"每日最新"语义一致
 2. **不强制 ISSN**：期刊的 ISSN 字段为可选配置，无 ISSN 的期刊仅走 RSS 路径
 3. **附录操作**：`append_discovery_source()` 使用逗号分隔、不重复的语义，未来新增数据源（如 OpenAlex、PubMed）只需追加字符串即可，无需改 schema
+
+### 11b. CrossRef 智能回溯（故障补漏）
+
+**动机**：A-CR 默认回溯 1 天。若某次 cron 因机器故障/网络问题/手动跳过而漏跑，仅靠 RSS 抓取可能遗漏当日的若干论文（RSS Feed 不一定完整且无回溯能力）。下次再跑 A-CR 时已"翻篇"，那 1 天的论文就永久丢失。
+
+**解决**：基于 `data/state/last_run.json`（gitignored）记录上次成功运行日期，下次运行时按"缺口天数"自动扩展回溯窗口，封顶 `CROSSREF_LOOKBACK_DAYS_MAX`（默认 7 天）。
+
+**决策公式**：
+
+```
+actual_lookback = max(CROSSREF_LOOKBACK_DAYS, today - last_successful_run)
+actual_lookback = min(actual_lookback, CROSSREF_LOOKBACK_DAYS_MAX)
+```
+
+| 场景 | last_run 距今 | 实际回溯 | 说明 |
+|------|--------------|---------|------|
+| 首次运行 | 无记录 | `CROSSREF_LOOKBACK_DAYS` (1) | 保守起步 |
+| 日常运行 | 0~1 天 | `CROSSREF_LOOKBACK_DAYS` (1) | 零额外开销 |
+| 故障 1 天 | 2 天 | 2 天 | 自动补漏 |
+| 故障 5 天 | 5 天 | 5 天 | 自动补漏 |
+| 故障 10 天 | 10 天 | `CROSSREF_LOOKBACK_DAYS_MAX` (7) | 封顶，部分遗漏 |
+| JSON 损坏 | — | `CROSSREF_LOOKBACK_DAYS` (1) | 降级为默认 |
+
+**写入时机**：A-CR 阶段执行完所有期刊后（无论发现论文数量），调用 `_save_last_run_date(to_date)` 写入当日日期。**仅 A-CR 成功即更新**——RSS 故障不阻塞 CrossRef 补漏（两者独立）。
+
+**实现要点**（`src/pipeline/phase_a.py`）：
+
+- `_load_last_run_date()` — 读 JSON，损坏时返回 None + warning
+- `_save_last_run_date()` — 原子写入（`.tmp` → `rename`），避免崩溃中途损坏
+- `_compute_lookback_days()` — 决策函数，被 `phase_a_crossref` 调用
+- 副作用：故障补漏日的 API 调用量约等于 (实际回溯 - 1) × 平时。7 天封顶下最坏情况为平时的 7 倍；正常 1 天轮询时无影响
+
+**故障时长 > max 时的取舍**：超过 7 天的故障仍会漏检论文（与"每日增量轮询"语义本身不冲突）。如需覆盖更长窗口，手动调高 `crossref_lookback_days_max`；或在故障恢复后用 `python -m tools.manual_backfill`（未来工具，本次未实现）补拉。
+
+**配置**（`configs/settings.yaml`）：
+
+```yaml
+pipeline:
+  crossref_lookback_days: 1     # 日常回溯
+  crossref_lookback_days_max: 7 # 故障补漏上限
+```
+
 这是贯穿 prompt 设计、FormulaFixer 和报告生成的全链路约束。
 
 **禁止的 LaTeX 构造：**
@@ -1296,6 +1338,24 @@ requests + 浏览器 cookies (第一优先级, 秒级失败)
 
 此设计与「PDF 立即保存」配合生效：MinerU 上传失败后重跑 Phase E2 时，已保存的 PDF 直接复用，不重复下载。
 
+### 手动 PDF 导入（2026-07-20）
+
+针对部分论文在 Phase E2 反复下载失败的场景，新增 `tools/import_local_pdf.py`：用户自行下载 PDF 后导入，下次调度命中上述「PDF 复用」逻辑跳过下载。
+
+```
+python tools/import_local_pdf.py --doi <DOI> --pdf <PATH_TO_PDF>
+```
+
+流程：
+1. 校验源文件存在 + `%PDF-` 头部
+2. 计算 `safe_doi`（规则与 `phase_e2.py:149` 一致）→ 复制到 `MINERU_OUTPUT_DIR/<safe_doi>/paper.pdf`
+3. UPDATE 该 DOI 的 `mineru_parse_status='pending'`、`mineru_parse_error=NULL`、`mineru_parse_date=NULL`（不动 `pdf_url`/`mineru_output_dir`/`doi`）
+4. 下次 daily 调度跑 Phase E2 时命中复用逻辑，直接交给 MinerU
+
+退出码：1=文件不存在/异常，2=非 PDF 头部，3=DB 无该 DOI 记录（PDF 已落盘，需先跑 Phase A-E 让论文入库）。
+
+设计取舍：方案 A（独立脚本，不改 pipeline）+ 单篇模式 + 只重置状态不自动续跑——风险最低，完全复用现有复用逻辑，不引入新代码路径。
+
 ### Optica 延迟页面访问（Phase E2）
 
 Optica OA 论文因 Phase C 被跳过（`publisher_page_fetched_status = 'skipped'`），
@@ -1430,8 +1490,31 @@ run_weekly.sh
 
 说明：
 - `--all` 只处理 `data/reports/auto/` 目录下的报告，排除 user 目录
-- `--all` 会先清理 `site/content/posts/` 再重新写入（确保旧文件删除）
+- `--all` 会先清理 `site/content/posts/` 中 front matter `source: "auto"` 的文件再重新写入（按 `source` 字段过滤，避免误删用户自写报告）
 - `--all` 必须搭配 `--hugo` 才会构建，搭配 `--deploy` 才会部署
+- 转换时调用 `_validate_heading_structure()` 检测错位 `##` 子标题（两个 `##` 之间缺 `---` 分隔符，即 LLM 字段泄漏的子标题）与 h1 计数异常，**打印警告但不阻断转换**
+- Hugo 构建成功时也输出 stderr（含 warning/info），便于发现构建过程中的问题
+
+## 报告 heading 层级保障
+
+报告由 `paper_report_generator.py` 生成，每篇论文是一个 `## ` (h2) 区块，内部字段标题为 `### ` (h3)，字段内子标题应为 `#### `/`##### `。LLM 输出的 heading 层级不可信，必须 re-leveling。
+
+**处理路径**（2026-07-13 统一）：
+- 4 个 LLM 摘要字段（motivation / key_setup_and_method / main_results_and_physics / take_home）统一经 `_process_results_markdown()` → 内部调 `_adjust_headings()` 将最低层级上移到 `base_level=4`（`####`）
+- `abstract` / `one_sentence` 经 `_process_text_for_markdown()`（不期望出现 heading，不做 re-leveling）
+
+**历史缺陷**：此前仅 `main_results_and_physics` 走 re-leveling 路径，其余 3 字段走 `_process_text_for_markdown` 直通。20260608 报告中 LLM 在 `key_setup_and_method` 字段输出 `## 核心驱动系统` 等子标题，未降级直通为 h2，导致 TOC 侧栏（只匹配 h2）将其列为独立论文条目，flex 布局下长 CJK+数学 token 串溢出页面。统一处理路径后根因消除。
+
+## CSS 兜底（长 token 换行）
+
+`assets/css/extended/custom.css` 中仅保留一条不可见的防御性规则：
+```css
+.post-content p, .post-content li { overflow-wrap: break-word; word-break: break-word; }
+```
+- PaperMod 原生 CSS 只对 `pre code` 设了 `word-break`，段落文本没有
+- `overflow-wrap: break-word` 让长不可断行 CJK + KaTeX 内联数学 `\(...\)` token 串可换行，防止溢出
+- **不改变任何视觉样式**，仅作为溢出兜底
+- **未** 给 `.katex` 加 `white-space: normal`（会扭曲数学渲染）
 
 ## 样式定制
 
@@ -1440,11 +1523,12 @@ run_weekly.sh
 PaperMod 主题的定制方式：
 
 ```
-site/assets/css/extended/custom.css  →  Hugo 自动合并到 stylesheet.css
-site/layouts/list.html               →  覆盖主题列表模板（卡片预览）
-site/layouts/single.html             →  覆盖主题文章模板（侧栏目录）
-site/layouts/partials/toc.html       →  自定义目录组件（h2 only + scroll-spy）
+site/assets/css/extended/custom.css  →  Hugo 自动合并到 stylesheet.css（仅保留 overflow-wrap 兜底）
+site/layouts/list.html               →  覆盖主题列表模板（卡片预览 .Description 优先）
+site/layouts/partials/extend_head.html →  KaTeX 数学渲染脚本注入
 ```
+
+> **文章页布局**：使用 PaperMod 原生 `single.html` + 原生 `toc.html`，不覆盖。原生 TOC 为可折叠 `<details>`，渲染在正文上方，匹配全部 h1-h6 生成嵌套目录。`ShowToc: true`（hugo.yaml 全局 + 每报告 front matter）控制是否显示，`TocOpen: true` 控制默认展开。
 
 ### 1. 卡片摘要 Description
 
@@ -1457,38 +1541,21 @@ site/layouts/partials/toc.html       →  自定义目录组件（h2 only + scro
 **列表模板（`layouts/list.html`）**：
 - 卡片区域优先读取 `.Description`，不存在时才回退到 `.Summary`
 
-### 2. 侧栏目录
+### 2. 目录（TOC）
 
-PaperMod 内置 TOC 支持（collapsible `.toc` + `ShowToc` 参数），但默认折叠在文章顶部。改为侧栏永久显示：
+使用 PaperMod 原生 TOC，不自定义。原生行为：
+- `layouts/_partials/toc.html` 匹配全部 `<h[1-6]>` 生成嵌套目录树
+- 渲染为可折叠 `<details class="toc">`，位于正文上方
+- `ShowToc: true` 显示，`TocOpen: true` 默认展开
+- 报告中 h2=论文标题、h3=字段标题、h4/h5=字段内子标题，原生 TOC 会显示完整嵌套层级
 
-**文章模板（`layouts/single.html`）**：
-- 新增 `div.post-content-wrapper`（flex 容器），包裹 `aside.toc-sidebar` + `div.post-content`
-- `ShowToc=true` 时才渲染侧栏
+> **历史**：曾自定义侧栏 TOC（flex 布局 + 260px sticky 侧栏 + scroll-spy），但 flex 布局导致长 CJK+数学 token 串溢出页面且难以换行。2026-07-13 回退到原生块级布局后问题消除。
 
-**自定义 TOC 组件（`layouts/partials/toc.html`）**：
-- `findRE` 只匹配 `<h2>` 标签（论文标题），排除 `###` 子标题层级
-- 排除报告自身的 `## 目录` heading
-- 始终 `open` 属性（侧栏模式不需要可折叠）
-- 内置 scroll-spy JavaScript：滚动时高亮当前阅读的论文标题
+### 3. 文章页正文宽度
 
-**CSS（`assets/css/extended/custom.css`）**：
-- `.toc-sidebar`：`flex: 0 0 260px`、`position: sticky`、`max-height: calc(100vh - header)`
-- `.toc-sidebar details.toc`：隐藏 `<summary>`、无背景边框、list-style-none
-- `.toc-sidebar .inner a`：hover 变背景色、`border-left` 指示器
-- `<=1100px`：侧栏折叠回文章上方可折叠 TOC
-- `<=768px`：更小字号、自动宽度
+使用 PaperMod 原生 `--main-width: 720px`，不覆盖。
 
-### 3. 文章页正文加宽
-
-PaperMod 的 `--main-width: 720px` 适用于所有页面，在 1920px 屏幕上仅占 ~40%。
-
-**CSS 特殊处理**（`assets/css/extended/custom.css`）：
-```css
-body:has(.post-single) .main { --main-width: 1100px; }
-```
-- `body:has(.post-single)` — 仅文章页生效，不波及主页/列表页
-- 主页/列表页保持 `--main-width: 720px`
-- `<=768px` 切回 `auto`
+> **历史**：曾用 `body:has(.post-single) .main { --main-width: 1100px; }` 加宽文章页，但与 flex 侧栏布局叠加后加剧了溢出问题。2026-07-13 回退到原生 720px。
 
 ### 每报告配置
 
