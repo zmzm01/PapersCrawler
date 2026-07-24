@@ -201,15 +201,11 @@ _loaded_prompt = load_prompt("summary")
 if _loaded_prompt:
     CFG.SUMMARIES_PROMPT = _loaded_prompt
 
-# ---------- 语义模型 ----------
-CFG.SEMANTIC_MODEL_PATH = str(DATA_DIR / "models" / "bge-base-en-v1.5")
-
 # ---------- 阶段开关 ----------
 CFG.SKIP_PHASE_A_RSS = False
 CFG.SKIP_PHASE_A_CR = False
 CFG.SKIP_PHASE_B = False
 CFG.SKIP_PHASE_C = False
-CFG.SKIP_PHASE_D = False
 CFG.SKIP_PHASE_E = False
 CFG.SKIP_PHASE_E2 = False
 CFG.SKIP_PHASE_F = False
@@ -298,7 +294,6 @@ def _apply_settings(settings):
     CFG.SKIP_PHASE_A_CR = skip.get("A_CR", CFG.SKIP_PHASE_A_CR)
     CFG.SKIP_PHASE_B = skip.get("B", CFG.SKIP_PHASE_B)
     CFG.SKIP_PHASE_C = skip.get("C", CFG.SKIP_PHASE_C)
-    CFG.SKIP_PHASE_D = skip.get("D", CFG.SKIP_PHASE_D)
     CFG.SKIP_PHASE_E = skip.get("E", CFG.SKIP_PHASE_E)
     CFG.SKIP_PHASE_E2 = skip.get("E2", CFG.SKIP_PHASE_E2)
     CFG.SKIP_PHASE_F = skip.get("F", CFG.SKIP_PHASE_F)
@@ -328,12 +323,6 @@ def _apply_settings(settings):
     ff = settings.get("formula_fix", {})
     CFG.SKIP_FORMULA_FIX = ff.get("skip", CFG.SKIP_FORMULA_FIX)
     CFG.FORCE_FORMULA_FIX = ff.get("force", CFG.FORCE_FORMULA_FIX)
-
-    # 语义模型路径
-    sem = settings.get("semantic", {})
-    sem_path = sem.get("model_path")
-    if sem_path:
-        CFG.SEMANTIC_MODEL_PATH = str(DATA_DIR / sem_path)
 
     # 邮件模板配置
     email_cfg = settings.get("email", {})
@@ -382,15 +371,14 @@ def load_keywords():
     加载研究领域配置。
 
     从 configs/keywords.yaml 读取领域定义和关键词配置。
-    返回结构化字典，包含 scope_definition（各子领域描述+关键词）、
-    irrelevant_fields（不相关领域定义）和 sub_domains_embedding（Phase D 用浓缩英文段落）。
+    返回结构化字典，包含 scope_definition（各子领域描述+关键词）和
+    irrelevant_fields（不相关领域定义）。
 
     Returns:
         dict: {
             "scope_definition": dict[str, {"description": str, "topics": list[str]}],
             "context_gates": list[dict],
             "irrelevant_fields": {"description": str, "topics": list[str]},
-            "sub_domains_embedding": dict[str, str],
         }
               文件不存在或为空时返回全空结构。
     """
@@ -399,7 +387,6 @@ def load_keywords():
         "scope_definition": {},
         "context_gates": [],
         "irrelevant_fields": {"description": "", "topics": []},
-        "sub_domains_embedding": {},
     }
     if not path.exists():
         return empty
@@ -414,7 +401,6 @@ def load_keywords():
         "scope_definition": data.get("scope_definition", {}),
         "context_gates": data.get("context_gates", []),
         "irrelevant_fields": data.get("irrelevant_fields", {"description": "", "topics": []}),
-        "sub_domains_embedding": data.get("sub_domains_embedding", {}),
     }
 
 

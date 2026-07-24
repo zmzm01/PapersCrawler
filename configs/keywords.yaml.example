@@ -3,7 +3,6 @@
 # =============================================================================
 # 将本文件复制为 keywords.yaml 并填写实际内容后使用。
 # scope_definition: Phase E LLM prompt 使用的完整领域定义（中文）
-# sub_domains_embedding: Phase D 语义相似度使用的浓缩英文段落（<300 words）
 # =============================================================================
 
 scope_definition:
@@ -37,14 +36,3 @@ irrelevant_fields:
   topics:
   - '领域1: 说明1'
   - '领域2: 说明2'
-sub_domains_embedding:
-  laser_driven_ion_acceleration: 'Research area: laser_driven_ion_acceleration. Replace
-    with actual English description (<300 words).'
-  laser_plasma_physics_and_diagnostics: 'Research area: laser_plasma_physics_and_diagnostics.
-    Replace with actual English description (<300 words).'
-  high_gradient_beam_transport: 'Research area: high_gradient_beam_transport. Replace
-    with actual English description (<300 words).'
-  beam_irradiation_and_applications: 'Research area: beam_irradiation_and_applications.
-    Replace with actual English description (<300 words).'
-  accelerator_control_automation_and_ai: 'Research area: accelerator_control_automation_and_ai.
-    Replace with actual English description (<300 words).'
