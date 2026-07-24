@@ -629,10 +629,9 @@ def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
         if scope_definition:
             labels = _build_subdomain_labels(scope_definition)
             if isinstance(papers, dict):
-                papers["_subdomain_labels"] = labels
+                papers = {**papers, "_subdomain_labels": labels}
             else:
-                for p in papers:
-                    p["_subdomain_labels"] = labels
+                papers = [{**p, "_subdomain_labels": labels} for p in papers]
         return generate_markdown(papers, toc=toc, results_heading_base=results_heading_base)
     elif fmt == 'html':
         return generate_html(papers, full_document=full_html)
