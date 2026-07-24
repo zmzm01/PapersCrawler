@@ -127,14 +127,14 @@ def run_pipeline(force=False, run_all=False):
 
 # ── 便捷方法：每日/每周调度 ─────────────────────────────────────────
 
-DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F"]
+DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "E", "E2", "F"]
 WEEKLY_PHASES = ["G", "H"]
 
 
 def run_daily():
     """每日运行：发现 → LLM 总结。
 
-    等价于依次执行 Phase A-RSS / A-CR / B / C / D / E / E2 / F。
+    等价于依次执行 Phase A-RSS / A-CR / B / C / E / E2 / F。
     尊重 settings.yaml 中的 SKIP_PHASE_* 配置（CLI 模式，force=False）。
 
     典型 cron 用法:
