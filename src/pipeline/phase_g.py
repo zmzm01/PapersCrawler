@@ -114,8 +114,6 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         date_str = datetime.now().strftime("%Y%m%d")
         md_path = out_dir / f"report_{date_str}.md"
         report_timestamp = str(datetime.now())
-        db.mark_papers_reported(reported_dois, report_timestamp)
-        logger.info(f"Marked {len(reported_dois)} papers as reported")
     else:
         out_dir = Path(user_dir)
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -129,7 +127,15 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         paper_list, format="markdown", toc=True,
         scope_definition=scope_definition,
     )
-    md_path.write_text(md_report, encoding="utf-8")
+    # 原子写入：先写 .tmp，再 rename，避免崩溃留下半写文件
+    tmp_path = md_path.with_suffix(md_path.suffix + ".tmp")
+    tmp_path.write_text(md_report, encoding="utf-8")
+    tmp_path.replace(md_path)
     logger.info(f"Report saved: {md_path}")
+
+    # 文件落盘成功后再标记 DB — 避免中间崩溃导致永久丢稿
+    if is_auto:
+        db.mark_papers_reported(reported_dois, report_timestamp)
+        logger.info(f"Marked {len(reported_dois)} papers as reported")
 
     logger.info(f"Phase G done: {len(paper_list)} papers in report")
