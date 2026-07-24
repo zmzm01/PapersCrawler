@@ -2,9 +2,8 @@
 """
 reset_pipeline.py — 重置流水线状态辅助脚本
 
- 子命令：
+  子命令：
   reset-crossref     Phase B CrossRef 元数据查询
-  reset-semantic     Phase D 语义相似度分数（仅排序参考）
   reset-relevance    Phase E LLM 相关性判断
   reset-publisher    Phase C Publisher 页面抓取
   reset-mineru       Phase E2 MinerU PDF 解析
@@ -36,18 +35,6 @@ CROSSREF_RESET = [
     "cr_metadata_fetched_status = 'pending'",
     "cr_metadata_fetched_error = NULL",
     "cr_metadata_fetched_date = NULL",
-]
-
-# ------------------------------------------------------------------
-# Phase D 重置列（仅清理语义相似度，不影响 LLM 判断结果）
-# Phase D 与 Phase E 已解耦：语义分仅供排序参考，不参与过滤
-# ------------------------------------------------------------------
-SEMANTIC_RESET = [
-    "semantic_similarity_score = NULL",
-    "semantic_filter_status = 'pending'",
-    "semantic_filter_error = NULL",
-    "semantic_filter_date = NULL",
-    "semantic_best_subdomain = NULL",
 ]
 
 # ------------------------------------------------------------------
@@ -144,7 +131,7 @@ def cmd_reset_crossref(publisher=None, reset_all=False, empty_abstract=False):
     print("    cr_metadata_fetched_error    → NULL")
     print("    cr_metadata_fetched_date     → NULL")
     print("  不受影响（保持不变）:")
-    print("    abstract, publisher_page_*, semantic_*, llm_*, mineru_*, report_*")
+    print("    abstract, publisher_page_*, llm_*, mineru_*, report_*")
     print("  级联: 无（重新查询后 B→C→D→E→F→G 自然流动，因状态变为 pending）")
     if not _confirm(count, "CrossRef 元数据状态"):
         print("已取消")
@@ -152,45 +139,6 @@ def cmd_reset_crossref(publisher=None, reset_all=False, empty_abstract=False):
 
     n = _run_update(sql, params)
     print(f"已重置 {n} 篇论文。重新运行 python src/main.py 即可触发 Phase B 重试。")
-
-
-def cmd_reset_semantic(publisher=None):
-    """重置 Phase D 语义相似度分数（仅排序参考）。"""
-    where = ""
-    params = ()
-    if publisher:
-        where = "WHERE publisher = ?"
-        params = (publisher,)
-
-    count_sql = f"SELECT COUNT(*) FROM papers {where}"
-    conn = sqlite3.connect(str(DB_PATH))
-    count = conn.execute(count_sql, params).fetchone()[0]
-    conn.close()
-
-    if count == 0:
-        print(f"无匹配论文（publisher={publisher}），无需操作")
-        return
-
-    set_clause = ",\n            ".join(SEMANTIC_RESET)
-    sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
-
-    print(f"\n将重置 {count} 篇论文的语义相似度分数（publisher={publisher or '全部'}）")
-    print()
-    print("  受影响的状态列:")
-    print("    semantic_filter_status       → pending")
-    print("    semantic_filter_error        → NULL")
-    print("    semantic_filter_date         → NULL")
-    print("    semantic_similarity_score    → NULL")
-    print("    semantic_best_subdomain      → NULL")
-    print("  不受影响（保持不变）:")
-    print("    llm_relevance_*, mineru_*, llm_summary_*, report_*")
-    print("  级联: 无")
-    if not _confirm(count, "语义相似度分数"):
-        print("已取消")
-        return
-
-    n = _run_update(sql, params)
-    print(f"已重置 {n} 篇论文。重新运行 python src/main.py 即可触发 Phase D 重算语义分。")
 
 
 def cmd_reset_publisher(publisher=None, empty_abstract=False):
@@ -313,7 +261,7 @@ def cmd_reset_mineru(publisher=None):
     print("    mineru_fulltext      → NULL")
     print("    mineru_output_dir    → NULL")
     print("  不受影响（保持不变）:")
-    print("    llm_relevance_*, llm_summary_*, semantic_*, report_*")
+    print("    llm_relevance_*, llm_summary_*, report_*")
     print("  级联: 无（重新解析后 E2→F→G 自然流动，因状态变为 pending）")
     if not _confirm(count, "MinerU 解析状态"):
         print("已取消")
@@ -373,7 +321,7 @@ def cmd_reset_relevance(publisher=None, reset_all=False):
     print("    llm_relevance_confidence  → NULL")
     print("    llm_relevance_reason      → NULL")
     print("  不受影响（保持不变）:")
-    print("    semantic_*, publisher_page_*, mineru_*, llm_summary_*, report_*")
+    print("    publisher_page_*, mineru_*, llm_summary_*, report_*")
     print("  级联: 无（相关性结果不影响 MinerU 全文和 LLM 总结）")
     if not _confirm(count, "LLM 相关性判断状态"):
         print("已取消")
@@ -437,7 +385,7 @@ def cmd_reset_summary(publisher=None, reset_all=False):
     print("    llm_summary_date     → NULL")
     print("    llm_summary_result   → NULL")
     print("  不受影响（保持不变）:")
-    print("    mineru_*, llm_relevance_*, semantic_*, report_*")
+    print("    mineru_*, llm_relevance_*, report_*")
     print("  级联: 无（重新总结后 F→G 自然流动，因状态变为 pending）")
     if not _confirm(count, "LLM 总结状态"):
         print("已取消")
@@ -527,23 +475,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PapersCrawler 流水线状态重置工具")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_sem = sub.add_parser("reset-semantic",
-        help="重置语义相似度分数（仅清理排序参考，不影响 LLM 判断）",
-        description=(
-            "修改 sub_domains 后使用。仅重置 Phase D 的语义相似度分数，"
-            "不影响 Phase E（LLM 相关性判断）结果。"
-            "Phase D 与 Phase E 已解耦。"
-            "\n\n受影响的状态列:"
-            "\n  semantic_filter_*    → pending"
-            "\n  semantic_similarity_score → NULL"
-            "\n  semantic_best_subdomain   → NULL"
-            "\n  不受影响:"
-            "\n  llm_relevance_*, mineru_*, llm_summary_*, report_*"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p_sem.add_argument("--publisher", help="仅重置指定出版社（如 aps, nature）")
-
     p_cr = sub.add_parser("reset-crossref",
         help="重置 CrossRef 元数据查询（Phase B）",
         description=(
@@ -629,7 +560,7 @@ if __name__ == "__main__":
             "\n  llm_relevance_confidence  → NULL"
             "\n  llm_relevance_reason      → NULL"
             "\n  不受影响（保持不变）:"
-            "\n  semantic_*, publisher_page_*, mineru_*,"
+            "\n  publisher_page_*, mineru_*,"
             "\n  llm_summary_*, report_*"
             "\n  级联: 无"
             "\n\n示例:"
@@ -656,7 +587,7 @@ if __name__ == "__main__":
             "\n  llm_summary_date     → NULL"
             "\n  llm_summary_result   → NULL"
             "\n  不受影响:"
-            "\n  mineru_*, llm_relevance_*, semantic_*, report_*"
+            "\n  mineru_*, llm_relevance_*, report_*"
             "\n\n示例:"
             "\n  python tools/reset_pipeline.py reset-summary"
             "\n    → 仅重置失败/跳过的论文"
@@ -704,9 +635,7 @@ if __name__ == "__main__":
         print("请确保已运行过 python src/main.py")
         sys.exit(1)
 
-    if args.command == "reset-semantic":
-        cmd_reset_semantic(args.publisher)
-    elif args.command == "reset-crossref":
+    if args.command == "reset-crossref":
         if args.empty_abstract and args.all:
             print("--empty-abstract 与 --all 不能同时使用")
             sys.exit(1)
