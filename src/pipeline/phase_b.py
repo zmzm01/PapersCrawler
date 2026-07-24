@@ -43,21 +43,29 @@ def phase_b_crossref(db):
 
         try:
             crossrefPaper = crClient.fetch_by_doi(paperDOI)
-            authors_json = json.dumps(crossrefPaper.authors, ensure_ascii=False) if crossrefPaper.authors else "[]"
 
             if not crossrefPaper.authors:
+                # 设计契约：作者为空视为 FAILED（tasks.md 2026-05-23 / design.md）
+                # 不再走 SUCCESS 分支，避免下游 Phase F/E 拿不到作者信息时静默失败
                 logger.warning(f"CrossRef author data missing: {paperDOI}")
-
-            db.update_crossref_metadata(
-                paperDOI, crossrefPaper.title,
-                authors_json, crossrefPaper.published,
-                crossrefPaper.abstract or "",
-            )
-            db.update_process_status(
-                paperDOI, "cr_metadata_fetched_status",
-                FetchStatus.SUCCESS.value,
-                "cr_metadata_fetched_date", timestamp,
-            )
+                db.update_error_message(
+                    paperDOI, "cr_metadata_fetched_status",
+                    FetchStatus.FAILED.value,
+                    "cr_metadata_fetched_error", "CrossRef returned no authors",
+                    "cr_metadata_fetched_date", timestamp,
+                )
+            else:
+                authors_json = json.dumps(crossrefPaper.authors, ensure_ascii=False)
+                db.update_crossref_metadata(
+                    paperDOI, crossrefPaper.title,
+                    authors_json, crossrefPaper.published,
+                    crossrefPaper.abstract or "",
+                )
+                db.update_process_status(
+                    paperDOI, "cr_metadata_fetched_status",
+                    FetchStatus.SUCCESS.value,
+                    "cr_metadata_fetched_date", timestamp,
+                )
 
         except NotFoundError as e:
             logger.warning(f"CrossRef no record: {paperDOI}")
