@@ -115,6 +115,37 @@ def test_process_results_markdown():
     assert "E=mc^2" in processed
 
 
+def test_process_results_markdown_literal_newline():
+    r"""验证字面量 \n（反斜杠+n）被转换为真实换行，内部标题能被重定级。
+
+    复现 20260713 报告第 1 篇论文 main_results_and_physics 字段的缺陷：
+    LLM 在 JSON 中输出 \\n（双反斜杠+n），json.loads 解码后变成字面量 \n
+    （反斜杠+n 两个字符），而非真实换行。导致整段文本仍是一行，内部的
+    ## 标题不在行首，_adjust_headings 的 ^#{1,6} 正则无法匹配。
+    """
+    # 字面量 \n（反斜杠+n 两个字符），不是真实换行
+    text = "## 主要结果\\n## 细节"
+    processed = _process_results_markdown(text, base_heading_level=4)
+    # 字面量 \n 应被转换为真实换行，标题应被重定级到 ####
+    assert "#### 主要结果" in processed
+    assert "#### 细节" in processed
+    # 不应残留字面量 \n
+    assert "\\n" not in processed
+
+
+def test_convert_literal_newlines_preserves_latex():
+    r"""验证 \n 后跟字母时不被转换，保护 LaTeX 命令如 \nabla、\neq、\nu。"""
+    from processors.paper_report_generator import _convert_literal_newlines
+    # \nabla \neq \nu 应原样保留（\n 后跟字母）
+    assert _convert_literal_newlines(r"\nabla \neq \nu") == r"\nabla \neq \nu"
+    # \n 后跟字母 b 不应转换
+    assert _convert_literal_newlines("a\\nb") == "a\\nb"
+    # \n 后跟空格/标点/行尾应转换为真实换行
+    assert _convert_literal_newlines("a\\n b") == "a\n b"
+    assert _convert_literal_newlines("a\\n") == "a\n"
+    assert _convert_literal_newlines("a\\n, b") == "a\n, b"
+
+
 # ---- 作者格式化 ----
 
 def test_authors_str():
@@ -219,7 +250,7 @@ def test_build_subdomain_labels_known():
     assert labels.get("acceleration") == "加速与后加速"
     assert labels.get("plasma_physics") == "等离子体物理与诊断"
     assert labels.get("beam_applications") == "束流诊断与辐照"
-    assert labels.get("advanced_technology") == "加速器控制与AI"
+    assert labels.get("advanced_technology") == "束流传输与等离子体光学"
 
 
 def test_build_subdomain_labels_empty():
