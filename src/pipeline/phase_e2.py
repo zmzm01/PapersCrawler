@@ -105,28 +105,28 @@ def phase_e2_mineru(db):
                 f"{publisher}: lazy page fetch for {len(lazy_pending)} papers"
             )
             for paper in lazy_pending:
-                    doi = paper["doi"]
-                    page_url = paper["page_url"]
-                    if not page_url:
-                        continue
-                    try:
-                        downloader.fetch_page(page_url, timeout=30000)
-                        parsed = downloader.parse_page()
-                        if parsed and parsed.pdf_url:
-                            db.update_publisher_pdf_url(doi, parsed.pdf_url)
-                            paper["pdf_url"] = parsed.pdf_url
-                            logger.info(
-                                f"Lazy fetch OK: {doi} → {parsed.pdf_url}"
-                            )
-                        else:
-                            logger.warning(
-                                f"Lazy fetch: no pdf_url for {doi}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Lazy fetch failed [{doi}]: {e}"
+                doi = paper["doi"]
+                page_url = paper["page_url"]
+                if not page_url:
+                    continue
+                try:
+                    downloader.fetch_page(page_url, timeout=30000)
+                    parsed = downloader.parse_page()
+                    if parsed and parsed.pdf_url:
+                        db.update_publisher_pdf_url(doi, parsed.pdf_url)
+                        paper["pdf_url"] = parsed.pdf_url
+                        logger.info(
+                            f"Lazy fetch OK: {doi} → {parsed.pdf_url}"
                         )
-                    downloader.page.wait_for_timeout(3000)
+                    else:
+                        logger.warning(
+                            f"Lazy fetch: no pdf_url for {doi}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Lazy fetch failed [{doi}]: {e}"
+                    )
+                downloader.page.wait_for_timeout(3000)
 
         try:
             for paper in group:
