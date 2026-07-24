@@ -682,11 +682,6 @@ class APSScraper(BasePublisherScraper):
 
 
 class NatureScraper(BasePublisherScraper):
-    # Nature 的 Fastly Client Challenge 会拦截所有自动化浏览器，
-    # 但纯 HTTP 请求（wget/requests）可以正常获取。优先走 HTTP。
-    http_fallback_mode = "requests"
-    http_fallback_strategy = "primary"
-
     """Nature 系列期刊爬虫。
 
      支持 Nature、Nature Physics、Nature Photonics 等 Nature 旗下期刊。
@@ -702,6 +697,11 @@ class NatureScraper(BasePublisherScraper):
           获取的是相对路径（如 /articles/s41567-026-03184-9.pdf），
           需要拼接 "https://www.nature.com" 前缀。
     """
+
+    # Nature 的 Fastly Client Challenge 会拦截所有自动化浏览器，
+    # 但纯 HTTP 请求（wget/requests）可以正常获取。优先走 HTTP。
+    http_fallback_mode = "requests"
+    http_fallback_strategy = "primary"
 
     def parse_page(self):
         """解析 Nature 论文页面。
