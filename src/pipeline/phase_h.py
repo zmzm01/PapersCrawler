@@ -6,6 +6,7 @@ or a no-update notification if no report was generated.
 Uses HTML email template from templates/email/<name>.html.
 """
 
+import html
 import logging
 import re
 from datetime import datetime
@@ -144,7 +145,7 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
                     all_topics.append(kw)
         if all_topics:
             items = "".join(
-                f"<span style=\"display:inline-block;padding:2px 8px;margin:2px 4px;background:#eef2ff;color:#4338ca;border-radius:4px;font-size:12px;\">{kw}</span>"
+                f"<span style=\"display:inline-block;padding:2px 8px;margin:2px 4px;background:#eef2ff;color:#4338ca;border-radius:4px;font-size:12px;\">{html.escape(kw)}</span>"
                 for kw in all_topics[:30]
             )
             keyword_list_html = f"<div style=\"margin:8px 0 0;line-height:2;\">{items}</div>"
