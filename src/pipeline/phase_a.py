@@ -191,6 +191,7 @@ def phase_a_crossref(db, publishers, use_overrides=False):
     client = CrossrefClient(mailto=CFG.CROSSREF_MAILTO)
     overrides = load_journal_overrides() if use_overrides else {}
     seen_issns = set()    # 去重：相同 ISSN 只请求一次
+    any_success = False
 
     for journal in publishers:
         if not journal_effective(journal, overrides, "cr_enabled"):
@@ -208,11 +209,13 @@ def phase_a_crossref(db, publishers, use_overrides=False):
         journal_name = journal["name"]
         publisher = journal["publisher"]
 
+        any_success_in_journal = False
         try:
             papers = client.fetch_by_journal(issn, from_date, to_date)
             logger.info(f"{journal['id']}: found {len(papers)} papers via CrossRef")
 
             for paper in papers:
+                any_success_in_journal = True
                 if not paper.doi:
                     continue
                 if CFG.SKIP_NATURE_NEWS and "/d41586-" in (paper.doi or ""):
@@ -234,10 +237,12 @@ def phase_a_crossref(db, publishers, use_overrides=False):
                         source="crossref",
                     )
                     db.insert_paper_created_date(paper.doi, timestamp)
+            any_success = any_success or any_success_in_journal
 
         except Exception as e:
             logger.error(f"CrossRef journal query failed [{journal['id']}]: {e}")
 
-    # 智能回溯：记录本次成功日期，供下次决策
-    _save_last_run_date(to_date)
+    # 智能回溯：记录本次成功日期，供下次决策（仅当至少有一个 journal 成功处理）
+    if any_success:
+        _save_last_run_date(to_date)
     logger.info("Phase A-CR done")
