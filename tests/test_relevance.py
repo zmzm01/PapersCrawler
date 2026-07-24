@@ -5,7 +5,6 @@ Coverage:
   - Keyword match counting (exact, partial, case-insensitive, no match)
   - Regex word boundary enforcement
   - Prompt construction
-  - SemanticFilter (requires sentence-transformers model, skipped if unavailable)
   - DeepSeek API call (mocked, offline)
 
 All network-dependent tests are replaced with mocked responses.
@@ -35,7 +34,6 @@ def _make_keywords(keyword_list):
             }
         },
         "irrelevant_fields": {"description": "", "topics": []},
-        "sub_domains_embedding": {},
     }
 
 
@@ -171,11 +169,4 @@ def test_call_deepseek_api_mocked():
         assert result["MatchedSubfields"] == ["Laser Wakefield Acceleration"]
         assert result["Confidence"] == "high"
         assert "GeV" in result["Notes"]
-
-
-# ---- Semantic similarity filter ----
-# (Removed in commit 1 — Phase D semantic filter is deprecated; tests
-#  moved out together with the code to keep test suite green.)
-
-
 
