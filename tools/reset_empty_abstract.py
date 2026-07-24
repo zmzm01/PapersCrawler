@@ -19,11 +19,6 @@ UPDATE papers
 SET publisher_page_fetched_status = 'pending',
     publisher_page_fetched_error = NULL,
     publisher_page_fetched_date = NULL,
-    semantic_similarity_score = NULL,
-    semantic_best_subdomain = NULL,
-    semantic_filter_status = 'pending',
-    semantic_filter_error = NULL,
-    semantic_filter_date = NULL,
     llm_relevance_status = 'pending',
     llm_relevance_result = 0,
     llm_relevance_confidence = NULL,
@@ -45,7 +40,7 @@ if __name__ == "__main__":
         print("无需操作")
         exit()
 
-    print("将重置这些论文的: Publisher 抓取(Phase C) / 语义初筛(D) / LLM 相关性(E) / 报告状态(G)")
+    print("将重置这些论文的: Publisher 抓取(Phase C) / LLM 相关性(E) / 报告状态(G)")
     print("保留: MinerU 全文(E2) / LLM 总结(F)")
     resp = input(f"确认重置 {count} 篇？[y/N] ").strip().lower()
     if resp not in ("y", "yes"):
