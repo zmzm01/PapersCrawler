@@ -73,17 +73,17 @@ _phase_lock = asyncio.Lock()
 PHASE_LABELS = {
     "A-RSS": "RSS Fetch", "A-CR": "CrossRef Query",
     "B": "CrossRef Metadata", "C": "Publisher Page",
-    "D": "Semantic Filter", "E": "LLM Relevance", "E2": "MinerU PDF",
+    "E": "LLM Relevance", "E2": "MinerU PDF",
     "F": "LLM Summary", "G": "Report", "H": "Email",
 }
 
-PHASE_ORDER = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F", "G", "H"]
+PHASE_ORDER = ["A-RSS", "A-CR", "B", "C", "E", "E2", "F", "G", "H"]
 
 # 从 CFG 读取阶段默认值的映射表
 _PHASE_KEY_MAP = {
     "A-RSS": "SKIP_PHASE_A_RSS", "A-CR": "SKIP_PHASE_A_CR",
     "B": "SKIP_PHASE_B", "C": "SKIP_PHASE_C",
-    "D": "SKIP_PHASE_D", "E": "SKIP_PHASE_E", "E2": "SKIP_PHASE_E2",
+    "E": "SKIP_PHASE_E", "E2": "SKIP_PHASE_E2",
     "F": "SKIP_PHASE_F", "G": "SKIP_PHASE_G", "H": "SKIP_PHASE_H",
 }
 
@@ -178,9 +178,6 @@ RESET_DEFS = {
           "AND (publisher_page_fetched_error IS NULL "
           "OR publisher_page_fetched_error NOT LIKE 'NonResearchPageError:%')",
           None),
-    "D": (["semantic_filter_status", "semantic_filter_error",
-           "semantic_similarity_score", "semantic_best_subdomain"],
-          "semantic_filter_status IN ('success','failed','skipped')", None),
     "E": (["llm_relevance_status", "llm_relevance_category", "llm_relevance_subfields",
            "llm_relevance_confidence", "llm_relevance_reason", "llm_relevance_error"],
           "llm_relevance_status IN ('success','failed','skipped')", None),

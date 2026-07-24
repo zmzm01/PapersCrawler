@@ -31,7 +31,7 @@ def _get_effective_skip(overrides):
     defaults = {
         "A_RSS": CFG.SKIP_PHASE_A_RSS, "A_CR": CFG.SKIP_PHASE_A_CR,
         "B": CFG.SKIP_PHASE_B, "C": CFG.SKIP_PHASE_C,
-        "D": CFG.SKIP_PHASE_D, "E": CFG.SKIP_PHASE_E, "E2": CFG.SKIP_PHASE_E2,
+        "E": CFG.SKIP_PHASE_E, "E2": CFG.SKIP_PHASE_E2,
         "F": CFG.SKIP_PHASE_F, "G": CFG.SKIP_PHASE_G, "H": CFG.SKIP_PHASE_H,
     }
     return {k: overrides.get(k, defaults[k]) for k in defaults}
@@ -42,7 +42,6 @@ from db.database import DatabaseClient
 from pipeline.phase_a import phase_a_rss, phase_a_crossref
 from pipeline.phase_b import phase_b_crossref
 from pipeline.phase_c import phase_c_publisher
-from pipeline.phase_d import phase_d_semantic_filter
 from pipeline.phase_e import phase_e_llm_relevance
 from pipeline.phase_e2 import phase_e2_mineru
 from pipeline.phase_f import phase_f_llm_summary
@@ -69,8 +68,7 @@ def run_phases(phase_list=None, force=False, use_overrides=False):
     publishers = load_publishers()
     keywords = load_keywords()
     logger.info(f"Loaded {len(publishers)} publishers")
-    logger.info(f"Scope definition: {len(keywords.get('scope_definition', {}))} sub-domains, "
-                f"embedding: {len(keywords.get('sub_domains_embedding', {}))} items")
+    logger.info(f"Scope definition: {len(keywords.get('scope_definition', {}))} sub-domains")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     AUTO_REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,7 +85,6 @@ def run_phases(phase_list=None, force=False, use_overrides=False):
         "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A_CR"]),
         "B": (phase_b_crossref, [db], not effective_skip["B"]),
         "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
-        "D": (phase_d_semantic_filter, [db, keywords], not effective_skip["D"]),
         "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
         "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
         "F": (phase_f_llm_summary, [db], not effective_skip["F"]),

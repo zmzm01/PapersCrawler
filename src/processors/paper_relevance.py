@@ -39,14 +39,13 @@ class PaperRelevanceChecker:
     ----------
     keywords : dict
         由 load_keywords() 返回的完整领域定义字典。
-        含 scope_definition、irrelevant_fields、sub_domains_embedding 等字段。
+        含 scope_definition、irrelevant_fields 等字段。
     """
 
     def __init__(self, keywords: dict) -> None:
         self.scope_definition = keywords.get("scope_definition", {})
         self.context_gates = keywords.get("context_gates", [])
         self.irrelevant_fields = keywords.get("irrelevant_fields", {})
-        self.sub_domains_embedding = keywords.get("sub_domains_embedding", {})
 
         # 从所有 topics 中自动提取关键词列表，用于传统关键词匹配
         all_keywords = []
@@ -226,119 +225,6 @@ class PaperRelevanceChecker:
         }
         return call_llm_api_with_retry(config, headers, payload)
 
-    # ------------------------------------------------------------------
-    # 语义相似度（推荐使用 SemanticFilter 类，支持模型一次加载多次复用）
-    # 详见本文件下方 SemanticFilter 类的 compute_similarity() 方法
-    # ------------------------------------------------------------------
-
-
-# ------------------------------------------------------------------
-# 语义相似度初筛器
-# 模型加载一次，复用给多篇论文批量计算相似度
-# ------------------------------------------------------------------
-
-class SemanticFilter:
-    """
-    语义相似度参考排序器。
-
-    使用 sentence-transformers 将论文标题+摘要与多个子领域描述分别编码为向量，
-    计算余弦相似度，取最高分作为论文的语义相似度得分。
-    该分数仅用作 WebUI Papers 页面的排序参考，不参与流水线过滤。
-
-    相比关键词匹配的优势:
-    1. 能捕获同义词（如 "LWFA" ↔ "laser wakefield acceleration"）
-    2. 能处理上下位词关系
-    3. 模型加载一次后复用，适合大批量论文批量计算
-    4. 纯本地运行，不依赖外部 API
-
-    使用示例:
-        sf = SemanticFilter(
-            model_name="bge-base-en-v1.5",
-            sub_domains={
-                "ion_acceleration": "Laser-driven ion acceleration...",
-                "beam_transport": "High-gradient plasma beam transport...",
-            }
-        )
-        score, best_sub = sf.compute_similarity(
-            title="Laser wakefield acceleration of electrons",
-            abstract="We demonstrate electron acceleration..."
-        )
-        # score ≈ 0.65, best_sub ≈ "beam_transport"
-
-    需要安装: pip install sentence-transformers
-    """
-
-    def __init__(self, model_name: str, sub_domains: dict[str, str] | str = None):
-        """
-        初始化语义过滤器，加载模型并预编码各子领域描述。
-
-        Args:
-            model_name: HuggingFace 模型名。
-                        "bge-base-en-v1.5" 推荐 (512 tokens, 768-dim)
-            sub_domains: dict[str, str] — 子领域标签到描述的映射。
-                         如 {"ion_acceleration": "Laser-driven ion..."}
-                         若传入普通 str，则包装为 {"default": domain_description}
-                         保持与旧接口兼容。
-
-        Raises:
-            ImportError: sentence-transformers 未安装
-        """
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "请安装 sentence-transformers 库: pip install sentence-transformers"
-            )
-
-        self.model = SentenceTransformer(model_name, local_files_only=True)
-
-        if isinstance(sub_domains, str):
-            self.sub_domain_texts = {"default": sub_domains}
-        elif sub_domains is None:
-            self.sub_domain_texts = {"default": ""}
-        else:
-            self.sub_domain_texts = sub_domains
-
-        self.sub_domain_embeddings = {
-            label: self.model.encode(text, convert_to_tensor=True)
-            for label, text in self.sub_domain_texts.items()
-            if text.strip()
-        }
-
-    def compute_similarity(self, title: str, abstract: str) -> tuple[float, str | None]:
-        """
-        计算论文文本与各子领域描述的语义相似度。
-
-        流程:
-        1. 拼接 title + abstract 为 paper_text
-        2. 编码 paper_text 为向量
-        3. 计算与所有子领域嵌入的余弦相似度
-        4. 返回最高分及对应的子领域标签
-
-        Args:
-            title:    论文标题
-            abstract: 论文摘要
-
-        Returns:
-            tuple[float, str | None]: (max_score, best_subdomain_label)
-                    max_score: 最高余弦相似度 [0, 1]
-                    best_label: 匹配最佳的字段域标签，无可用于 None
-        """
-        from sentence_transformers import util
-
-        paper_text = f"{title}. {abstract}"
-        paper_embedding = self.model.encode(
-            paper_text, convert_to_tensor=True
-        )
-        best_score = 0.0
-        best_label = None
-        for label, emb in self.sub_domain_embeddings.items():
-            score = util.cos_sim(emb, paper_embedding).item()
-            if score > best_score:
-                best_score = score
-                best_label = label
-        return best_score, best_label
-
 
 # ------------------------------------------------------------------
 # 使用示例
@@ -382,14 +268,3 @@ if __name__ == "__main__":
     # prompt = checker.build_default_prompt(title, abstract)
     # llm_result = checker.call_deepseek_api(prompt, LLM_API_CONFIG_DICT)
     # print(llm_result)
-
-    # 3. 语义相似度（使用 SemanticFilter，多子领域模式）
-    # from processors.paper_relevance import SemanticFilter
-    # from config import SEMANTIC_MODEL_PATH
-    # sub_domains = {
-    #     "graph_learning": "Graph neural networks for node classification and link prediction.",
-    #     "embedding": "Graph embedding and representation learning methods.",
-    # }
-    # sf = SemanticFilter(SEMANTIC_MODEL_PATH, sub_domains)
-    # score, best = sf.compute_similarity(title, abstract)
-    # print(f"语义相似度: {score:.3f}, 最佳子领域: {best}")
