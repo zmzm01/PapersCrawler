@@ -24,22 +24,26 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import LOG_FILE_PATH, DATA_DIR
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-file_handler = RotatingFileHandler(LOG_FILE_PATH, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
-console_handler = logging.StreamHandler()
-logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "DEBUG").upper(), logging.DEBUG),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[file_handler, console_handler],
-)
+def _setup_logging_and_dirs() -> None:
+    """Idempotent setup for log dir + handlers + basicConfig."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    file_handler = RotatingFileHandler(LOG_FILE_PATH, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
+    console_handler = logging.StreamHandler()
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("LOG_LEVEL", "DEBUG").upper(), logging.DEBUG),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[file_handler, console_handler],
+    )
+
 
 from pipeline.runner import run_weekly
 from config import _check_mineru_token
 
-# 在 logging.basicConfig 配置完成后再检测 token，避免 warning 偷装默认 handler
-_check_mineru_token()
-
 if __name__ == "__main__":
+    _setup_logging_and_dirs()
+    # 在 logging.basicConfig 配置完成后再检测 token，避免 warning 偷装默认 handler
+    _check_mineru_token()
     run_weekly()
