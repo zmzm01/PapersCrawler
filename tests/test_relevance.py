@@ -174,75 +174,8 @@ def test_call_deepseek_api_mocked():
 
 
 # ---- Semantic similarity filter ----
-# These tests require sentence-transformers model.
-# They are skipped with importorskip if the package is not installed.
-
-@pytest.fixture(scope="module")
-def semantic_filter():
-    """Shared SemanticFilter instance, skipped if model unavailable."""
-    pytest.importorskip("sentence_transformers",
-                        reason="sentence-transformers not installed")
-    try:
-        from processors.paper_relevance import SemanticFilter
-        from config import CFG
-        sf = SemanticFilter(
-            model_name=CFG.SEMANTIC_MODEL_PATH,
-            sub_domains={
-                "laser_wakefield_acceleration": (
-                    "Laser-driven wakefield acceleration of electrons "
-                    "to GeV energies in plasma channels."
-                ),
-                "laser_driven_ion_acceleration": (
-                    "High-power laser interaction with targets to "
-                    "accelerate ions via TNSA and RPA mechanisms."
-                ),
-                "beam_transport": (
-                    "High-gradient plasma lens for compact beam transport."
-                ),
-            },
-        )
-        return sf
-    except Exception as e:
-        pytest.skip(f"Model loading failed: {e}")
+# (Removed in commit 1 — Phase D semantic filter is deprecated; tests
+#  moved out together with the code to keep test suite green.)
 
 
-def test_semantic_filter_high_relevance(semantic_filter):
-    """Highly relevant paper should get a high score and best subdomain."""
-    score, best = semantic_filter.compute_similarity(
-        title="Laser wakefield acceleration of electrons to GeV energies",
-        abstract="We demonstrate the acceleration of electrons to GeV energies using laser-driven plasma wakefields."
-    )
-    assert score > 0.3, f"Expected high score, got {score:.3f}"
-    assert best is not None
 
-
-def test_semantic_filter_low_relevance(semantic_filter):
-    """Unrelated paper should get a low score (bge-base is a strong model,
-    so physics papers may still score ~0.5; threshold is relaxed)."""
-    score, best = semantic_filter.compute_similarity(
-        title="Gravitational waves from binary neutron star mergers",
-        abstract="We present the detection of gravitational waves from a binary neutron star merger using LIGO."
-    )
-    assert score < 0.7, f"Expected fairly low score for unrelated paper, got {score:.3f}"
-
-
-def test_semantic_filter_moderate_relevance(semantic_filter):
-    """Partially related paper should get a moderate score."""
-    score, best = semantic_filter.compute_similarity(
-        title="High-energy particle acceleration in astrophysical plasmas",
-        abstract="We study particle acceleration mechanisms in relativistic plasma environments."
-    )
-    assert 0.15 < score < 0.8, f"Expected moderate score, got {score:.3f}"
-
-
-def test_semantic_filter_empty_input(semantic_filter):
-    """Empty title and abstract should give tuple (score >= 0, None)."""
-    score, best = semantic_filter.compute_similarity(title="", abstract="")
-    assert score >= 0.0
-
-
-def test_semantic_filter_class_exists():
-    """SemanticFilter class should be importable (no model download needed)."""
-    from processors.paper_relevance import SemanticFilter
-    assert SemanticFilter is not None
-    assert hasattr(SemanticFilter, 'compute_similarity')

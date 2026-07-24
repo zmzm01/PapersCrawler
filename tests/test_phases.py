@@ -14,12 +14,11 @@ import pytest
 
 def test_all_phase_modules_importable():
     """Each pipeline phase module should import without errors."""
-    from pipeline import phase_a, phase_b, phase_c, phase_d
+    from pipeline import phase_a, phase_b, phase_c
     from pipeline import phase_e, phase_e2, phase_f, phase_g, phase_h
     assert phase_a is not None
     assert phase_b is not None
     assert phase_c is not None
-    assert phase_d is not None
     assert phase_e is not None
     assert phase_e2 is not None
     assert phase_f is not None
