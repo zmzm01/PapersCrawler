@@ -4,7 +4,7 @@
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
-| **CrossRef 智能回溯（故障补漏）** | 新增 `CFG.CROSSREF_LOOKBACK_DAYS_MAX`（默认 7 天），`phase_a_crossref` 启动时读 `data/state/last_run.json`（gitignored）决策实际回溯窗口：`max(1, today - last_successful_run)`，封顶 max。首次运行（无 JSON）退化为默认 1 天，JSON 损坏也降级为默认。A-CR 阶段执行完所有期刊后原子写入当日时间戳（`.tmp` → `rename`），仅 A-CR 成功即更新（RSS 故障不阻塞 CrossRef 补漏）。新增 `tests/test_phase_a_lookback.py`（14 个单测覆盖：首次/正常/故障/封顶/JSON 损坏/原子写入），158 pytest 全通过。`docs/design.md` 新增「11b. CrossRef 智能回溯」节，`docs/README.md` settings.yaml 章节同步。**动机**：cron 漏跑或机器故障时，A-CR 默认 1 天回溯无法补救之前遗漏的论文；智能回溯让日常零开销、故障自动补漏。 | 07-20 |
+| **Pipeline 全面 Code Review** | @oracle 独立深度阅读 19 个假设 + 全量扫描 pipeline/sources/processors/db（共 ~7000 行），定位 **2 个 production-breaking bug + 1 个设计回归 + 14 个质量改进**。详见下方「2026-07-24 — Pipeline 全面 Code Review」节。**已确认问题（按优先级）**：CRITICAL #1 `runner.py:130` `DAILY_PHASES=["A-RSS","A-CR","B","C","D","E","E2","F"]` 含 `"D"` 但 `phase_map`（line 83-93）无 `"D"` 键 → 每次 schedule_daily.py 执行到 "D" 触发 `KeyError`，Phases E/E2/F 永不执行；CRITICAL #2 `phase_g.py:117` `db.mark_papers_reported()` 先于 `md_path.write_text()`（line 132），中间崩溃 → 论文永久 `report_date` 标记但无文件，后续 `get_papers_for_report()` 过滤 `report_date IS NULL` 永久丢稿；HIGH #3 `phase_b.py:46-60` 作者缺失仅 warning 仍标 SUCCESS（design.md/tasks.md 2026-05-23 明确"标记 failed" → 漂移回归）；HIGH #4 `DatabaseClient` 无 `close()`/`__enter__`/`__exit__`，SQLite 连接泄漏；HIGH #5 `CFG.LLM_CONCURRENT_MAX=100` 默认值过高 → DeepSeek 限流 429 风暴；HIGH #6 `phase_e2.py:107-129` 8 空格缩进混合 4 空格；HIGH #7 `tools/schedule_weekly.py:27-42` 模块级 `mkdir`+`basicConfig`（对比 schedule_daily.py 应在 `__main__` 块内）。**19 假设验证**：CONFIRMED H1/H6/H12/H13/H17/H19 + REFUTED H2/H3/H4 + NEEDS_MORE_INFO H5 + 设计意图 H7-H11/H14-H16/H18。**架构建议**：所有 client 类（Database/Crossref/RSS/MinerU/Publisher）加 context manager；`phase_g.py` 改为 temp-file + mark + rename 原子序列；`phase_a.py:242` 加 `any_success` 标志防全失败时误存 `last_run_date`；新增 `tests/test_runner_phase_map.py` 锁死 `DAILY_PHASES ⊆ phase_map.keys()`（可拦住 #1 类回归）。Web UI (`src/web/app.py`) 按用户明确要求**不在本次 review 范围**。 | 07-24 |
 | **手动 PDF 导入工具** | 新增 `tools/import_local_pdf.py`：单篇模式手动导入本地 PDF，绕过 Phase E2 反复下载失败。用法 `python tools/import_local_pdf.py --doi <DOI> --pdf <PATH>`。流程：校验文件存在 + `%PDF-` 头部 → 计算 `safe_doi`（规则与 `phase_e2.py:149` 一致）→ 复制到 `MINERU_OUTPUT_DIR/<safe_doi>/paper.pdf`（复用 `src/config.py` 常量，不硬编码）→ 重置 DB 中该 DOI 的 `mineru_parse_status='pending'`、`mineru_parse_error=NULL`、`mineru_parse_date=NULL`（不动 `pdf_url`/`mineru_output_dir`/`doi`）。下次 daily 调度跑 Phase E2 时命中现有 PDF 复用逻辑（`phase_e2.py:155-162`）跳过下载直接交给 MinerU。退出码：1=文件不存在/异常，2=非 PDF 头部，3=DB 无该 DOI 记录（PDF 已落盘）。sys.path 处理与 `tools/schedule_daily.py` 一致。设计决策：方案 A（独立脚本，不改 pipeline）+ 单篇模式 + 只重置状态不自动续跑，风险最低。 | 07-20 |
 | **MinerU Token 检测日志劫持修复** | 修复 `_check_mineru_token()` 在 `config.py` 模块导入时自动调用导致的日志系统劫持 bug。根因：`logging.warning()` 便捷函数在 root logger 无 handler 时会自动调用 `basicConfig()` 偷装默认 `StreamHandler`（WARNING 级别），导致入口脚本后续的 `logging.basicConfig(...)` 成为空操作（`basicConfig` 语义为"仅当 root 无 handler 时才配置"）。后果：自定义 `RotatingFileHandler` 失效（日志文件不再增长），root 级别锁在 WARNING（所有 DEBUG/INFO 被过滤）。用户观察到"WARNING 后就没有输出了"正是此现象。修复：1) `config.py:586` 删除模块级 `_check_mineru_token()` 调用，改为导出函数供入口显式调用；2) 4 个入口（`src/main.py`、`tools/schedule_daily.py`、`tools/schedule_weekly.py`、`src/web/app.py`）在 `logging.basicConfig(...)` 之后显式调用 `_check_mineru_token()`；3) `config.py` 新增注释说明此反模式的原因。验证：模拟 10 天后过期 token，新顺序下 DEBUG/INFO 正常输出，root handler 单一；旧顺序反证 root level 锁在 30(WARNING)，DEBUG/INFO 被吞。 | 07-20 |
 | **20260713 报告生成缺陷修复** | 修复 4 项报告生成缺陷：1) Cambridge 摘要 URL 误用——`CambridgeScraper.parse_page` 盲信 `citation_abstract` meta，部分文章该标签为首版 PDF 图片 URL，新增 `_validate_cambridge_abstract` 校验（URL/图片扩展名→置空）；2) 字面量 `\n` 未转换——LLM JSON 输出 `\\n` 经 json.loads 解码为字面量 `\n`（反斜杠+n）而非真实换行，导致 `_adjust_headings` 行首 `^#` 正则失配，新增 `_convert_literal_newlines`（`\n` 后非字母时转真实换行，保护 `\nabla`/`\neq`/`\nu` 等 LaTeX 命令），在 `_process_text_for_markdown` 与 `_process_results_markdown` 中调用；3) 相关方向标签错配——`_build_subdomain_labels` 贪婪子串匹配把 `plasma_physics`（描述含"控制"）误判为"加速器控制与AI"，改为固定 `_SUBDOMAIN_LABEL_MAP` 按 key 查表；4) Hugo PaperMod TOC 层级——`hugo.yaml` 新增 `markup.tableOfContents: {startLevel:2, endLevel:2}` 限定目录仅收录 h2 论文标题。新增 3 个测试（字面量换行、LaTeX 保护、Cambridge URL 拒绝），更新 `test_build_subdomain_labels_known`（`advanced_technology` 标签改为"束流传输与等离子体光学"），144 pytest 全通过。 | 07-14 |
@@ -106,6 +106,112 @@
 | **配置合并** | email 配置从 `configs/email.yaml` 完全合并到 `.env`；删除 `email.yaml.example`；`load_email_config()` 改为从 `os.getenv` 读取 | 06-04 |
 | **FormulaFixer 重构** | `LLMFormulaFixer` → `FormulaFixer`：JSON in/out 改为纯文本 in/out，新增 `needs_fix()` 预检测 + 逐字段修复 + module-level logger | 06-03 |
 | **独立修复工具** | 新增 `tools/fix_summary_formulas.py`，支持 `--doi` / `--publisher` / `--dry-run` / `--verbose`，无需重跑 Phase F | 06-03 |
+
+# 2026-07-24 — Pipeline 全面 Code Review
+
+**触发**：用户要求"对代码进行全面 review，重点在于 pipeline。由于 Web UI 不计划对公网开放，存在漏洞是正常的"。
+
+**方法**：orchestrator 收集基线上下文（项目结构、design 决策、19 个候选假设）→ 调度 @oracle 独立深度阅读全部 pipeline 源码（重点 publisher.py 1422 行、database.py 1307 行、paper_report_generator.py 670 行）→ 验证/反驳 19 假设 + 主动扫描其他风险点（资源泄漏、并发、错误处理一致性、YAGNI、状态机、SQL 注入）→ 按 CRITICAL/HIGH/MEDIUM/LOW 评级。
+
+**评审范围（in scope）**：`src/pipeline/`、`src/sources/`、`src/processors/`、`src/db/`、`src/common.py`、`src/config.py`、`tools/`。**Out of scope**：`src/web/app.py`（用户明确）。
+
+## CRITICAL — production-breaking
+
+1. **`runner.py:130` `DAILY_PHASES` 含 `"D"` 但 `phase_map` 无 `"D"` 键 → `KeyError` 阻断每日 cron**
+   - 现象：schedule_daily.py 跑到 "D" 时 `func, args, enabled = phase_map["D"]` 抛 `KeyError: 'D'`，Phases E/E2/F 永不执行
+   - 根因：Phase D 早被删除（`tools/migrate_db_v3.py`、`tasks.md` 06-04 节"Phase D 重构"），但 `DAILY_PHASES` 列表未同步清理
+   - **交叉引用**：下方「2026-07-24 — 移除 Phase D」节末尾的「⚠️ 2026-07-24 review 阶段发现：移除不完整（CRITICAL #1）」详细记录了根因 commit `dbb7435` (2026-07-24 18:56) 的疏漏，确认 bug 现存未修
+   - 修复：`DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "E", "E2", "F"]` + 更新 line 137 docstring
+
+2. **`phase_g.py:117` 标记已报先于文件写入 → 中间崩溃永久丢稿**
+   - 现象：`db.mark_papers_reported()` 在 line 117，`md_path.write_text()` 在 line 132；OOM/断电/异常导致中间崩溃 → 论文永久 `report_date` 标记但无文件
+   - 后果：后续 `get_papers_for_report()` 过滤 `report_date IS NULL` → 这些论文从所有未来报告消失
+   - 修复：写 `.tmp` → mark → 原子 rename（与 `phase_a.py` 智能回溯的 `_save_last_run_date` 一致的原子模式）
+
+## HIGH — 优先修复
+
+3. **`phase_b.py:46-60` 作者缺失仍标 SUCCESS — 设计回归**
+   - 漂移：design.md/tasks.md 2026-05-23 节明确"作者为空时标记 failed 而非 success"；现代码仅 `logger.warning()` 继续标 SUCCESS
+   - 修复：作者空 → `FetchStatus.FAILED` + 错误信息，与设计文档对齐
+
+4. **`DatabaseClient` 无 `close()`/`__enter__`/`__exit` → SQLite 连接泄漏**
+   - 现象：长跑 WebUI 永不释放；`schedule_daily.py:48` 已开第二连接
+   - 修复：加 context manager，`with DatabaseClient(DB_PATH) as db:` 模式
+
+5. **`CFG.LLM_CONCURRENT_MAX=100` 默认过高 → DeepSeek 限流 429 风暴**
+   - 现象：首次跑多 pending 论文 → 100 并发请求触发 API 限流
+   - 修复：默认 5-10，`settings.yaml` 可覆盖
+
+6. **`phase_e2.py:107-129` 8 空格缩进混合 4 空格 — 维护隐患**
+   - 现象：循环体 20 空格，文件其余 16 空格；未来混合编辑即 `IndentationError`
+   - 修复：re-indent + `ruff format`
+
+7. **`tools/schedule_weekly.py:27-42` 模块级 `mkdir`+`basicConfig` — 导入副作用**
+   - 现象：对比 `schedule_daily.py` 正确放在 `if __name__ == "__main__":` 块内
+   - 修复：移入 `__main__` 块
+
+## MEDIUM — 值得修
+
+8. `phase_c.py:67-78` bot 检测混用 `in html`/`in html_lower` → 统一 `html_lower`
+9. `phase_a.py:242` `_save_last_run_date()` 全失败时仍存 → 加 `any_success` 标志
+10. `phase_h.py:146-148` 关键词标签未 `html.escape()` → 与 `domain_block` 一致
+11. `phase_e.py` + DB：worker 仅 LLM、主线程写 DB 安全（`check_same_thread` 默认开启）；但 `DatabaseClient` 无任何文档/assert 阻止未来 in-worker 写入 → 至少加 docstring
+12. `paper_report_generator.py:631-635` `generate_report()` 突变调用方 `papers` 列表（加 `_subdomain_labels`） → 深拷贝或传 labels
+13. `publisher.py:684-704` `NatureScraper` docstring 放类属性后 → `help()` 不可见；移到顶部
+14. `crossref.py:109` / `rss.py:46` / `mineru_paper_parser.py:85` `requests.Session()` 永不关闭 → 加 `close()` + context manager
+
+## LOW — 清理
+
+- `runner.py:115-125` `force` 已废弃，移除（保留 `run_all`）
+- `phase_e.py:112-116` 未知 LLM subfield key 仍存入 DB（防 typo）
+- `phase_c.py:349-351` `attempt == 0` 无条件重试 → 404 等根本性错误浪费两次
+- `phase_g.py:44-48` f-string SQL 模板安全但维护陷阱（已用 `?` 参数化）
+- `publisher.py:451` `download_pdf()` 每次新建 `requests.Session`（无连接复用）
+
+## 19 假设验证汇总
+
+| # | 假设 | 结论 | 证据 |
+|---|------|------|------|
+| H1 | `DAILY_PHASES` 含 `"D"` 触发 KeyError | **CONFIRMED** | runner.py:130 vs 83-93 |
+| H2 | `should_skip_cr` 过滤逻辑 | REFUTED | phase_c.py:140-147 + runner 传参正确 |
+| H3 | Phase E 空 scope_definition 行为 | REFUTED | phase_e.py:33-50 早 return，不处理 |
+| H4 | phase_h publisher key 不匹配 | REFUTED | phase_h.py:192 与 DB column 同源 publishers.yaml |
+| H5 | phase_e2 PDF 复用异常处理 | NEEDS_MORE_INFO | Linux 无强制文件锁；`Path.exists()` 对 broken symlink 返 False；风险极低 |
+| H6 | `skip_phase_c_if_crossref_abstract` 散布 | CONFIRMED | 仅 OpticaScraper (publisher.py:1251) 置 True；其余继承 base (line 106) |
+| H7 | first-in-group 重试不对称 | CONFIRMED (intentional) | 注释 205-207：CF 挑战需长初时；45s 合理 |
+| H8 | 论文计数正则 | CONFIRMED, correct | `r'(?m)^## (?!目录)[^#]'` 处理 `## `/`### `/`## 目录` 正确 |
+| H9 | Phase F 空 scope 兜底 | CONFIRMED (intentional) | phase_f.py:46-47 设计选择：无 scope = 不过滤 = 全部总结 |
+| H10 | JSON 修复正则 | CONFIRMED, correct | 负回溯/负向预查处理 `\\` 正确 |
+| H11 | ThreadPool + DB 线程安全 | CONFIRMED safe (fragile) | 详见 MEDIUM #11 |
+| H12 | `force` 已废弃 | CONFIRMED, API clutter | runner.py:115-125 |
+| H13 | bot 检测大小写不一致 | CONFIRMED | 详见 MEDIUM #8 |
+| H14 | 全空解析触发 bot 检测 | CONFIRMED, correct | erratum/reply 有非空 title → 走 post-fetch 关键词检测 |
+| H15 | `__unknown__` publisher 兜底 | CONFIRMED, handled | 落入 `BasePublisherScraper`（无 publisher-specific parse） |
+| H16 | 非研究论文 `startswith` 检测 | CONFIRMED, correct | 关键词前缀匹配正确 |
+| H17 | `mark_papers_reported` 竞态 | **CONFIRMED** | 详见 CRITICAL #2 |
+| H18 | 日期格式一致性 | CONFIRMED, consistent | 均 `%Y%m%d` |
+| H19 | Phase B 作者缺失标 SUCCESS | **CONFIRMED (regression)** | 详见 HIGH #3 |
+
+## 推荐修复顺序（low risk first）
+
+| 优先级 | 项 | 工作量 |
+|--------|----|----|
+| P0 | #1 runner.py 1 行删除 | 1 分钟 |
+| P0 | #2 phase_g.py 改原子写 | 15 分钟 |
+| P0 | #3 phase_b.py 恢复 FAILED 路径 | 10 分钟 |
+| P1 | #5 config.py 默认 5-10 | 1 分钟 |
+| P1 | #7 schedule_weekly.py 移入 __main__ | 5 分钟 |
+| P1 | #4 + #14 所有 client 加 context manager | 30 分钟（机械） |
+| P2 | #6 phase_e2.py re-indent + ruff format | 2 分钟 |
+| P2 | #9 phase_a.py any_success 标志 | 10 分钟 |
+| P2 | #10 phase_h.py html.escape | 2 分钟 |
+| P2 | 新增 `tests/test_runner_phase_map.py` 锁 `DAILY_PHASES ⊆ phase_map.keys()` | 10 分钟（能拦住 #1 类回归） |
+
+## Out of scope（用户明确排除）
+
+- Web UI 安全（`src/web/app.py`）
+- LLM prompt injection（理论风险，学术 pipeline 低概率）
+- DOI 作文件系统路径的 null byte 等极端边界
 
 # 2026-05-23 — Pipeline 全面修复与增强
 
@@ -1885,4 +1991,126 @@ laser_wakefield_acceleration → 尾场加速
 **验证**：153/153 测试全过；DB 5 列已从 `data/papers.db` 物理删除（`migrate_db_v3.py` 跑通）；WebUI 路由 /papers?sort=created|published 不再读 semantic 字段；reset_pipeline --help 不再有 `reset-semantic` 子命令。
 
 **保留历史记录**：本文件上方所有提到 Phase D / `semantic_filter_*` / `sub_domains_embedding` / `SemanticFilter` / `sentence-transformers` / `bge-base-en-v1.5` 的行/段/章节均**完整保留**——它们是事实档案（实施记录、调试经验、API 文档），与最终代码解耦后仍有参考价值。删除它们会让"git log 之前的 commits"失去上下文。
+
+---
+
+### ⚠️ 2026-07-24 review 阶段发现：移除不完整（CRITICAL #1）
+
+后续 `2026-07-24 — Pipeline 全面 Code Review` 阶段，Oracle 审计发现上述 commit 1 (`remove Phase D semantic filter from pipeline`) **只删除了 `phase_map` 中的 "D" 注册，但漏删 `runner.py:130` 的 `DAILY_PHASES` 常量**。
+
+**当前状态**（review 时验证）：
+- `src/pipeline/runner.py:130` 的 `DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "D", "E", "E2", "F"]` 仍包含 "D"
+- `phase_map`（同文件 ~83-93）已无 "D" 键
+- `tools/schedule_daily.py` 每日调度执行 `run_daily()` → `run_phases(phase_list=DAILY_PHASES)` → 遇到 "D" 时 `func, args, enabled = phase_map[key]` 抛 `KeyError: "D"`
+- `tools/schedule_weekly.py` 走 `run_pipeline()` → `run_phases(phase_list=DEFAULT_PHASES)`，**未受影响**（`DEFAULT_PHASES` 也不含 "D"）
+
+**影响**：每日定时任务会**立即崩溃**，从未在该提交后成功跑过一次日调度（推测）。该 bug 与本节"验证 153/153 测试全过"**不矛盾**——测试只覆盖了模块导入、阶段注册表，未对 `DAILY_PHASES` 列表本身做断言。
+
+**修复方向**（已记入下方 review 段 CRITICAL #1 跟进项）：删除 `DAILY_PHASES` 中的 "D" 字符串。无需补回归测试（CRITICAL 列表加一条防御性测试即可）。
+
+---
+
+# 2026-07-24 — Review 三大 Critical/High 修复落地
+
+**触发**：上方「2026-07-24 — Pipeline 全面 Code Review」节定位 2 CRITICAL + 1 HIGH 等问题后，立即调度 @fixer 落地修复最高风险 3 项。
+
+**方法**：3 个独立 @fixer 并行（`fix-1`/`fix-2`/`fix-3`），分别写 runner.py / phase_g.py / phase_b.py，互不重叠。@oracle 全局调度（`ora-1`）保留以便后续审查。
+
+**修复成果**（4 文件修改 + 2 新测试文件，**157/157 pytest 通过**）：
+
+| 修复 | 文件 | 变更 | 新增测试 |
+|------|------|------|----------|
+| **CRITICAL #1** | `src/pipeline/runner.py:130,137` | 移除 `DAILY_PHASES` 中的 `"D"` + 同步 docstring | `tests/test_runner_phase_map.py`（2 测试：`DAILY_PHASES`/`WEEKLY_PHASES` 均为 `phase_map.keys()` 子集） |
+| **CRITICAL #2** | `src/pipeline/phase_g.py:112-141` | 原子写入：`.tmp` → `replace()` → 再 `mark_papers_reported()`（与 phase_a.py 智能回溯一致的原子模式） | （无新测试，行为变更无破坏性回归） |
+| **HIGH #3** | `src/pipeline/phase_b.py:44-69` | 作者缺失：原「仅 warning + 标 SUCCESS」改为「warning + 标 FAILED」，与 tasks.md 2026-05-23 / design.md 契约对齐 | `tests/test_phase_b_authors.py`（2 测试：作者空 → FAILED；作者非空 → SUCCESS） |
+
+**测试覆盖**：
+- `pytest tests/` → **157 passed**（修改前 153 + 新增 4）
+- `test_runner_phase_map.py`：防御性回归测试锁死 `DAILY_PHASES ⊆ phase_map.keys()`，未来再有人删阶段忘了改调度常量会立即失败
+- `test_phase_b_authors.py`：HIGH #3 双向覆盖（FAILED 路径 + SUCCESS 路径），防止「过修」
+
+**改动统计**：`git diff --stat`：
+```
+docs/tasks.md           | 124 +++++++++++++++++++++++++++++++++++++++++++++++-
+src/pipeline/phase_b.py |  32 ++++++++-----
+src/pipeline/phase_g.py |  12 +++--
+src/pipeline/runner.py  |   4 +-
+4 files changed, 154 insertions(+), 18 deletions(-)
+```
+
+**未修问题**（HIGH 4-7 / MEDIUM 8-14 / LOW 15-19）见上方 review 节，按"价值/成本"排序等待后续专项处理。
+
+**教训**：
+- 自动化测试应覆盖**配置/常量**与**实际运行路径**的双向一致（如 `DAILY_PHASES ⊆ phase_map.keys()`），否则 153 测试全过仍可能漏掉 CRITICAL #1
+- "写文件后再标 DB"是流水线类系统的通用原子模式，CRITICAL #2 的修复与 `phase_a.py` `_save_last_run_date` 的现有模式一致——**全代码库应统一采用 tmp+rename+mark 模式**
+- 设计文档 (`design.md` / `tasks.md` 2026-05-23 节) 与代码的漂移需要 review 类工作定期发现，HIGH #3 即源于此
+
+---
+
+# 2026-07-24 — Review 跟进批 #2（HIGH #4/6/7 + MEDIUM 8-14）
+
+**触发**：上方 review 章节中剩余 HIGH（#4 #6 #7）+ 全部 MEDIUM（#8-#14）共 10 个修复点。用户已明确：
+- HIGH #5 `LLM_CONCURRENT_MAX=100` **保留默认**（用户说明：deepseek-flash 上限 2000 并发，deepseek-pro 上限 500 并发，100 远低于限流线，无实际风险）
+- LOW 5 项**暂不处理**
+
+**方法**：3 个 @fixer 并行处理（`fix-1` 复用 DB session，`fix-4` 复用 phase_* 上下文，`fix-5` 复用 sources/processors 上下文），互不重叠文件。
+
+## 修复清单
+
+| 级别 | # | 位置 | 修复要点 | 测试 |
+|------|---|------|----------|------|
+| **HIGH** | #4 | `src/db/database.py` | `DatabaseClient` 加 `close()` / `__enter__` / `__exit__`（idempotent，conn=None 后再 close 安全） | `tests/test_database_client_context.py` (3 测试) |
+| **HIGH** | #6 | `src/pipeline/phase_e2.py:107-129` | `for paper in lazy_pending:` 循环体从 20 空格缩进改为 16 空格（一层 4 空格） | 无（视觉/工具化修复） |
+| **HIGH** | #7 | `tools/schedule_weekly.py` | 模块级 `mkdir`+`basicConfig`+`_check_mineru_token()` 移入 `if __name__ == "__main__":` 块；提取 `_setup_logging_and_dirs()` 函数 | 无（导入副作用修复） |
+| **MEDIUM** | #8 | `src/pipeline/phase_c.py:67-69` | bot 检测前 3 项 `in html` 改为 `in html_lower`（大小写一致） | 无（行为收敛修复） |
+| **MEDIUM** | #9 | `src/pipeline/phase_a.py` | `_save_last_run_date()` 加 `any_success` 守卫，全失败时不再延长回溯窗口 | 无（状态机修复） |
+| **MEDIUM** | #10 | `src/pipeline/phase_h.py:148` | 关键词标签 `{kw}` → `{html.escape(kw)}`；新增 `import html` | 无（XSS/HTML 完整性） |
+| **MEDIUM** | #11 | `src/pipeline/phase_e.py` | `ThreadPoolExecutor` 上方新增 5 行线程安全契约注释（DB 写入仅主线程） | 无（文档化） |
+| **MEDIUM** | #12 | `src/processors/paper_report_generator.py` | `generate_report()` 改 copy-on-write（`{**paper, ...}`），不再突变调用方 list | 无（语义修复） |
+| **MEDIUM** | #13 | `src/sources/publisher.py:684-704` | `NatureScraper` docstring 移到类体首句；`help()` 现在可见 | 无（API 文档化） |
+| **MEDIUM** | #14 | `crossref.py:109` / `rss.py:46` / `mineru_paper_parser.py:85` | 三个 client 类加 `close()` / `__enter__` / `__exit__`（idempotent） | 无（资源泄漏修复） |
+
+## 测试覆盖
+
+- `pytest tests/ -q` → **160 passed in 23.96s**
+- 本批新测试：**3**（`test_database_client_context.py`）
+- 累计三轮修复后新测试：**7**（`test_runner_phase_map.py` 2 + `test_phase_b_authors.py` 2 + `test_database_client_context.py` 3）
+- **无回归**
+
+## 改动统计
+
+```
+docs/tasks.md                            | 162 +++++++++++++++++++++++++++++-
+src/db/database.py                       |  18 ++++
+src/pipeline/phase_a.py                  |   9 +-
+src/pipeline/phase_b.py                  |  32 +++---
+src/pipeline/phase_c.py                  |   6 +-
+src/pipeline/phase_e.py                  |   5 +
+src/pipeline/phase_e2.py                 |  40 ++++----
+src/pipeline/phase_g.py                  |  12 ++-
+src/pipeline/phase_h.py                  |   3 +-
+src/pipeline/runner.py                   |   4 +-
+src/processors/mineru_paper_parser.py    |  14 +++
+src/processors/paper_report_generator.py |   5 +-
+src/sources/crossref.py                  |  16 +++
+src/sources/publisher.py                 |  10 +-
+src/sources/rss.py                       |  12 +++
+tools/schedule_weekly.py                 |  28 +++---
+16 files changed, 312 insertions(+), 64 deletions(-)
+```
+
+## 显式未修（用户决定）
+
+| # | 位置 | 原因 |
+|---|------|------|
+| HIGH #5 | `CFG.LLM_CONCURRENT_MAX=100` | 用户澄清：deepseek-flash 上限 2000 / deepseek-pro 上限 500，100 远低于限流线，**无实际风险** |
+| LOW #1-5 | runner.force 废弃 / phase_e subfield 白名单 / phase_c 404 不重试 / phase_g f-string / publisher.py Session 复用 | 用户指示**暂不处理** |
+
+## 教训
+
+- **资源拥有者必加 context manager**：DatabaseClient (#4) + 3 个 Session (#14) 一起补齐，**未来所有 client 类创建时即应自动实现**（写入 lint 规则或 design.md 强制规范）
+- **模块级副作用 = 隐藏 bug**：`schedule_weekly.py` (#7) 与早期 `config.py` 的 `_check_mineru_token()` 同根——**任何 `tools/*.py` 入口脚本**都应在 `if __name__ == "__main__":` 块内执行 I/O / logging
+- **线程安全是契约问题，不是类型问题**：`phase_e.py` (#11) 的注释是给未来维护者的提示，比加锁更实际
+- **copy-on-write 优于 in-place mutation**：`generate_report()` (#12) 修了一个易被忽视的接口污染，调用方再无需担心传入 list 被改写
+
 
