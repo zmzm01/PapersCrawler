@@ -140,6 +140,24 @@ class DatabaseClient:
         self.conn = sqlite3.connect(str(dbPath))
         self.conn.row_factory = sqlite3.Row
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection.
+
+        Idempotent — safe to call multiple times.
+        """
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            finally:
+                self.conn = None
+
+    def __enter__(self) -> "DatabaseClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
     # ------------------------------------------------------------------
     # 建表
     # ------------------------------------------------------------------
