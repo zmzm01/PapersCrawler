@@ -195,7 +195,6 @@ formula_fix:                    # LLM 总结中 LaTeX 公式修复
 | `scope_definition` | Phase E LLM prompt：子领域描述 + 关键词列表 | 中文 |
 | `irrelevant_fields` | 不相关领域边界，降低误判 | 中文 |
 | `context_gates` | 跨子域消歧规则，如 `fusion` → 直接归 D | 中文 |
-| `sub_domains_embedding` | Phase D 语义相似度向量 | 仅英文，<300 词/段 |
 
 `scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释掉。
 
@@ -219,7 +218,6 @@ formula_fix:                    # LLM 总结中 LaTeX 公式修复
 # 所有 reset 子命令均支持 --publisher 过滤
 python tools/reset_pipeline.py <子命令>
 
-reset-semantic     # 重算语义相似度分（Phase D）
 reset-relevance    # 重新 LLM 相关性判断（Phase E）
 reset-publisher    # 重试 Publisher 页面抓取（Phase C）
 reset-mineru       # 重试 MinerU PDF 解析（Phase E2）
@@ -296,8 +294,6 @@ Phase B (CrossRef) ──────── 补充元数据
        ↓
 Phase C (Publisher) ─────── 爬取页面 + PDF 链接
        ↓
-Phase D (sentence-transformers) ── 语义相似度（仅排序参考）
-       ↓
 Phase E (DeepSeek) ──────── LLM 判断相关性 → A/B/C/D 四级分类
        ↓
 Phase E2 (MinerU) ───────── PDF 全文解析
@@ -340,7 +336,6 @@ PapersCrawler/
 ├── data/                 # 运行时数据（gitignored）
 │   ├── reports/auto/     # 自动日报
 │   ├── reports/user/     # 用户自选报告
-│   └── models/           # sentence-transformers 本地模型
 └── docs/                 # 文档
     ├── design.md         #   架构设计
     └── tasks.md          #   变更记录
