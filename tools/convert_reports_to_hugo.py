@@ -70,6 +70,62 @@ def _count_papers(content: str) -> int:
     return sum(1 for h in headings if h.strip() not in ("目录", "Table of Contents", "---"))
 
 
+def _validate_heading_structure(content: str, src_name: str) -> list:
+    """Validate report heading structure and return a list of warning strings.
+
+    A well-formed report has:
+      - Exactly one ``#`` (h1) title at the top.
+      - Each ``##`` (h2) paper section separated from the previous one by a
+        ``---`` horizontal rule. A ``##`` that appears *without* an intervening
+        ``---`` since the last ``##`` is likely a misplaced sub-heading leaked
+        from an LLM summary field (the 20260608 defect pattern).
+
+    Parameters
+    ----------
+    content : str
+        Full report Markdown content.
+    src_name : str
+        Source filename, used in warning messages.
+
+    Returns
+    -------
+    list
+        List of warning message strings (empty if structure is sound).
+    """
+    warnings = []
+    lines = content.splitlines()
+    h1_count = 0
+    h2_since_separator = False  # True once a ## has been seen without a following ---
+    last_h2_line = -1
+
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if re.match(r"^#\s+\S", stripped):
+            h1_count += 1
+        elif re.match(r"^##\s+\S", stripped):
+            # Skip TOC heading
+            title_text = re.sub(r"^##\s+", "", stripped)
+            if title_text.strip() in ("目录", "Table of Contents"):
+                continue
+            if h2_since_separator:
+                # A ## appeared without a --- since the last ## → misplaced
+                warnings.append(
+                    f"  [{src_name}] L{idx}: 疑似错位的 ## 子标题 "
+                    f"(缺少 --- 分隔符): {title_text!r}"
+                )
+            h2_since_separator = True
+            last_h2_line = idx
+        elif stripped == "---":
+            h2_since_separator = False
+
+    if h1_count != 1:
+        warnings.append(
+            f"  [{src_name}] 期望恰好 1 个 # 一级标题，实际 {h1_count} 个"
+        )
+
+    return warnings
+
+
 def _build_description(content: str, date_str: str) -> str:
     """Generate a short description for the report."""
     paper_count = _count_papers(content)
@@ -94,6 +150,13 @@ def convert_report(src_path: Path, dry_run: bool = False) -> Path | None:
     """
     stem = src_path.stem  # e.g. report_20260615
     content = src_path.read_text(encoding="utf-8")
+
+    # Validate heading structure (warn but do not block conversion)
+    warnings = _validate_heading_structure(content, src_path.name)
+    if warnings:
+        print(f"⚠ Heading structure warnings for {src_path.name}:")
+        for w in warnings:
+            print(w)
 
     # Extract title from first # heading
     title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
@@ -178,10 +241,17 @@ def main():
             print("No auto reports found. Use --report or --all to specify.")
             return
 
-    # Clean old content and convert
+    # Clean old auto-generated content before re-converting.
+    # Only remove files whose source is "auto" (per front matter) to avoid
+    # clobbering user-authored reports that may also match report_*.md.
     if args.all and not args.dry_run:
         for old in CONTENT_DIR.glob("report_*.md"):
-            old.unlink()
+            try:
+                txt = old.read_text(encoding="utf-8")
+                if re.search(r"^source:\s*\"?auto\"?", txt, re.MULTILINE):
+                    old.unlink()
+            except OSError:
+                pass
 
     converted = 0
     for src in sources:
@@ -203,6 +273,11 @@ def main():
         )
         if result.returncode == 0:
             print(f"Hugo build successful: {SITE_DIR / 'public'}")
+            # Surface stderr (warnings) even on success — Hugo emits
+            # deprecation notices and render warnings there.
+            if result.stderr.strip():
+                print("Hugo warnings/info:")
+                print(result.stderr)
         else:
             print(f"Hugo build failed:\n{result.stderr}", file=sys.stderr)
             sys.exit(1)
