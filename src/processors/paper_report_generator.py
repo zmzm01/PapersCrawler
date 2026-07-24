@@ -6,7 +6,7 @@ paper_report_generator.py (v2)
 核心功能：
 - 接收单篇或多篇论文的结构化信息（标题、作者、日期、DOI、URL 以及 LLM 生成的总结字段）。
 - 自动生成格式化的 Markdown 或 HTML 报告，支持目录（TOC）生成。
-- 处理 main_results_and_physics 字段中的 Markdown 标题，自动将其重定级（re-level）以适应报告整体结构。
+- 处理所有 LLM 总结字段中的 Markdown 标题，自动将其重定级（re-level）以适应报告整体结构。
 
 模块组成概览：
 
@@ -15,7 +15,7 @@ paper_report_generator.py (v2)
 - _process_text_for_markdown: 处理普通文本字段，修复 LaTeX 并将 \n 转为 Markdown 强制换行（行尾两个空格 + 换行）。
 - _process_text_for_html: 处理普通文本字段用于 HTML 输出（修复 LaTeX → HTML 转义 → \n 替换为 <br>）。
 - _adjust_headings: 标题重定级算法——将 Markdown 文本中的内部标题上移/下移若干级别。
-- _process_results_markdown: 综合处理 main_results_and_physics 字段（修复 LaTeX + 标题重定级 + 换行转换）。
+- _process_results_markdown: 综合处理所有 LLM 总结字段（修复 LaTeX + 标题重定级 + 换行转换）。
 - _authors_str: 将作者列表（List[str]）转换为逗号分隔的字符串。
 - _make_markdown_section: 为单篇论文生成 Markdown 片段（## 标题 + 元信息 + 结构化总结内容）。
 - _make_html_section: 为单篇论文生成 HTML 片段（<section> + 元信息 + 结构化总结内容）。
@@ -53,12 +53,37 @@ def _fix_latex_backslashes_for_display(text: str) -> str:
     return text.replace('\\\\', '\\')
 
 
+def _convert_literal_newlines(text: str) -> str:
+    r"""将字面量 ``\n``（反斜杠+n 两个字符）转换为真实换行符。
+
+    背景：LLM 在 JSON Output 模式下偶尔会把换行符写成转义序列 ``\\n``，
+    经 ``json.loads`` 解码后变成字面量 ``\n``（反斜杠+n 两个字符）而非真实换行。
+    后续按 ``'\n'`` 切行或按行首 ``^#`` 匹配标题的逻辑会因此失效——整段文本
+    仍是一行，内部的 ``##`` 标题不在行首，无法被 ``_adjust_headings`` 识别。
+
+    安全约束：只转换反斜杠后紧跟 ``n`` 且 ``n`` 后不跟字母的序列，以避免破坏
+    LaTeX 命令（如 ``\nabla``、``\neq``、``\nu``、``\newline`` 等）。
+
+    Parameters
+    ----------
+    text : str
+        可能含有字面量 ``\n`` 的文本。
+
+    Returns
+    -------
+    str
+        字面量 ``\n`` 已转换为真实换行符的文本。
+    """
+    return re.sub(r'\\n(?![a-zA-Z])', '\n', text)
+
+
 def _process_text_for_markdown(text: str) -> str:
     """
     处理普通字段用于 Markdown 输出：
 
     1. 修复 LaTeX 反斜杠（_fix_latex_backslashes）
-    2. 将 \\n 转换为 Markdown 强制换行：
+    2. 将字面量 ``\\n`` 转换为真实换行符（_convert_literal_newlines）
+    3. 将 \\n 转换为 Markdown 强制换行：
        Markdown 中，行尾的两个空格后跟换行符表示强制换行（hard line break，类似 <br>）。
        这样 LLM 输出的多行文本在 Markdown 渲染后仍能保持原有的段落和分行结构。
 
@@ -67,6 +92,7 @@ def _process_text_for_markdown(text: str) -> str:
     （注意：每行末尾增加了两个空格，配合换行符形成 Markdown hard break）
     """
     text = _fix_latex_backslashes_for_display(text)
+    text = _convert_literal_newlines(text)
     lines = text.split('\n')
     return '  \n'.join(lines)
 
@@ -157,22 +183,27 @@ def _adjust_headings(markdown_text: str, base_level: int = 4) -> str:
 
 def _process_results_markdown(text: str, base_heading_level: int = 4) -> str:
     """
-    专门处理 main_results_and_physics 字段：
+    处理 LLM 生成的总结字段用于 Markdown 输出（通用处理）。
 
     处理步骤（按顺序）：
     1. _fix_latex_backslashes_for_display: 修复 LLM JSON 输出中的双反斜杠
-    2. _adjust_headings: 调整内部标题层级，使其适配报告的主体结构
-    3. 将 \\n 转换为 Markdown 强制换行（行尾两个空格 + 换行符）
+    2. _convert_literal_newlines: 将字面量 ``\\n`` 转换为真实换行符
+    3. _adjust_headings: 调整内部标题层级，使其适配报告的主体结构
+    4. 将 \\n 转换为 Markdown 强制换行（行尾两个空格 + 换行符）
 
-    为什么这个字段需要特殊处理？
-    - main_results_and_physics 是唯一一个内部可能包含 Markdown 标题的字段。
-    - 其他字段（如 motivation_and_goal、key_setup_and_method）通常没有标题，只需基本的转义处理。
+    为什么所有 LLM 总结字段都需要标题重定级？
+    - LLM 可能在任意总结字段（motivation_and_goal、key_setup_and_method、
+      main_results_and_physics、take_home_message）中使用 # 或 ## 等高级标题组织内容。
+    - 但在报告整体结构中，论文标题本身已用 ## 二级标题，论文内部子标题用 ### 三级标题，
+      任何 LLM 输出的标题都应在此基础上进一步缩进（默认 #### 四级起）。
+    - 若不统一重定级，LLM 在 key_setup_and_method 等字段中输出的 ## 标题会与论文顶级
+      标题同级，破坏文档层次并导致 TOC 错误收录这些子标题（见 20260608 报告缺陷）。
     - 通过 _adjust_headings 重新定位标题级别，确保内部标题不会破坏文档的整体层次结构。
 
     Parameters
     ----------
     text : str
-        main_results_and_physics 的原始文本（来自 LLM JSON 输出）
+        LLM 总结字段的原始文本（来自 LLM JSON 输出）
     base_heading_level : int
         内部标题的起始级别，默认为 4（对应 #### 标题）
 
@@ -182,6 +213,7 @@ def _process_results_markdown(text: str, base_heading_level: int = 4) -> str:
         处理后的 Markdown 文本
     """
     text = _fix_latex_backslashes_for_display(text)
+    text = _convert_literal_newlines(text)
     text = _adjust_headings(text, base_level=base_heading_level)
     lines = text.split('\n')
     text = '  \n'.join(lines)
@@ -243,6 +275,8 @@ def _make_markdown_section(paper: Dict, heading_level: int = 2,
     ### 主要结果与物理内涵
     {main_results_and_physics 内容}  ← 内部标题已通过 _adjust_headings 重定级
     ### 要点总结
+    {take_home_message 内容}  ← 同样经过标题重定级
+    ### 要点总结
     {take_home_message 内容}
     ---                           ← 分割线，分隔不同论文
 
@@ -284,10 +318,13 @@ def _make_markdown_section(paper: Dict, heading_level: int = 2,
     pdf_url = paper.get('pdf_url', '')
     abstract = _process_text_for_markdown(paper.get('abstract', ''))
     one_sentence = _process_text_for_markdown(paper.get('one_sentence', ''))
-    motivation = _process_text_for_markdown(paper.get('motivation_and_goal', ''))
-    method = _process_text_for_markdown(paper.get('key_setup_and_method', ''))
+    # 所有 LLM 生成的总结字段都可能包含 Markdown 标题，统一通过
+    # _process_results_markdown 进行 LaTeX 修复 + 标题重定级 + 换行转换，
+    # 防止 LLM 输出的 ## 等高级标题破坏报告整体层次结构。
+    motivation = _process_results_markdown(paper.get('motivation_and_goal', ''), heading_base)
+    method = _process_results_markdown(paper.get('key_setup_and_method', ''), heading_base)
     results = _process_results_markdown(paper.get('main_results_and_physics', ''), heading_base)
-    take_home = _process_text_for_markdown(paper.get('take_home_message', ''))
+    take_home = _process_results_markdown(paper.get('take_home_message', ''), heading_base)
 
     md = f"{h} {title}\n\n"
     md += f"**作者**: {authors}  \n"
@@ -323,18 +360,32 @@ def _make_markdown_section(paper: Dict, heading_level: int = 2,
 # ======================================================================
 
 
+# 子领域 key → 中文短标签的固定映射。
+#
+# 早期实现基于 description 子串匹配（如 "控制"/"AI"/"束流" 等）生成标签，
+# 但 description 文本会同时包含多个方向的关键词（例如 plasma_physics 的描述
+# 中含有"控制"二字），导致贪婪子串匹配把 plasma_physics 误判为
+# "加速器控制与AI"。改为直接按 key 查表，避免歧义。
+# 新增子领域时在此处补充一行即可。
+_SUBDOMAIN_LABEL_MAP: Dict[str, str] = {
+    "acceleration": "加速与后加速",
+    "plasma_physics": "等离子体物理与诊断",
+    "beam_applications": "束流诊断与辐照",
+    "advanced_technology": "束流传输与等离子体光学",
+    "laser_wakefield_acceleration": "尾场加速",
+}
+
+
 def _build_subdomain_labels(scope_definition: Dict) -> Dict[str, str]:
     """从 scope_definition 生成子领域中文短标签。
 
-    从每条 description 的首个有意义短语提取简短标签，用于在报告元数据中显示。
-    例如:
-        "本方向研究高功率激光与固体/气体靶相互作用驱动离子和质子加速。..."
-        → "加速"
+    通过固定的 ``_SUBDOMAIN_LABEL_MAP`` 按 subdomain key 查表得到中文短标签，
+    用于在报告元数据中显示。未在映射表中的 key 回退为 key 本身。
 
     Parameters
     ----------
     scope_definition : dict
-        子领域定义字典。
+        子领域定义字典（来自 ``configs/keywords.yaml`` 的 ``scope_definition``）。
 
     Returns
     -------
@@ -342,23 +393,8 @@ def _build_subdomain_labels(scope_definition: Dict) -> Dict[str, str]:
         ``{subdomain_key: short_label}`` 映射。
     """
     labels = {}
-    for key, section in scope_definition.items():
-        desc = section.get("description", "").strip()
-        # 按特异性从高到低匹配关键词，避免模糊匹配覆盖精确匹配
-        if "控制" in desc or "AI" in desc or "智能" in desc:
-            labels[key] = "加速器控制与AI"
-        elif "束流" in desc and "诊断" in desc:
-            labels[key] = "束流诊断与辐照"
-        elif "束流" in desc and "传输" in desc:
-            labels[key] = "束流传输与等离子体光学"
-        elif "加速" in desc and "驱动" in desc:
-            labels[key] = "加速与后加速"
-        elif "等离子体" in desc and "诊断" in desc:
-            labels[key] = "等离子体物理与诊断"
-        elif "尾场" in desc:
-            labels[key] = "尾场加速"
-        else:
-            labels[key] = key  # fallback 保留原始 key
+    for key in scope_definition:
+        labels[key] = _SUBDOMAIN_LABEL_MAP.get(key, key)
     return labels
 
 
