@@ -1849,3 +1849,33 @@ laser_wakefield_acceleration → 尾场加速
 - **不要盲信 meta 标签内容语义**：`citation_abstract` 名字暗示摘要文本，但 Cambridge 部分页面实际存放图片 URL。外部数据源的内容语义需校验，不能仅凭标签名假设。
 - **JSON 转义边界陷阱**：LLM JSON Output 模式下换行符的转义层级（`\\n` → 字面量 `\n` vs 真实换行）易混淆，处理时需显式规范化，且注意保护同形 LaTeX 命令。
 - **子串匹配标签是脆弱设计**：description 文本会同时包含多方向关键词，贪婪子串匹配必然产生歧义。key→label 固定映射表无歧义、可维护、新增成本极低，应优先采用。
+
+---
+
+# 2026-07-24 — 移除 Phase D（embedding 余弦相似度）
+
+**摘要**：Phase D（sentence-transformers 余弦相似度）从流水线中**整体移除**——不再作为阶段、不再写 DB 列、不再读 `sub_domains_embedding` 配置。
+
+**移除原因**：
+- 默认 `SKIP_PHASE_D = True`（永远跳过），整段代码已是死代码
+- `get_papers_sorted_by_semantic()` 全代码库零调用方；`papers.html` 不渲染 `semantic_similarity_score`/`semantic_best_subdomain`
+- 唯一声明用途（"WebUI Papers 页排序参考"）与代码现状脱节
+- 论文量级小（每轮 ~200-400 篇），DeepSeek API 成本极低，语义分门禁无收益
+
+**变更范围**（7 个独立 commit）：
+
+| # | 类型 | 提交信息 | 简述 |
+|---|------|---------|------|
+| 1 | `refactor` | remove Phase D semantic filter from pipeline | 删 `phase_d.py`、`SemanticFilter` 类、Runner/Config/WebUI/templates 中 D 阶段注册；移除 6 个 SemanticFilter 测试 |
+| 2 | `refactor` | drop semantic columns and methods from DB layer | DB 5 列 + 2 方法 + 白名单 + 阶段统计 + `get_papers()` SELECT；新增 `tools/migrate_db_v3.py` |
+| 3 | `refactor` | remove Phase D reset hooks | 删 `reset-semantic` 子命令 + `cmd_reset_semantic()` + `SEMANTIC_RESET`；移除 5 列重置 SQL |
+| 4 | `refactor` | remove sub_domains_embedding from keyword config | 删 `CFG.SEMANTIC_MODEL_PATH`、`CFG.SKIP_PHASE_D`、`load_keywords()` 中 `sub_domains_embedding` 字段；移除 `keywords.yaml.example` 配置段 + `settings.yaml.example` `D:` 行 + `semantic:` 节 |
+| 5 | `test` | remove last Phase D test references | 移除 `test_relevance.py` 中 `sub_domains_embedding` dict 字段 + 注释行 |
+| 6a | `docs` | remove Phase D references from design.md and README.md | 全部清完（design 架构图、Schema 段、决策章节、字段表、Reset 段；README 字段表、reset 示例、架构图、目录树） |
+| 6b | `docs` | append 2026-07-24 移除 Phase D 备注 to tasks.md | **本节**，保留所有历史记录（30+ 处）作事实档案 |
+| 7 | `chore` | remove sentence-transformers dependency | `requirements.txt` 等依赖文件中移除 `sentence-transformers` |
+
+**验证**：153/153 测试全过；DB 5 列已从 `data/papers.db` 物理删除（`migrate_db_v3.py` 跑通）；WebUI 路由 /papers?sort=created|published 不再读 semantic 字段；reset_pipeline --help 不再有 `reset-semantic` 子命令。
+
+**保留历史记录**：本文件上方所有提到 Phase D / `semantic_filter_*` / `sub_domains_embedding` / `SemanticFilter` / `sentence-transformers` / `bge-base-en-v1.5` 的行/段/章节均**完整保留**——它们是事实档案（实施记录、调试经验、API 文档），与最终代码解耦后仍有参考价值。删除它们会让"git log 之前的 commits"失去上下文。
+
