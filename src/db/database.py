@@ -16,7 +16,6 @@ db.py
   │    Phase A: rss_fetched_*          → RSS 发现                 │
   │    Phase B: cr_metadata_fetched_*  → CrossRef 元数据补充      │
   │    Phase C: publisher_page_fetched_* → 期刊页面抓取           │
-  │    Phase D: semantic_filter_*         → 语义相似度初筛              │
   │    Phase E: llm_relevance_*         → LLM 相关性判断          │
   │    Phase F: llm_summary_*           → LLM 论文总结            │
   │                                                                │
@@ -99,14 +98,11 @@ class DatabaseClient:
         "cr_metadata_fetched_date",
         "publisher_page_fetched_status", "publisher_page_fetched_error",
         "publisher_page_fetched_date",
-        "semantic_filter_status", "semantic_filter_error",
-        "semantic_filter_date",
         "llm_relevance_status", "llm_relevance_error",
         "llm_relevance_date",
         "llm_summary_status", "llm_summary_error", "llm_summary_date",
         "mineru_parse_status", "mineru_parse_error", "mineru_parse_date",
         "report_status", "report_date",
-        "semantic_similarity_score", "semantic_best_subdomain",
         "llm_relevance_result",  # deprecated — use llm_relevance_category
         "llm_relevance_category", "llm_relevance_subfields",
         "llm_relevance_confidence",
@@ -180,7 +176,6 @@ class DatabaseClient:
     Phase A — RSS 抓取: 无单独状态列（DOI 入库即完成）
     Phase B — CrossRef 元数据: cr_metadata_fetched_*
     Phase C — 出版商页面:      publisher_page_fetched_*
-    Phase D — 语义相似度初筛:   semantic_filter_*
     Phase E — LLM 相关性:      llm_relevance_*
     Phase F — LLM 总结:        llm_summary_*
     Phase G — 报告生成:        report_*
@@ -241,13 +236,6 @@ class DatabaseClient:
             mineru_fulltext TEXT,
             mineru_output_dir TEXT,
 
-            -- 语义相似度初筛（参考排序，不参与过滤）
-            semantic_similarity_score REAL,
-            semantic_filter_status TEXT DEFAULT 'pending',
-            semantic_filter_error TEXT,
-            semantic_filter_date TEXT,
-            semantic_best_subdomain TEXT,
-
             -- 报告生成状态
             report_status TEXT DEFAULT 'pending',
             report_date TEXT,
@@ -285,20 +273,6 @@ class DatabaseClient:
             except sqlite3.OperationalError:
                 pass  # 列已存在则跳过
 
-        # ---- 迁移: 为旧数据库添加语义过滤列 ----
-        semantic_columns = [
-            "semantic_similarity_score REAL",
-            "semantic_filter_status TEXT DEFAULT 'pending'",
-            "semantic_filter_error TEXT",
-            "semantic_filter_date TEXT",
-        ]
-        for col_def in semantic_columns:
-            col_name = col_def.split()[0]
-            try:
-                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # 列已存在则跳过
-
         # ---- 迁移: 为旧数据库添加报告状态列 ----
         report_columns = [
             "report_status TEXT DEFAULT 'pending'",
@@ -310,12 +284,6 @@ class DatabaseClient:
                 self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
             except sqlite3.OperationalError:
                 pass  # 列已存在则跳过
-
-        # ---- 迁移: 为旧数据库添加语义最佳子领域列 ----
-        try:
-            self.conn.execute("ALTER TABLE papers ADD COLUMN semantic_best_subdomain TEXT")
-        except sqlite3.OperationalError:
-            pass  # 列已存在则跳过
 
         # ---- 迁移: 为旧数据库添加发现来源列 ----
         try:
@@ -911,38 +879,6 @@ class DatabaseClient:
         self.conn.commit()
 
     # ==================================================================
-    # Phase D: 语义相似度初筛
-    # ==================================================================
-
-    def update_semantic_filter(self, doi, score, status, status_date, best_subdomain=None):
-        """
-        Phase D 专用: 存储语义相似度结果（参考排序用，不参与过滤）。
-
-        Args:
-            doi:            论文 DOI
-            score:          余弦相似度得分 (0~1)
-            status:         FetchStatus 状态值
-            status_date:    处理日期时间字符串
-            best_subdomain: 最佳匹配子领域标签，如 "ion_acceleration" (可选)
-        """
-        if not self.paper_doi_exists(doi):
-            raise DataBaseDOINotExists(
-                f"DOI {doi} not found in DB, cannot update semantic filter."
-            )
-        self.conn.execute(
-            """
-            UPDATE papers
-            SET semantic_similarity_score = ?,
-                semantic_filter_status = ?,
-                semantic_filter_date = ?,
-                semantic_best_subdomain = ?
-            WHERE doi = ?
-            """,
-            (score, status, status_date, best_subdomain, doi),
-        )
-        self.conn.commit()
-
-    # ==================================================================
     # 报告阶段查询方法
     # ==================================================================
 
@@ -1027,32 +963,6 @@ class DatabaseClient:
         """)
         return cur.fetchall()
 
-    def get_papers_sorted_by_semantic(self, limit=50):
-        """
-        返回论文列表，按语义相似度降序排列（无分数的排在末尾按日期降序）。
-
-        用于 Web UI Papers 页面展示。
-        当 Phase D 关闭（SKIP_PHASE_D=True）时无分数，自动回退到日期排序。
-
-        Args:
-            limit: 返回最大行数
-
-        Returns:
-            list[sqlite3.Row]
-        """
-        cur = self.conn.execute("""
-        SELECT doi, title, abstract, journal, publisher,
-               paperdate_rss, semantic_similarity_score,
-               semantic_best_subdomain,
-               llm_relevance_result, llm_relevance_status
-        FROM papers
-        ORDER BY semantic_similarity_score IS NOT NULL DESC,
-                 semantic_similarity_score DESC,
-                 paperdate_rss DESC
-        LIMIT ?
-        """, (limit,))
-        return cur.fetchall()
-
     def get_papers(self, limit=100, sort_by="created"):
         """
         返回论文列表，支持按入库日期或发表日期排序。
@@ -1079,7 +989,6 @@ class DatabaseClient:
         SELECT doi, title, abstract, journal, publisher,
                paperdate_rss, paperdate_crossref, paperdate_page,
                created_date,
-               semantic_similarity_score, semantic_best_subdomain,
                llm_relevance_result, llm_relevance_category,
                llm_relevance_subfields, llm_relevance_status
         FROM papers
@@ -1159,7 +1068,6 @@ class DatabaseClient:
         phase_configs = [
             ("cr_metadata_fetched", "cr_metadata_fetched_status", "cr_metadata_fetched_error"),
             ("publisher_page",      "publisher_page_fetched_status", "publisher_page_fetched_error"),
-            ("semantic_filter",     "semantic_filter_status", "semantic_filter_error"),
             ("llm_relevance",       "llm_relevance_status", "llm_relevance_error"),
             ("mineru_parse",        "mineru_parse_status", "mineru_parse_error"),
             ("llm_summary",         "llm_summary_status", "llm_summary_error"),
