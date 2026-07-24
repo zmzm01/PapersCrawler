@@ -64,9 +64,9 @@ def _has_bot_markers(html, page_title=""):
     html_lower = html.lower()
     title_lower = page_title.lower()
     return (
-        "challenge-platform" in html
-        or "_cf_chl_opt" in html
-        or "cf-browser-verification" in html
+        "challenge-platform" in html_lower
+        or "_cf_chl_opt" in html_lower
+        or "cf-browser-verification" in html_lower
         or ("cf-ray" in html_lower and len(html) < 2000)
         or ("turnstile" in html_lower and "challenge" in html_lower)
         or "radware" in html_lower
