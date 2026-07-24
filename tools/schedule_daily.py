@@ -97,5 +97,10 @@ if __name__ == "__main__":
     )
 
     logger = logging.getLogger(__name__)
+
+    # 在 logging.basicConfig 配置完成后再检测 token，避免 warning 偷装默认 handler
+    from config import _check_mineru_token
+    _check_mineru_token()
+
     _run_auto_reset(args)
     run_daily()
