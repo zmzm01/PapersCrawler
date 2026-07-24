@@ -73,6 +73,13 @@ MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 # Web UI journal enable/disable 覆写文件
 JOURNAL_OVERRIDES_PATH = DATA_DIR / "journal_overrides.json"
 
+# 流水线运行时状态目录（跨运行持久化的小型 JSON 状态）
+STATE_DIR = DATA_DIR / "state"
+
+# Phase A-CR 上次成功运行时间戳记录文件
+# 用于「智能回溯」：故障后自动按缺口补拉（封顶 CROSSREF_LOOKBACK_DAYS_MAX）
+LAST_RUN_PATH = STATE_DIR / "last_run.json"
+
 # LLM Prompt 模板目录 (configs/prompts/*.yaml)
 PROMPTS_DIR = CONFIG_DIR / "prompts"
 
@@ -210,7 +217,11 @@ CFG.SKIP_PHASE_G = False
 CFG.SKIP_PHASE_H = True
 
 # ---------- 流水线参数 ----------
+# 日常回溯天数（默认 1 天，与「每日增量」语义一致）
 CFG.CROSSREF_LOOKBACK_DAYS = 1
+# 智能回溯硬上限：故障补漏时实际回溯不超过此值
+# 实际回溯 = min(CROSSREF_LOOKBACK_DAYS, today - last_successful_run)
+CFG.CROSSREF_LOOKBACK_DAYS_MAX = 7
 CFG.MAX_PAPERS_PER_PHASE = 0
 CFG.SKIP_NATURE_NEWS = True
 
@@ -297,6 +308,7 @@ def _apply_settings(settings):
     # 流水线参数
     pp = settings.get("pipeline", {})
     CFG.CROSSREF_LOOKBACK_DAYS = pp.get("crossref_lookback_days", CFG.CROSSREF_LOOKBACK_DAYS)
+    CFG.CROSSREF_LOOKBACK_DAYS_MAX = pp.get("crossref_lookback_days_max", CFG.CROSSREF_LOOKBACK_DAYS_MAX)
     CFG.MAX_PAPERS_PER_PHASE = pp.get("max_papers_per_phase", CFG.MAX_PAPERS_PER_PHASE)
     CFG.SKIP_NATURE_NEWS = pp.get("skip_nature_news", CFG.SKIP_NATURE_NEWS)
     CFG.PREFETCH_NON_RESEARCH = pp.get("prefetch_non_research", CFG.PREFETCH_NON_RESEARCH)
