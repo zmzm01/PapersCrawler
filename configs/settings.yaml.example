@@ -14,7 +14,6 @@ skip_phases:
   A_CR: false        # CrossRef 发现路径
   B: false           # CrossRef 元数据补全
   C: false           # Publisher 页面爬取
-  D: false           # 语义相似度排序（仅排序参考，不参与过滤）
   E: false           # LLM 相关性判断
   E2: false          # MinerU PDF 解析
   F: false           # LLM 论文总结
@@ -82,10 +81,3 @@ formula_fix:
   skip: false
   # true = 跳过 needs_fix() 检测，所有字段强制送修
   force: false
-
-# ---------------------------------------------------------------------------
-# 语义模型（Phase D）
-# ---------------------------------------------------------------------------
-semantic:
-  # 模型路径（相对于 data/ 目录，首次需从 HuggingFace 下载后放入）
-  model_path: "models/bge-base-en-v1.5"
