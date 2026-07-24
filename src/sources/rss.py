@@ -63,6 +63,18 @@ class RSSProcessor:
             "Connection": "keep-alive",
         })
 
+    def close(self) -> None:
+        """关闭 HTTP Session，释放连接池资源。"""
+        if self.session is not None:
+            self.session.close()
+            self.session = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def fetch_rss(self, url: str, max_retries: int = 3) -> str:
         """
         通过复用 Session 获取指定 RSS Feed 的原始文本内容。

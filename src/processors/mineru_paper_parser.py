@@ -88,6 +88,20 @@ class MinerUParser:
             "Authorization": f"Bearer {token}",
         })
 
+    # ---------- 上下文管理器支持 ----------
+
+    def close(self) -> None:
+        """关闭 HTTP Session，释放连接池资源。"""
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     # ---------- 公开接口 ----------
 
     def parse_pdf(self, pdf_path, output_dir=None):
