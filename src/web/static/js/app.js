@@ -5,6 +5,7 @@
 const I18N = {
   zh: {
     'nav.home': '主页',
+    'nav.dashboard': '仪表盘',
     'nav.pipeline': '流水线',
     'nav.papers': '论文',
     'nav.report': '报告',
@@ -106,6 +107,8 @@ const I18N = {
     'home.config_desc': '切换 SKIP 开关（持久化到文件）、编辑 publishers.yaml 和 keywords.yaml',
     'home.config_notes_skip': 'SKIP 开关影响 Web UI Pipeline 页面按钮状态；CLI 使用 config.py 默认值。',
     'home.config_notes_yaml': 'YAML 编辑器保存时做语法校验，需要二次确认。',
+    'home.dashboard_desc': '查看流水线状态图表、论文数量、待报告统计及错误分解。',
+    'home.dashboard_notes': '每 10 秒自动刷新，展示流水线实时健康状况。',
     'home.datasources_desc': '启用或禁用期刊及其 RSS / CrossRef 数据源。',
     'datasources.title': '数据源',
     'datasources.desc': '启用或禁用期刊及其数据源（RSS / CrossRef）。更改保存到独立的覆写文件，下次运行流水线时生效。',
@@ -150,6 +153,19 @@ const I18N = {
     'subscriptions.sending': '发送中...',
     'subscriptions.no_active': '暂无启用状态的订阅者',
 
+    'dashboard.title': '仪表盘',
+    'dashboard.total_papers': '论文总数',
+    'dashboard.pending_report': '待报告',
+    'dashboard.publishers': '出版社',
+    'dashboard.phases': '流水线阶段',
+    'dashboard.phase_charts': '流水线状态',
+    'dashboard.breakdown_title': '失败 / 跳过原因',
+    'dashboard.weekly_title': '近 7 日收集趋势',
+    'dashboard.weekly_loading': '加载中...',
+    'dashboard.weekly_reportable': '待报告',
+    'dashboard.weekly_failed': '处理失败',
+    'dashboard.weekly_other': '其他/处理中',
+
     'config.settings_title': 'settings.yaml',
     'config.settings_hint': '运行参数：流水线、爬虫、LLM API、FormulaFixer 等设置。修改后需重启流水线。',
     'config.prompts_title': 'LLM 提示词',
@@ -158,6 +174,7 @@ const I18N = {
 
   en: {
     'nav.home': 'Home',
+    'nav.dashboard': 'Dashboard',
     'nav.pipeline': 'Pipeline',
     'nav.papers': 'Papers',
     'nav.report': 'Report',
@@ -263,6 +280,8 @@ const I18N = {
     'home.config_desc': 'Toggle SKIP switches (persisted to file), edit publishers.yaml and keywords.yaml',
     'home.config_notes_skip': 'SKIP toggles affect Web UI Pipeline buttons; CLI uses config.py defaults.',
     'home.config_notes_yaml': 'YAML editors validate syntax on save and require second confirmation.',
+    'home.dashboard_desc': 'View pipeline status charts, paper counts, pending report stats and error breakdowns.',
+    'home.dashboard_notes': 'Auto-refreshes every 10s. Shows real-time pipeline health.',
     'home.datasources_desc': 'Enable or disable journals and their RSS / CrossRef data sources.',
     'home.visit': 'Go to',
     'subscriptions.title': 'Email Subscriptions',
@@ -296,6 +315,19 @@ const I18N = {
     'subscriptions.send_btn': 'Send',
     'subscriptions.sending': 'Sending...',
     'subscriptions.no_active': 'No active subscribers',
+
+    'dashboard.title': 'Dashboard',
+    'dashboard.total_papers': 'Total Papers',
+    'dashboard.pending_report': 'Pending Report',
+    'dashboard.publishers': 'Publishers',
+    'dashboard.phases': 'Pipeline Phases',
+    'dashboard.phase_charts': 'Pipeline Status',
+    'dashboard.breakdown_title': 'Failed / Skipped reasons',
+    'dashboard.weekly_title': 'Weekly Collection (Last 7 Days)',
+    'dashboard.weekly_loading': 'Loading...',
+    'dashboard.weekly_reportable': 'Reportable',
+    'dashboard.weekly_failed': 'Processing Failed',
+    'dashboard.weekly_other': 'Other / Pending',
   },
 };
 

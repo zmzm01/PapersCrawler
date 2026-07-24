@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -155,7 +156,16 @@ def _pipeline_status():
                 out["failed_breakdown"] = breakdown
             phases[ps["label"]] = out
         effective_skip = {k: _get_effective_skip().get(k, False) for k in PHASE_ORDER}
-        return {"total": total, "phases": phases, "effective_skip": effective_skip}
+        # Count papers pending report (llm_summary success but not yet reported)
+        pending_report = db.conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE llm_summary_status = 'success' AND report_date IS NULL"
+        ).fetchone()[0]
+        return {
+            "total": total,
+            "phases": phases,
+            "effective_skip": effective_skip,
+            "pending_report": pending_report,
+        }
     finally:
         db.conn.close()
 
@@ -266,6 +276,20 @@ async def home_page(request: Request):
     )
 
 
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    status_data = _pipeline_status()
+    publishers = load_publishers()
+    return templates.TemplateResponse(
+        request, "dashboard.html", {
+            "publisher_count": len(publishers),
+            "phase_count": len(PHASE_ORDER),
+            "initial_status": status_data,
+        }
+    )
+
 # ── Pipeline ───────────────────────────────────────────────────────────────────
 
 @app.get("/pipeline", response_class=HTMLResponse)
@@ -280,6 +304,65 @@ async def pipeline_page(request: Request):
 @app.get("/pipeline/status")
 async def pipeline_status_api():
     return JSONResponse(_pipeline_status())
+
+
+@app.get("/pipeline/weekly-stats")
+async def pipeline_weekly_stats():
+    """Return per-day stats for the last 7 days: total discovered, reportable, summary_failed."""
+    db = DatabaseClient(DB_PATH)
+    try:
+        db.init_db_papers()
+        today = datetime.now()
+        # Build 7-day date list (today-6 ... today)
+        days = []
+        for i in range(6, -1, -1):
+            d = today - timedelta(days=i)
+            days.append({
+                "date": d.strftime("%Y%m%d"),
+                "weekday": d.strftime("%a"),
+                "total": 0,
+                "reportable": 0,
+                "summary_failed": 0,
+            })
+
+        day_start = days[0]["date"]
+        day_end = days[-1]["date"]
+        rows = db.conn.execute("""
+            SELECT
+              created_date AS day,
+              COUNT(*) AS total,
+              SUM(CASE WHEN llm_summary_status = 'success' AND report_date IS NULL
+                       THEN 1 ELSE 0 END) AS reportable,
+              SUM(CASE WHEN publisher_page_fetched_status = 'failed'
+                       THEN 1 ELSE 0 END) AS publisher_failed,
+              SUM(CASE WHEN mineru_parse_status = 'failed'
+                       THEN 1 ELSE 0 END) AS mineru_failed,
+              SUM(CASE WHEN llm_summary_status = 'failed'
+                       THEN 1 ELSE 0 END) AS summary_failed,
+              SUM(CASE WHEN publisher_page_fetched_status = 'failed'
+                        OR mineru_parse_status = 'failed'
+                        OR llm_summary_status = 'failed'
+                       THEN 1 ELSE 0 END) AS total_failed
+            FROM papers
+            WHERE created_date >= ? AND created_date <= ?
+            GROUP BY created_date
+            ORDER BY created_date
+        """, (day_start, day_end)).fetchall()
+
+        day_map = {r["day"]: r for r in rows}
+        for d in days:
+            r = day_map.get(d["date"])
+            if r:
+                d["total"] = r["total"]
+                d["reportable"] = r["reportable"]
+                d["publisher_failed"] = r["publisher_failed"]
+                d["mineru_failed"] = r["mineru_failed"]
+                d["summary_failed"] = r["summary_failed"]
+                d["total_failed"] = r["total_failed"]
+
+        return {"ok": True, "days": days}
+    finally:
+        db.conn.close()
 
 
 @app.post("/pipeline/run/{phase}")

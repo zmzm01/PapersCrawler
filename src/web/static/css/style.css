@@ -134,6 +134,14 @@ h3 {
   margin-top: 0.25rem;
 }
 
+.stat-card-warning {
+  border-color: var(--skipped);
+  background: #fffbeb;
+}
+.stat-card-warning .stat-value {
+  color: #d97706;
+}
+
 .stat-mini-chart {
   display: flex;
   justify-content: center;
@@ -420,8 +428,6 @@ h3 {
   gap: 1rem;
   color: var(--text-muted);
 }
-
-
 
 
 .pipeline-toolbar {
