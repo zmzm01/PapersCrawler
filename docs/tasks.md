@@ -1873,7 +1873,14 @@ laser_wakefield_acceleration → 尾场加速
 | 5 | `test` | remove last Phase D test references | 移除 `test_relevance.py` 中 `sub_domains_embedding` dict 字段 + 注释行 |
 | 6a | `docs` | remove Phase D references from design.md and README.md | 全部清完（design 架构图、Schema 段、决策章节、字段表、Reset 段；README 字段表、reset 示例、架构图、目录树） |
 | 6b | `docs` | append 2026-07-24 移除 Phase D 备注 to tasks.md | **本节**，保留所有历史记录（30+ 处）作事实档案 |
-| 7 | `chore` | remove sentence-transformers dependency | `requirements.txt` 等依赖文件中移除 `sentence-transformers` |
+| 7 | — | （无 commit） | 项目根无 `requirements.txt` / `pyproject.toml` / `setup.*` / `Pipfile`，全代码库零 `import sentence_transformers`，无可改文件 — 详见下方"commit 7 取消说明" |
+
+**commit 7 取消说明**：
+- 期望操作：从 `requirements.txt` 等依赖文件中移除 `sentence-transformers`
+- 实际结果：项目无标准依赖声明文件，且全代码库零 `import sentence_transformers`（commit 1 已删 `src/processors/paper_relevance.py` 中两处 import），唯一引用是 `tools/migrate_db_v3.py:12` 的 docstring 文字描述（**非 import**）
+- 验证命令：`grep -rE "import sentence_transformers|sentence-transformers" --include="*.{py,sh,toml,txt,cfg,yml,yaml,env*,json}"` 返回空
+- 历史背景：Phase D 长期依赖 `sentence-transformers` 是隐式（运行环境提供），从未在仓库中显式声明。删除 Phase D 代码后无需修改任何依赖文件
+- 后续建议：如未来项目需要集中声明依赖（与 Phase D 无关），可独立创建 `requirements.txt` 记录 deepseek、playwright、pyyaml 等
 
 **验证**：153/153 测试全过；DB 5 列已从 `data/papers.db` 物理删除（`migrate_db_v3.py` 跑通）；WebUI 路由 /papers?sort=created|published 不再读 semantic 字段；reset_pipeline --help 不再有 `reset-semantic` 子命令。
 
