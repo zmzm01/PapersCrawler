@@ -951,6 +951,47 @@ class CambridgeScraper(BasePublisherScraper):
         - 关键词通过 citation_keywords 获取，以分号分隔。
     """
 
+    # 已知缺陷：部分 Cambridge 文章的 citation_abstract 标签内容并非摘要文本，
+    # 而是指向首页 PDF 图片的 URL（如 //static.cambridge.org/content/id/.../
+    # firstPage-pdf-xxx.jpg）。下列正则用于识别这类"伪摘要"。
+    _ABSTRACT_URL_PATTERN = re.compile(
+        r"^(?:\s*(?:https?:)?//|\s*https?://)"  # 以 // 或 http(s):// 开头
+        r"|"
+        r"\.(?:jpe?g|png|gif|webp|pdf|tiff?|bmp)(?:\?|$)",  # 或以图片/PDF扩展名结尾
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _validate_cambridge_abstract(cls, abstract: str) -> str:
+        """校验 Cambridge citation_abstract 内容是否为真实摘要文本。
+
+        部分剑桥文章的 ``citation_abstract`` meta 标签实际存放的是首页 PDF 图片
+        链接（如 ``//static.cambridge.org/content/id/.../firstPage-pdf-xxx.jpg``），
+        而非摘要文本。直接采用会导致报告里出现一串 URL。
+
+        判定规则：若内容以 ``//``、``http://``、``https://`` 开头，或以常见
+        图片/PDF 扩展名结尾，则视为无效链接，返回空字符串；否则原样返回。
+
+        Parameters
+        ----------
+        abstract : str
+            从 ``citation_abstract`` meta 标签提取的原始内容。
+
+        Returns
+        -------
+        str
+            校验后的摘要文本；无效链接返回空字符串。
+        """
+        if not abstract:
+            return ""
+        if cls._ABSTRACT_URL_PATTERN.search(abstract):
+            logging.getLogger(__name__).warning(
+                "Cambridge citation_abstract looks like a URL/image link, "
+                "dropping invalid abstract: %r", abstract[:120],
+            )
+            return ""
+        return abstract
+
     def parse_page(self):
         """解析 Cambridge 论文页面。
 
@@ -997,7 +1038,14 @@ class CambridgeScraper(BasePublisherScraper):
         # ─── 从 <meta> 标签提取摘要 ───
         # 剑桥大学出版社在 citation_abstract 中直接提供了摘要文本，
         # 无需从复杂的 HTML 正文区域解析，这是其尤为便利的特点。
+        #
+        # 已知缺陷：部分 Cambridge 文章的 citation_abstract 标签内容并非摘要文本，
+        # 而是指向首页 PDF 图片的 URL（如 //static.cambridge.org/content/id/.../
+        # firstPage-pdf-xxx.jpg）。若不加校验直接采用，报告里会出现一串链接而非
+        # 摘要。此处对提取结果做内容校验：看起来像 URL/图片链接则视为无效，置空
+        # abstract，交由后续流程回退到正文解析或留空。
         abstract = sel.css('meta[name="citation_abstract"]::attr(content)').get() or ""
+        abstract = self._validate_cambridge_abstract(abstract)
 
         return Paper(
             doi=doi,

@@ -119,6 +119,39 @@ def test_cambridge_scraper_abstract_in_meta():
         assert "Cambridge abstract" in paper.abstract
 
 
+def test_cambridge_scraper_abstract_url_rejected():
+    """验证 Cambridge citation_abstract 为 URL/图片链接时被拒绝置空。
+
+    复现 20260713 报告缺陷：部分 Cambridge 文章的 citation_abstract 标签内容
+    是首页 PDF 图片链接（如 //static.cambridge.org/content/id/.../firstPage-pdf-xxx.jpg），
+    而非摘要文本。应被 _validate_cambridge_abstract 识别并置空。
+    """
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="citation_title" content="Cambridge Paper"/>
+    <meta name="citation_doi" content="10.1017/hpl.2026.10180"/>
+    <meta name="citation_abstract" content="//static.cambridge.org/content/id/urn:cambridge.org:id:article:hpl202610180/firstPage-pdf-001.jpg"/>
+    <meta name="citation_author" content="Author One"/>
+    <meta name="citation_online_date" content="2026-07-01"/>
+    <meta name="citation_journal_title" content="HPL"/>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "cambridge.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = CambridgeScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert paper.title == "Cambridge Paper"
+        # URL 形式的伪摘要应被置空，而非原样保留
+        assert paper.abstract == ""
+        assert "static.cambridge.org" not in paper.abstract
+
+
 def test_nature_scraper_no_dc_type_raises():
     """Nature 页面无 dc.type 应抛出 PageParseError。"""
     import tempfile
