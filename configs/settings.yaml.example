@@ -47,6 +47,11 @@ pipeline:
   # Phase A CrossRef 发现: 回溯天数（每日增量模式取今天往前 N 天）
   crossref_lookback_days: 1
 
+  # Phase A CrossRef 智能回溯硬上限（故障补漏时实际回溯不超过此值）
+  # 实际回溯 = min(crossref_lookback_days, today - last_successful_run)
+  # 故障超过此值仍会漏检（与正常 1 天轮询语义不同）
+  crossref_lookback_days_max: 7
+
   # 每阶段最多处理 N 篇论文 (0 = 不限制)
   max_papers_per_phase: 0
 

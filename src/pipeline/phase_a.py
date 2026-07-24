@@ -2,12 +2,13 @@
 Phase A: RSS Feed fetching and CrossRef journal querying.
 """
 
+import json
 from datetime import datetime, timedelta, date
 
 import logging
 
 from config import (
-    CFG, RAW_RSS_DIR,
+    CFG, RAW_RSS_DIR, LAST_RUN_PATH, STATE_DIR,
 )
 from db.database import DatabaseClient, FetchStatus
 from pipeline.base import load_journal_overrides, journal_effective
@@ -15,6 +16,80 @@ from sources.rss import RSSProcessor
 from sources.crossref import CrossrefClient
 
 logger = logging.getLogger(__name__)
+
+
+# ==================================================================
+# Phase A-CR 智能回溯：故障补漏机制
+# ==================================================================
+
+def _load_last_run_date() -> str | None:
+    """读取 Phase A-CR 上次成功运行的日期（YYYY-MM-DD）。
+
+    首次运行（文件不存在）返回 None — 此时回溯窗口退化为 1 天。
+    文件格式异常时记录警告并返回 None（保守行为）。
+    """
+    if not LAST_RUN_PATH.exists():
+        return None
+    try:
+        with open(LAST_RUN_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("last_successful_run")
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to read {LAST_RUN_PATH.name}: {e}, "
+                       f"falling back to default lookback")
+        return None
+
+
+def _save_last_run_date(run_date: str) -> None:
+    """写入 Phase A-CR 成功运行的日期到 last_run.json。
+
+    原子写入：先写 .tmp 再 rename，避免崩溃中途导致文件损坏。
+    """
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = LAST_RUN_PATH.with_suffix(".json.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump({"last_successful_run": run_date}, f, indent=2)
+        tmp_path.replace(LAST_RUN_PATH)
+    except OSError as e:
+        logger.warning(f"Failed to write {LAST_RUN_PATH.name}: {e}")
+
+
+def _compute_lookback_days() -> int:
+    """计算 Phase A-CR 本次实际回溯天数。
+
+    决策逻辑：
+      1. 无 last_run.json（首次运行）→ CROSSREF_LOOKBACK_DAYS（默认 1）
+      2. last_run 距今 ≤ CROSSREF_LOOKBACK_DAYS → CROSSREF_LOOKBACK_DAYS
+         （日常情况：每次都回溯 1 天）
+      3. last_run 距今 > CROSSREF_LOOKBACK_DAYS → 按缺口回溯
+         （故障补漏：自动覆盖遗漏日期）
+      4. 实际值封顶 CROSSREF_LOOKBACK_DAYS_MAX（默认 7）
+         （避免一次性拉太多导致 API 超限）
+    """
+    last_run = _load_last_run_date()
+    if last_run is None:
+        logger.info("No last_run record, using default lookback")
+        return CFG.CROSSREF_LOOKBACK_DAYS
+
+    try:
+        last_date = date.fromisoformat(last_run)
+    except ValueError:
+        logger.warning(f"Invalid last_run date format: {last_run}, "
+                       f"falling back to default lookback")
+        return CFG.CROSSREF_LOOKBACK_DAYS
+
+    days_since = (date.today() - last_date).days
+    actual_lookback = max(CFG.CROSSREF_LOOKBACK_DAYS, days_since)
+    actual_lookback = min(actual_lookback, CFG.CROSSREF_LOOKBACK_DAYS_MAX)
+
+    if actual_lookback > CFG.CROSSREF_LOOKBACK_DAYS:
+        logger.info(f"Last run was {days_since} day(s) ago, "
+                    f"extending lookback to {actual_lookback} day(s) "
+                    f"(capped at {CFG.CROSSREF_LOOKBACK_DAYS_MAX})")
+    else:
+        logger.debug(f"Lookback: {actual_lookback} day(s)")
+    return actual_lookback
 
 
 def phase_a_rss(db, publishers, use_overrides=False):
@@ -109,8 +184,9 @@ def phase_a_crossref(db, publishers, use_overrides=False):
 
     timestamp = datetime.now().strftime("%Y%m%d")
     to_date = date.today().isoformat()
-    from_date = (date.today() - timedelta(days=CFG.CROSSREF_LOOKBACK_DAYS)).isoformat()
-    logger.info(f"Query window: {from_date} ~ {to_date}")
+    lookback_days = _compute_lookback_days()
+    from_date = (date.today() - timedelta(days=lookback_days)).isoformat()
+    logger.info(f"Query window: {from_date} ~ {to_date} (lookback={lookback_days}d)")
 
     client = CrossrefClient(mailto=CFG.CROSSREF_MAILTO)
     overrides = load_journal_overrides() if use_overrides else {}
@@ -162,4 +238,6 @@ def phase_a_crossref(db, publishers, use_overrides=False):
         except Exception as e:
             logger.error(f"CrossRef journal query failed [{journal['id']}]: {e}")
 
+    # 智能回溯：记录本次成功日期，供下次决策
+    _save_last_run_date(to_date)
     logger.info("Phase A-CR done")
