@@ -75,6 +75,11 @@ def phase_e_llm_relevance(db):
     logger.info(f"Phase E: {max_workers} concurrent workers")
     success_count = 0
 
+    # 线程安全契约：worker 内只允许 LLM HTTP 调用（call_llm_api_with_retry），
+    # DB 写入必须只在主线程执行（通过 as_completed 主循环）。
+    # SQLite 默认 check_same_thread=False 允许多线程访问同一 conn，
+    # 但跨线程写会产生隐性竞态（事务边界错乱）。
+    # 如未来需 worker 写 DB，请改用 per-thread 连接或 queue。
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(checker.call_deepseek_api, prompt, CFG.LLM_API_CONFIG_DICT_RELE): (paper, prompt)
