@@ -1,47 +1,163 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<h2>Pipeline Status</h2>
+<h2 data-i18n="dashboard.title">Dashboard</h2>
 
 <div class="stats-grid" id="dashboard-stats">
   <div class="stat-card">
-    <div class="stat-value">{{ status.total }}</div>
-    <div class="stat-label">Total Papers</div>
+    <div class="stat-value">{{ initial_status.total }}</div>
+    <div class="stat-label" data-i18n="dashboard.total_papers">Total Papers</div>
   </div>
-  {% for phase, counts in status.phases.items() %}
+  <div class="stat-card stat-card-warning">
+    <div class="stat-value" id="pending-report-count">{{ initial_status.pending_report }}</div>
+    <div class="stat-label" data-i18n="dashboard.pending_report">Pending Report</div>
+  </div>
   <div class="stat-card">
-    <div class="stat-mini-chart">
-      <span class="badge badge-success" title="success">{{ counts.success }}</span>
-      <span class="badge badge-failed" title="failed">{{ counts.failed }}</span>
-      <span class="badge badge-skipped" title="skipped">{{ counts.skipped }}</span>
-      <span class="badge badge-pending" title="pending">{{ counts.pending }}</span>
-    </div>
-    <div class="stat-label">{{ phase }}</div>
+    <div class="stat-value">{{ publisher_count }}</div>
+    <div class="stat-label" data-i18n="dashboard.publishers">Publishers</div>
   </div>
-  {% endfor %}
+  <div class="stat-card">
+    <div class="stat-value">{{ phase_count }}</div>
+    <div class="stat-label" data-i18n="dashboard.phases">Pipeline Phases</div>
+  </div>
+</div>
+
+<h3 data-i18n="dashboard.phase_charts">Pipeline Status</h3>
+<div id="phase-charts" class="chart-grid"></div>
+
+<h3 data-i18n="dashboard.weekly_title" style="margin-top:2rem;">Weekly Collection (Last 7 Days)</h3>
+<div id="weekly-chart" class="chart-grid">
+  <div style="padding:1rem 0;color:var(--text-muted);font-style:italic;" data-i18n="dashboard.weekly_loading">Loading...</div>
+</div>
+<div class="chart-legend" id="weekly-legend" style="display:none;">
+  <span class="c-success">■ <span data-i18n="dashboard.weekly_reportable">Reportable</span></span>
+  <span class="c-failed">■ <span data-i18n="dashboard.weekly_failed">Processing Failed</span></span>
+  <span class="c-pending">■ <span data-i18n="dashboard.weekly_other">Other / Pending</span></span>
 </div>
 
 <script>
-setInterval(async () => {
-  const r = await fetch('/pipeline/status');
-  const data = await r.json();
-  const container = document.getElementById('dashboard-stats');
-  if (container) {
-    const cards = container.querySelectorAll('.stat-card');
-    // first card is total papers
-    cards[0].querySelector('.stat-value').textContent = data.total;
-    // remaining cards are phases
-    let i = 1;
-    for (const key of Object.keys(data.phases)) {
-      const c = data.phases[key];
-      const badges = cards[i].querySelectorAll('.badge');
-      badges[0].textContent = c.success;
-      badges[1].textContent = c.failed;
-      badges[2].textContent = c.skipped;
-      badges[3].textContent = c.pending;
-      i++;
+const CHART_LABELS = {
+  cr_metadata_fetched: 'CrossRef',
+  publisher_page: 'Publisher',
+  semantic_filter: 'Semantic',
+  llm_relevance: 'Relevance',
+  mineru_parse: 'MinerU',
+  llm_summary: 'Summary',
+};
+
+function renderBreakdown(phases) {
+  const rows = [];
+  for (const [key, counts] of Object.entries(phases)) {
+    const bd = counts.failed_breakdown;
+    if (!bd || Object.keys(bd).length === 0) continue;
+    for (const [cat, cnt] of Object.entries(bd)) {
+      rows.push({ phase: CHART_LABELS[key] || key, category: cat, count: cnt });
     }
   }
-}, 10000);
+  const existing = document.getElementById('breakdown-table-wrapper');
+  if (existing) existing.remove();
+  if (rows.length === 0) return;
+  const wrapper = document.createElement('div');
+  wrapper.id = 'breakdown-table-wrapper';
+  wrapper.style.marginTop = '1.5rem';
+  wrapper.innerHTML = `<h3 style="margin-bottom:0.5rem;font-size:1rem;" data-i18n="dashboard.breakdown_title">Failed / Skipped reasons</h3>
+    <table class="config-table">
+      <thead><tr><th>Phase</th><th>Reason</th><th>Count</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td>${r.phase}</td><td>${r.category}</td><td>${r.count}</td></tr>`).join('')}</tbody>
+    </table>`;
+  document.getElementById('phase-charts').after(wrapper);
+  if (typeof switchLanguage === 'function') switchLanguage(currentLang);
+}
+
+async function refreshDashboard() {
+  const r = await fetch('/pipeline/status');
+  const data = await r.json();
+  const container = document.getElementById('phase-charts');
+  container.innerHTML = '';
+
+  // Update stats cards
+  document.querySelector('#dashboard-stats .stat-card:first-child .stat-value').textContent = data.total;
+  document.getElementById('pending-report-count').textContent = data.pending_report;
+
+  // Render chart rows — skip segments with 0 count to avoid min-width sliver
+  for (const [key, counts] of Object.entries(data.phases)) {
+    const total = counts.success + counts.failed + counts.skipped + counts.pending || 1;
+    const pct = n => ((n / total) * 100).toFixed(1);
+    const label = CHART_LABELS[key] || key;
+    const div = document.createElement('div');
+    div.className = 'chart-row';
+    const bar = (cls, count) => count > 0 ? `<div class="chart-bar ${cls}" style="width:${pct(count)}%"></div>` : '';
+    div.innerHTML = `
+      <div class="chart-label">${label}</div>
+      <div class="chart-bars">
+        ${bar('success', counts.success)}
+        ${bar('failed', counts.failed)}
+        ${bar('skipped', counts.skipped)}
+        ${bar('pending', counts.pending)}
+      </div>
+      <div class="chart-counts">
+        <span class="c-success">${counts.success}</span>
+        <span class="c-failed">${counts.failed}</span>
+        <span class="c-skipped">${counts.skipped}</span>
+        <span class="c-pending">${counts.pending}</span>
+      </div>`;
+    container.appendChild(div);
+  }
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  legend.innerHTML = '<span class="c-success">■ <span data-i18n="pipeline.success">Success</span></span> <span class="c-failed">■ <span data-i18n="pipeline.failed">Failed</span></span> <span class="c-skipped">■ <span data-i18n="pipeline.skipped">Skipped</span></span> <span class="c-pending">■ <span data-i18n="pipeline.pending">Pending</span></span>';
+  container.appendChild(legend);
+
+  renderBreakdown(data.phases);
+  if (typeof switchLanguage === 'function') switchLanguage(currentLang);
+}
+
+refreshDashboard();
+setInterval(refreshDashboard, 10000);
+
+// ── Weekly chart (reuses horizontal chart-row pattern from Pipeline Status) ──
+
+async function refreshWeeklyChart() {
+  try {
+    const r = await fetch('/pipeline/weekly-stats');
+    const data = await r.json();
+    if (!data.ok || !data.days || data.days.length === 0) return;
+
+    const container = document.getElementById('weekly-chart');
+    container.innerHTML = '';
+    const legend = document.getElementById('weekly-legend');
+    if (legend) legend.style.display = '';
+
+    data.days.forEach(day => {
+      const total = day.total || 1;
+      const otherCount = Math.max(0, day.total - day.reportable - day.total_failed);
+      const pct = n => ((n / total) * 100).toFixed(1);
+      const bar = (cls, count) => count > 0 ? `<div class="chart-bar ${cls}" style="width:${pct(count)}%"></div>` : '';
+
+      const label = `${day.weekday} ${day.date.slice(4, 6)}/${day.date.slice(6, 8)}`;
+      const row = document.createElement('div');
+      row.className = 'chart-row';
+      row.innerHTML = `
+        <div class="chart-label">${label}</div>
+        <div class="chart-bars">
+          ${bar('success', day.reportable)}
+          ${bar('failed', day.total_failed)}
+          ${bar('pending', otherCount)}
+        </div>
+        <div class="chart-counts">
+          <span class="c-success">${day.reportable}</span>
+          <span class="c-failed">${day.total_failed}</span>
+          <span class="c-pending">${otherCount}</span>
+        </div>`;
+      container.appendChild(row);
+    });
+  } catch (e) {
+    console.error('Weekly chart error:', e);
+  }
+}
+
+refreshWeeklyChart();
 </script>
 {% endblock %}
