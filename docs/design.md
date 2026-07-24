@@ -28,7 +28,6 @@ PapersCrawler/
 │   │   ├── auto/                #   自动日报 (Phase G 自动, 按日期覆盖)
 │   │   └── user/                #   用户自选报告 (Web UI, 精确到秒)
 │   ├── mineru_output/           # MinerU PDF 解析输出 (按论文子目录)
-│   ├── models/                  # sentence-transformers 本地模型
 │   └── session_cached/          # 浏览器 Session 缓存 (按 publisher 分子目录)
 ├── docs/                        # 设计文档、数据源调研、API 参考
 │   ├── doc-设计.md               # 本文 — 需求与架构设计
@@ -93,7 +92,7 @@ PapersCrawler/
 ├── tools/                       # 辅助工具
 │   ├── reset_pipeline.py        # 重置流水线状态（5 子命令 + --publisher 过滤）
 │   ├── convert_md_to_pdf.py     # Markdown → PDF (pandoc + cloakbrowser 主路径)
-│   ├── reset_empty_abstract.py  # 重置空摘要论文的 Phase D/E/G
+│   ├── reset_empty_abstract.py  # 重置空摘要论文的 Phase E/G
 │   ├── debug_llm_summary.py     # 诊断 LLM Summary JSON 解析失败
 │   ├── debug_publisher_urls.py  # 诊断 Publisher URL 抓取（headful 浏览器）
 │   ├── schedule_daily.py        # 每日调度入口（A→F，支持 --no-reset-* 开关）
@@ -152,9 +151,6 @@ Phase B: CrossRef 元数据
 Phase C: Publisher 页面 (cloakbrowser)
       │  爬取摘要 / PDF 链接 (绕过 Cloudflare)
       ▼
-Phase D: 语义相似度参考排序 (sentence-transformers, 可选)
-      │  余弦相似度 → 仅存分数供 WebUI 排序，不参与过滤
-      ▼
 Phase E: LLM 相关性判断 (DeepSeek)  ← 四级分类 A/B/C/D
       │  → 类别 A: 直接相关 (核心方向)
       │  → 类别 B: 间接相关 (技术/方法可迁移)
@@ -196,7 +192,6 @@ Phase H: 邮件推送
   │  流水线状态 (每阶段 status + error + date 三列):             │
   │    Phase B: cr_metadata_fetched_*  → CrossRef 元数据         │
   │    Phase C: publisher_page_fetched_* → 期刊页面              │
-  │    Phase D: semantic_filter_*       → 语义相似度             │
   │    Phase E: llm_relevance_*         → LLM 相关性            │
   │    Phase E2: mineru_parse_*         → MinerU PDF            │
   │    Phase F: llm_summary_*           → LLM 总结              │
@@ -215,9 +210,6 @@ Phase H: 邮件推送
 
 **Publisher 页面** (Phase C) — 三列：`publisher_page_fetched_status` / `_error` / `_date`
 - `paperdate_page`, `pdf_url`
-
-**语义相似度** (Phase D) — 三列：`semantic_filter_status` / `_error` / `_date`
-- `semantic_similarity_score`, `semantic_best_subdomain` (排序参考，不参与过滤)
 
 **LLM 相关性** (Phase E) — 三列：`llm_relevance_status` / `_error` / `_date`
 - `llm_relevance_category` (TEXT: A/B/C/D) — 四级分类，替代已废弃的 `llm_relevance_result`
@@ -273,36 +265,27 @@ skipped_dois:
 
 # 关键设计决策
 
-## 1. Phase D 作为参考排序（不再参与过滤）
-
-Phase D 的语义相似度计算仅用于 WebUI Papers 页面的排序参考，**不再**决定论文能否进入 Phase E。`SKIP_PHASE_D = True` 为默认值（跳过），所有论文直接走 Phase E LLM 判断。开启时：
-- 计算余弦相似度 + 记录最佳匹配子领域
-- 分数存入 `semantic_similarity_score` + `semantic_best_subdomain`
-- 始终标记 `semantic_filter_status = 'success'`，不修改 `llm_relevance_status`
-
-原因：论文量级小（每轮 ~200-400 篇），DeepSeek API 成本极低（约 $0.08/轮），Phase D 的 API 节省收益远不如 LLM 判断精度重要。
-
-## 2. Phase F 不全文回退
+## 1. Phase F 不全文回退
 
 Phase F（LLM 总结）仅处理有 MinerU 全文的论文。无全文字段直接标记 `skipped`，**不**回退使用标题+摘要。原因：
 - 摘要信息密度不足，LLM 总结质量不可控
 - 避免「有总结但质量差」的误导性结果
 
-## 3. Phase E/F 并发策略
+## 2. Phase E/F 并发策略
 
 使用 `ThreadPoolExecutor` + 共享 `LLM_CONCURRENT_MAX` 配置：
 - 主线程负责 prompt 构建和 DB 写入（无网络 I/O）
 - 子线程仅做纯 API 调用
 - 单论文失败不影响整体流程（逐篇 try/except）
 
-## 4. Publisher 爬虫的持续性上下文
+## 3. Publisher 爬虫的持续性上下文
 
 使用 cloakbrowser 驱动 headful Chromium 和持久化 browser context：
 - 同一 publisher 共用一个 session（`data/session_cached/<publisher>/`）
 - cloakbrowser 自动处理浏览器指纹伪装，无需手动注入反检测 JS
 - 失败熔断：连续失败 `PUBLISHER_MAX_CONSECUTIVE_FAILURES` 篇后自动中止，避免 IP 封禁
 
-## 5. Phase E2 PDF 下载策略
+## 4. Phase E2 PDF 下载策略
 
 `BasePublisherScraper.download_pdf()` 负责 PDF 下载（详见「流水线子阶段详解」）：
 - 先 `goto(page_url)` 建立浏览器上下文（cookie/session/referrer）
@@ -314,25 +297,25 @@ Phase F（LLM 总结）仅处理有 MinerU 全文的论文。无全文字段直�
 
 **关键设计**：PDF 先保存再解析，确保 MinerU 上传失败时 PDF 不丢失。不再使用 tempfile。
 
-## 6. 逐阶段错误隔离
+## 5. 逐阶段错误隔离
 
 每个阶段用独立 `try/except` 包裹单篇论文的处理。一篇失败不影响同阶段其他论文，一阶段失败不影响后续阶段（依赖的数据为空则后续阶段自然跳过）。
 
-## 7. 数据库驱动的状态机
+## 6. 数据库驱动的状态机
 
 流水线不依赖内存状态，所有进度持久化到 SQLite：
 - 中断后重启自动从断点继续
 - `MAX_PAPERS_PER_PHASE` 支持单阶段调试
 - `reset_pipeline.py` 提供精细化的状态重置（支持按 publisher 过滤）
 
-## 8. 共享数据模型（src/common.py）
+## 7. 共享数据模型（src/common.py）
 
 跨模块共享的 `Paper` dataclass 和 LLM 异常集中在 `src/common.py`，避免循环导入和重复定义：
 - `Paper` 被 RSS 和 Publisher 同时使用
 - LLM 异常被 `PaperRelevanceChecker` 和 `DeepSeekPaperSummarizer` 共享
 - 各模块特有的异常（`PageParseError`、`NotFoundError`）保留在各自模块
 
-## 9. 自动报告与用户报告分离
+## 8. 自动报告与用户报告分离
 
 自动流水线生成的日报（Phase G）和 Web UI 用户勾选生成的报告写入不同目录，避免邮件推送误发用户报告：
 
@@ -515,7 +498,7 @@ publishers:
 
 ## keywords.yaml
 
-使用结构化字典格式（`scope_definition` + `irrelevant_fields` + `sub_domains_embedding`）：
+使用结构化字典格式（`scope_definition` + `irrelevant_fields`）：
 
 ```yaml
 scope_definition:
@@ -531,9 +514,6 @@ irrelevant_fields:
   topics:
     - "Fusion: Tokamak, Stellarator, magnetic confinement fusion..."
     - "Space plasma: Solar wind, Magnetosphere..."
-sub_domains_embedding:
-  laser_wakefield_acceleration: >
-    Plasma-based wakefield acceleration driven by intense laser pulses...
 ```
 
 ### 字段分工
@@ -542,7 +522,6 @@ sub_domains_embedding:
 |------|------|------|------|
 | `scope_definition` | Phase E LLM prompt — 完整领域定义 | 中文 | 每子域含 `description`（段落描述）+ `topics`（展开关键词列表） |
 | `irrelevant_fields` | Phase E LLM prompt — 降低误判 | 中文 | 定义"不相关"边界 |
-| `sub_domains_embedding` | Phase D 语义相似度 | **仅英文** | 每段 < 300 words，简练自然语言，供 sentence-transformers 编码 |
 | `context_gates` | Phase E LLM prompt — 全局语境消歧 | 中文 | 跨子域的高歧义词汇判定规则（如"fusion"→D），匹配时直接归为不相关或约束子域分配 |
 
 `scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释即可。
@@ -612,7 +591,7 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 |------|------|------|
 | Home | `GET /` | 项目介绍、论文/出版社统计、快速入口 |
 | Pipeline | `GET /pipeline` | 10 阶段 Run/Reset 按钮（A-RSS / A-CR 独立）+ 状态图表（CSS 柱状图）+ SSE 实时日志（支持级别过滤）+ 子进程执行。被 Config 跳过的阶段按钮灰显不可点击 |
-| Papers | `GET /papers?sort=created\|published` | 论文列表，默认按入库日期降序，可选按发表日期排序（显示精度警告）。展示语义相似度分（可选）和 LLM 相关性状态 |
+| Papers | `GET /papers?sort=created\|published` | 论文列表，默认按入库日期降序，可选按发表日期排序（显示精度警告）。展示 LLM 相关性状态 |
 | Report | `GET /report` | 勾选有 LLM 总结的论文 → 生成 Markdown 报告（写入 user/ 目录）→ 浏览器预览 + 下载 |
 | Data Sources | `GET /datasources` | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源开关。更改保存到 `data/journal_overrides.json`，不修改 publishers.yaml |
 | Logs | `GET /logs` | 日志查看（支持级别过滤，修复 innerHTML bug） |
@@ -633,7 +612,6 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 | A-RSS / A-CR | 无（Phase A 无状态列，仅做发现） | — | — |
 | B | cr_metadata_fetched | — | 所有非 pending |
 | C | publisher_page_fetched | — | 非 pending 且非 NonResearchPageError |
-| D | semantic_filter (仅语义分, 不触 LLM) | — | 所有非 pending |
 | E | llm_relevance | — | 所有非 pending |
 | E2 | mineru_parse + llm_summary + report | llm_summary, report | 所有非 pending |
 | F | llm_summary + report | report | 所有非 pending |
@@ -745,7 +723,7 @@ abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
 ```
 防止 Phase C 的空摘要字符串覆盖 Phase B 已写入的有效摘要。
 
-配套工具 `tools/reset_empty_abstract.py` 可将已入库空摘要论文的 Phase D/E/G 重置为 pending，触发重新评估。
+配套工具 `tools/reset_empty_abstract.py` 可将已入库空摘要论文的 Phase E/G 重置为 pending，触发重新评估。
 
 ## 6. SMTP 重试与连接加固
 
@@ -809,9 +787,9 @@ NonResearchPageError 触发后，Phase C 会执行：
 
 ### 与空摘要论文的区别
 
-| 类型 | Phase C 行为 | Phase D 行为 | Phase E 行为 |
-|------|-------------|-------------|-------------|
-| **非论文页**（Erratum 等） | 直接 `delete_paper()` 删除 | — | — |
+| 类型 | Phase C 行为 | Phase E 行为 |
+|------|-------------|-------------|
+| **非论文页**（Erratum 等） | 直接 `delete_paper()` 删除 | — |
 | **合法空摘要论文**（短通讯、无摘要 OA） | 标记 `success`（abstract 为空） | 正常计算相似度 | `abstract` 为空时标记 `skipped` |
 | **全空页**（CF 拦截、页面错误） | 标记 `failed`（retry 后仍失败） | 跳过（上游 failed 不影响，仅查自己状态） | 同上 |
 
@@ -858,7 +836,7 @@ Research Briefings、Books & Arts、Obituaries、Careers、Podcasts 等。
 1. `APSScraper.parse_page()` 检测到 Accepted Paper 特征 → 抛出 `AcceptedPaperError`
 2. 捕获后标记 `publisher_page_fetched_status = 'skipped'`，error 信息：
    `"AcceptedPaper: no full text available"`
-3. 级联跳过 Phase D 和 Phase E
+3. 级联跳过 Phase E
 4. 后续阶段（Phase E2/F/G/H）自然跳过
 
 ### 9b. Optica
@@ -1436,7 +1414,6 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 
 | 命令 | 重置范围 | 默认条件 | 级联 | 典型用途 |
 |------|---------|---------|------|---------|
-| `reset-semantic` | `semantic_filter_*`, `semantic_similarity_score`, `semantic_best_subdomain`（5 列） | **全部**（无 status 过滤） | 无 | 修改 sub_domains 后 |
 | `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 scope_definition 后 |
 | `reset-publisher` | `publisher_page_fetched_status/error`（2 列） | `failed`/`skipped`（跳过 NonResearchPageError） | 无 | 重试被 CF 拦截的论文 |
 | `reset-mineru` | `mineru_parse_*`（5 列） | `failed`/`skipped` | 无 | 重试 PDF 解析失败的论文 |
@@ -1444,7 +1421,6 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 | `reset-report` | `report_status/date`（2 列） | `reported`（`--today`/`--days` 按日期） | 无 | 重新汇入下次报告 |
 
 关键设计：
-- `reset-semantic` **不重置** LLM 相关性、MinerU 和 LLM Summary（语义分仅用于排序参考，不影响判断结果）
 - `reset-relevance` **不级联** E2/F/G（相关性结果不影响已有 MinerU 全文和 LLM 总结）
 - `reset-publisher` **跳过** `NonResearchPageError` 条目（非论文页面重试无意义）
 - `reset-mineru` / `reset-summary` 重新解析/总结后，下游状态为 pending 的被自动拾取（无需显式级联）
@@ -1456,7 +1432,7 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 |------|------|
 | `tools/debug_llm_summary.py <doi>` | 调试 LLM Summary JSON 解析失败，打印错误上下文 |
 | `tools/debug_publisher_urls.py` | 用 headful 浏览器诊断 Publisher URL 抓取问题 |
-| `tools/reset_empty_abstract.py` | 重置空摘要论文的 Phase D/E/G 状态 |
+| `tools/reset_empty_abstract.py` | 重置空摘要论文的 Phase E/G 状态 |
 
 # Hugo 报告部署
 
