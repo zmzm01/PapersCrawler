@@ -457,11 +457,6 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
     for key, section in scope_definition.items():
         lines.append(f"# Sub-Domain: {key}")
 
-        hint = section.get("priority_hint")
-        if hint:
-            lines.append(f"Typical relevance level: {hint}")
-            lines.append("")
-
         lines.append(section.get("description", "").strip())
         lines.append("")
         lines.append("涉及方向包括：")
