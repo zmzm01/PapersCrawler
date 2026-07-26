@@ -94,9 +94,10 @@ PapersCrawler/
 │   ├── convert_reports_to_hugo.py  # Phase G 报告转 Hugo content + 部署
 │   ├── fix_summary_formulas.py  # 批量 FormulaFixer 修复 LaTeX
 │   ├── import_local_pdf.py      # 手动导入本地 PDF 到 MinerU 队列
+│   ├── preview_report.py        # 预览报告生成（不标记数据库，可选 all/week/today 范围）
 │   ├── schedule_daily.py        # 每日调度入口（A→F，支持 --no-reset-* 开关）
 │   ├── schedule_weekly.py       # 每周调度入口（G→H）
-└── README.md                    # 项目使用说明
+└── README.md                    # 项目说明（面向访客/潜在用户）
 ```
 
 # 数据模型
