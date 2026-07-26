@@ -3,79 +3,39 @@
 {% block content %}
 <h2 data-i18n="report.title">Report</h2>
 
+{% if reports %}
 <div class="report-viewer">
   <div class="report-viewer-toolbar">
-    <label><span data-i18n="report.choose_report">Report:</span>
-      <select id="report-select" onchange="loadReport()">
+    <label class="report-select-label">
+      <span data-i18n="report.choose_report">Report:</span>
+      <select id="report-select" onchange="window.location.href='/report?show=' + encodeURIComponent(this.value)">
         <option value="" data-i18n="report.select_hint">-- Select a report --</option>
         {% for r in reports %}
-        <option value="{{ r.filename }}">{{ r.filename }} ({{ r.source }})</option>
+        <option value="{{ r.filename }}" {% if r.filename == selected_filename %}selected{% endif %}>{{ r.filename[7:15] }} · {{ r.source }} · {{ r.paper_count }} papers · {{ r.timeago }}</option>
         {% endfor %}
       </select>
     </label>
-    <a id="report-download-link" class="btn btn-sm btn-primary" target="_blank" style="display:none" data-i18n="report.download">Download</a>
+    <a id="report-download-link" class="btn btn-sm btn-primary" target="_blank" data-i18n="report.download">Download</a>
   </div>
   <div id="report-content" class="report-content">
-    {% if reports %}
-    <p class="text-muted" data-i18n="report.choose_hint">Select a report above to view rendered content.</p>
+    {% if selected_filename %}
+    <p class="text-muted">Loading...</p>
     {% else %}
-    <p class="text-muted" data-i18n="report.no_report">No reports found. Generate one below.</p>
+    <p class="text-muted" data-i18n="report.no_report">No reports found.</p>
     {% endif %}
   </div>
 </div>
-
-<hr class="section-divider">
-
-<h3 data-i18n="report.generate_title">Generate Custom Report</h3>
-<div class="report-controls">
-  <label><span data-i18n="report.publisher">Publisher:</span>
-    <select id="filter-publisher" onchange="filterPapers()">
-      <option value="">-- All publishers --</option>
-      {% for p in publishers %}
-      <option value="{{ p }}">{{ p }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <button class="btn btn-sm btn-secondary" onclick="selectAll(true)" data-i18n="report.select_all">Select All</button>
-  <button class="btn btn-sm btn-secondary" onclick="selectAll(false)" data-i18n="report.deselect_all">Deselect All</button>
-  <button class="btn btn-primary" id="generate-btn" onclick="generateReport()" data-i18n="report.generate">Generate Report</button>
-</div>
-
-<table class="papers-table" id="paper-table">
-  <thead>
-    <tr><th><input type="checkbox" onchange="selectAll(this.checked)" id="select-all"></th>
-        <th data-i18n="report.doi">DOI</th><th data-i18n="report.title_col">Title</th><th data-i18n="report.publisher_col">Publisher</th><th data-i18n="report.summary_date">Summary Date</th></tr>
-  </thead>
-  <tbody>
-    {% for p in papers %}
-    <tr data-publisher="{{ p.publisher or '' }}">
-      <td><input type="checkbox" class="paper-check" value="{{ p.doi }}"></td>
-      <td class="td-doi"><code>{{ p.doi }}</code></td>
-      <td class="td-title">{{ p.title or '—' }}</td>
-      <td>{{ p.publisher or '—' }}</td>
-      <td>{{ p.llm_summary_date or '—' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-<div id="report-preview" class="report-preview" style="display:none;">
-  <h3 data-i18n="report.preview">Preview</h3>
-  <p id="report-filename" class="text-muted"></p>
-  <pre class="config-pre" id="preview-content"></pre>
-  <a id="download-link" class="btn btn-sm btn-primary" target="_blank" style="display:inline-block;" data-i18n="report.download">Download</a>
-</div>
+{% else %}
+<p class="text-muted" data-i18n="report.no_report">No reports found.</p>
+{% endif %}
 
 <script>
-// ── Report viewer ──────────────────────────────────────────────────────────
-
 function renderReportContent(markdown) {
   const container = document.getElementById('report-content');
   if (!markdown) {
     container.innerHTML = '<p class="text-muted">(empty report)</p>';
     return;
   }
-  // Protect LaTeX formulas from being eaten by marked's escape handling
   const placeholders = {};
   let pid = 0;
   const protected_md = markdown.replace(
@@ -101,13 +61,11 @@ function renderReportContent(markdown) {
   }
 }
 
-async function loadReport() {
-  const sel = document.getElementById('report-select');
-  const filename = sel.value;
+async function loadReport(filename) {
   const container = document.getElementById('report-content');
   const dl = document.getElementById('report-download-link');
   if (!filename) {
-    container.innerHTML = '<p class="text-muted" data-i18n="report.choose_hint">Select a report above to view rendered content.</p>';
+    container.innerHTML = '<p class="text-muted" data-i18n="report.no_report">No reports found.</p>';
     dl.style.display = 'none';
     if (typeof switchLanguage === 'function') switchLanguage(currentLang);
     return;
@@ -130,69 +88,10 @@ async function loadReport() {
   if (typeof switchLanguage === 'function') switchLanguage(currentLang);
 }
 
-// ── Generate report ────────────────────────────────────────────────────────
-
-function filterPapers() {
-  const pub = document.getElementById('filter-publisher').value;
-  document.querySelectorAll('#paper-table tbody tr').forEach(tr => {
-    tr.style.display = (!pub || tr.dataset.publisher === pub) ? '' : 'none';
-  });
-}
-
-function selectAll(val) {
-  document.querySelectorAll('.paper-check').forEach(cb => cb.checked = val);
-  document.getElementById('select-all').checked = val;
-}
-
-async function generateReport() {
-  const dois = Array.from(document.querySelectorAll('.paper-check:checked')).map(cb => cb.value);
-  if (!dois.length) { alert(getI18n('report.select_hint') || 'Select at least one paper.'); return; }
-  const btn = document.getElementById('generate-btn');
-  btn.disabled = true; btn.textContent = getI18n('report.generate') + '...';
-  try {
-    const r = await fetch('/report/generate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({dois: dois}),
-    });
-    const data = await r.json();
-    if (!data.ok) {
-      alert('Report generation failed: ' + (data.error || 'unknown error'));
-      return;
-    }
-    document.getElementById('report-preview').style.display = 'block';
-    const pc = document.getElementById('preview-content');
-    pc.textContent = data.preview || '(empty report)';
-    renderReportContent(data.preview || '');
-    document.getElementById('download-link').href = '/report/download/' + data.filename;
-    document.getElementById('download-link').style.display = 'inline-block';
-    document.getElementById('report-filename').textContent = (getI18n('report.generated') || 'Generated: ') + data.filename;
-    // Refresh report selector to include newly generated report
-    const sel = document.getElementById('report-select');
-    const opt = document.createElement('option');
-    opt.value = data.filename;
-    opt.textContent = data.filename + ' (user)';
-    // Remove existing option with same value
-    for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === data.filename) { sel.remove(i); break; }
-    }
-    sel.insertBefore(opt, sel.options[1] || null);
-    sel.value = data.filename;
-    loadReport();
-  } catch (err) {
-    alert('Network error: ' + err.message);
-  } finally {
-    btn.disabled = false; btn.textContent = getI18n('report.generate') || 'Generate Report';
-  }
-}
-
-// Auto-load first report on page load
+{% if selected_filename %}
 document.addEventListener('DOMContentLoaded', function() {
-  const sel = document.getElementById('report-select');
-  if (sel.options.length > 1) {
-    sel.selectedIndex = 1;
-    loadReport();
-  }
+  loadReport({{ selected_filename | tojson }});
 });
+{% endif %}
 </script>
 {% endblock %}

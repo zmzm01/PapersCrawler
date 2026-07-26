@@ -169,9 +169,14 @@ def test_get_relevant_papers(db):
 
 
 def test_get_papers_for_report(db):
-    """验证 get_papers_for_report 只返回已总结且 report_date IS NULL 的论文。"""
+    """验证 get_papers_for_report 只返回已总结、未报告、且当前仍是 A/B 的论文。"""
     db.insert_rss_basicinfo("10.0000/s1", "S1", "http://s1", "J", "pub", "2025")
     db.insert_rss_basicinfo("10.0000/s2", "S2", "http://s2", "J", "pub", "2025")
+    # 必须同时设置 relevance=A（否则新过滤会把 summary 状态孤立）
+    db.update_llm_relevance("10.0000/s1", "A", '[]', "high", "ok",
+                            FetchStatus.SUCCESS.value, "2025")
+    db.update_llm_relevance("10.0000/s2", "A", '[]', "high", "ok",
+                            FetchStatus.SUCCESS.value, "2025")
     db.update_llm_summary("10.0000/s1", '{"x":"y"}',
                           FetchStatus.SUCCESS.value, "2025")
     db.update_llm_summary("10.0000/s2", '{"x":"z"}',
@@ -181,6 +186,26 @@ def test_get_papers_for_report(db):
     papers = db.get_papers_for_report()
     assert len(papers) == 1
     assert papers[0]["doi"] == "10.0000/s1"
+
+
+def test_get_papers_for_report_excludes_reclassified_papers(db):
+    """回归测试：论文重判为 C/D 后，即使 summary 仍 success，也不应入报。
+
+    背景：update_llm_relevance() 不重置 llm_summary_* 字段。修复前会出现
+    「summary 成功 + 当前 C/D」被误入报；修复后应被显式 relevance 过滤拦截。
+    """
+    db.insert_rss_basicinfo("10.0000/r1", "R1", "http://r1", "J", "pub", "2025")
+    db.update_llm_relevance("10.0000/r1", "A", '["LWFA"]', "high", "是",
+                            FetchStatus.SUCCESS.value, "2025-01-01")
+    db.update_llm_summary("10.0000/r1", '{"one_sentence":"x"}',
+                          FetchStatus.SUCCESS.value, "2025-01-02")
+    # 此时应该入报
+    assert len(db.get_papers_for_report()) == 1
+    # 重跑相关性：A → D（llm_summary_status 仍为 'success'，不重置）
+    db.update_llm_relevance("10.0000/r1", "D", '[]', "high", "已不再相关",
+                            FetchStatus.SUCCESS.value, "2025-07-25")
+    # 修复后应被过滤掉
+    assert db.get_papers_for_report() == []
 
 
 def test_mark_papers_reported(db):
@@ -217,3 +242,270 @@ def test_update_error_message(db):
     papers = db.get_all_papers()
     assert papers[0]["publisher_page_fetched_status"] == "failed"
     assert papers[0]["publisher_page_fetched_error"] == "Connection refused"
+
+
+# ---- get_papers / get_papers_count 测试 ----
+
+def _insert_sort_papers(db):
+    """插入三篇排序测试论文，具有不同的 created_date / paperdate_rss / llm_summary_date。"""
+    # Paper A: created=2025-03-01, rss=2025-01-01, summary=2025-06-01
+    db.insert_rss_basicinfo("10.9999/sort_a", "Sort A", "http://sort_a",
+                            "J.A", "pub", "2025-01-01")
+    db.insert_paper_created_date("10.9999/sort_a", "2025-03-01")
+    db.update_llm_relevance("10.9999/sort_a", "A", '[]', "high", "",
+                            FetchStatus.SUCCESS.value, "2025-06-01")
+    db.update_llm_summary("10.9999/sort_a", "{}",
+                          FetchStatus.SUCCESS.value, "2025-06-01")
+
+    # Paper B: created=2025-02-01, rss=2025-03-01, summary=2025-05-01
+    db.insert_rss_basicinfo("10.9999/sort_b", "Sort B", "http://sort_b",
+                            "J.B", "pub", "2025-03-01")
+    db.insert_paper_created_date("10.9999/sort_b", "2025-02-01")
+    db.update_llm_relevance("10.9999/sort_b", "B", '[]', "high", "",
+                            FetchStatus.SUCCESS.value, "2025-06-02")
+    db.update_llm_summary("10.9999/sort_b", "{}",
+                          FetchStatus.SUCCESS.value, "2025-05-01")
+
+    # Paper C: created=2025-01-01, rss=2025-02-01, summary=NULL（不调用 update_llm_summary）
+    db.insert_rss_basicinfo("10.9999/sort_c", "Sort C", "http://sort_c",
+                            "J.C", "pub", "2025-02-01")
+    db.insert_paper_created_date("10.9999/sort_c", "2025-01-01")
+    db.update_llm_relevance("10.9999/sort_c", "C", '[]', "low", "",
+                            FetchStatus.SUCCESS.value, "2025-06-03")
+
+
+def test_get_papers_default_sort_created(db):
+    """
+    验证 get_papers() 默认按 created_date 降序排列。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_sort_papers(db)
+    papers = db.get_papers()
+    assert len(papers) == 3
+    dois = [p["doi"] for p in papers]
+    assert dois == ["10.9999/sort_a", "10.9999/sort_b", "10.9999/sort_c"], \
+        f"Expected created DESC order, got {dois}"
+
+
+def test_get_papers_sort_published(db):
+    """
+    验证 get_papers(sort_by='published') 按 Coalesced 出版日期降序排列。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_sort_papers(db)
+    papers = db.get_papers(sort_by="published")
+    assert len(papers) == 3
+    dois = [p["doi"] for p in papers]
+    # B: 2025-03-01, C: 2025-02-01, A: 2025-01-01
+    assert dois == ["10.9999/sort_b", "10.9999/sort_c", "10.9999/sort_a"], \
+        f"Expected published DESC order, got {dois}"
+
+
+def test_get_papers_sort_summary(db):
+    """
+    验证 get_papers(sort_by='summary') 按 llm_summary_date 降序排列，
+    NULL 日期排在最后。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_sort_papers(db)
+    papers = db.get_papers(sort_by="summary")
+    assert len(papers) == 3
+    dois = [p["doi"] for p in papers]
+    # A: 2025-06-01, B: 2025-05-01, C: NULL -> last
+    assert dois == ["10.9999/sort_a", "10.9999/sort_b", "10.9999/sort_c"], \
+        f"Expected summary DESC order, got {dois}"
+
+
+def test_get_papers_offset_pagination(db):
+    """
+    验证 offset + limit 分页正确性。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    for i in range(6):
+        doi = f"10.9999/page_{i}"
+        db.insert_rss_basicinfo(doi, f"Page {i}", f"http://{i}",
+                                "J", "pub", "2025-01-01")
+        db.insert_paper_created_date(doi, f"2025-06-{i+1:02d}")
+        db.update_llm_relevance(doi, "A", '[]', "high", "",
+                                FetchStatus.SUCCESS.value, "2025-06-01")
+
+    # 默认按 created_date DESC: page_5, page_4, page_3, page_2, page_1, page_0
+    # limit=2, offset=2 -> page_3, page_2
+    papers = db.get_papers(limit=2, offset=2)
+    assert len(papers) == 2
+    assert [p["doi"] for p in papers] == ["10.9999/page_3", "10.9999/page_2"]
+
+    # offset=4, limit=2 -> page_1, page_0
+    papers = db.get_papers(limit=2, offset=4)
+    assert len(papers) == 2
+    assert [p["doi"] for p in papers] == ["10.9999/page_1", "10.9999/page_0"]
+
+    # offset 超出总数 -> 空列表
+    papers = db.get_papers(limit=2, offset=10)
+    assert len(papers) == 0
+
+
+def _insert_category_papers(db):
+    """插入五篇用于分类过滤测试的论文：A/B/C/D 各一 + 1 篇无 relevance 状态。"""
+    # A
+    db.insert_rss_basicinfo("10.9999/cat_a", "Cat A", "http://a",
+                            "J", "pub", "2025-01-01")
+    db.insert_paper_created_date("10.9999/cat_a", "2025-01-01")
+    db.update_llm_relevance("10.9999/cat_a", "A", '[]', "high", "",
+                            FetchStatus.SUCCESS.value, "2025-06-01")
+    # B
+    db.insert_rss_basicinfo("10.9999/cat_b", "Cat B", "http://b",
+                            "J", "pub", "2025-01-02")
+    db.insert_paper_created_date("10.9999/cat_b", "2025-01-02")
+    db.update_llm_relevance("10.9999/cat_b", "B", '[]', "high", "",
+                            FetchStatus.SUCCESS.value, "2025-06-02")
+    # C
+    db.insert_rss_basicinfo("10.9999/cat_c", "Cat C", "http://c",
+                            "J", "pub", "2025-01-03")
+    db.insert_paper_created_date("10.9999/cat_c", "2025-01-03")
+    db.update_llm_relevance("10.9999/cat_c", "C", '[]', "low", "",
+                            FetchStatus.SUCCESS.value, "2025-06-03")
+    # D
+    db.insert_rss_basicinfo("10.9999/cat_d", "Cat D", "http://d",
+                            "J", "pub", "2025-01-04")
+    db.insert_paper_created_date("10.9999/cat_d", "2025-01-04")
+    db.update_llm_relevance("10.9999/cat_d", "D", '[]', "low", "",
+                            FetchStatus.SUCCESS.value, "2025-06-04")
+    # No relevance（llm_relevance_status 保持默认 pending）
+    db.insert_rss_basicinfo("10.9999/cat_p", "Cat P", "http://p",
+                            "J", "pub", "2025-01-05")
+    db.insert_paper_created_date("10.9999/cat_p", "2025-01-05")
+
+
+def test_get_papers_category_filter_ab(db):
+    """
+    验证 category_filter='ab' 返回 A 和 B 类论文。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    papers = db.get_papers(category_filter="ab")
+    dois = {p["doi"] for p in papers}
+    assert dois == {"10.9999/cat_a", "10.9999/cat_b"}, \
+        f"Expected A and B, got {dois}"
+
+
+def test_get_papers_category_filter_a(db):
+    """
+    验证 category_filter='a' 仅返回 A 类论文。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    papers = db.get_papers(category_filter="a")
+    dois = {p["doi"] for p in papers}
+    assert dois == {"10.9999/cat_a"}, \
+        f"Expected only A, got {dois}"
+
+
+def test_get_papers_category_filter_b(db):
+    """
+    验证 category_filter='b' 仅返回 B 类论文。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    papers = db.get_papers(category_filter="b")
+    dois = {p["doi"] for p in papers}
+    assert dois == {"10.9999/cat_b"}, \
+        f"Expected only B, got {dois}"
+
+
+def test_get_papers_category_filter_all(db):
+    """
+    验证 category_filter='all' 不过滤，返回全部论文。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    papers_all = db.get_papers(category_filter="all")
+    papers_none = db.get_papers()  # category_filter=None
+    assert len(papers_all) == 5
+    assert len(papers_all) == len(papers_none)
+
+
+def test_get_papers_count_no_filter(db):
+    """
+    验证 get_papers_count() 返回全部论文总数。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    assert db.get_papers_count() == 5
+
+
+def test_get_papers_count_with_category_filter(db):
+    """
+    验证 get_papers_count(category_filter=...) 对各类别正确计数。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    assert db.get_papers_count(category_filter="a") == 1
+    assert db.get_papers_count(category_filter="b") == 1
+    assert db.get_papers_count(category_filter="ab") == 2
+    assert db.get_papers_count(category_filter="all") == 5
+    assert db.get_papers_count() == 5
+
+
+def test_get_papers_count_matches_get_papers_total(db):
+    """
+    验证 get_papers_count() 与 get_papers(limit=1000) 返回数量一致。
+
+    覆盖无 filter 及各种 category_filter 值。
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        临时数据库 fixture。
+    """
+    _insert_category_papers(db)
+    count = db.get_papers_count()
+    papers = db.get_papers(limit=1000)
+    assert count == len(papers), \
+        f"get_papers_count={count} != len(get_papers)={len(papers)}"
+
+    for cf in ("a", "b", "ab", "all"):
+        count_cf = db.get_papers_count(category_filter=cf)
+        papers_cf = db.get_papers(limit=1000, category_filter=cf)
+        assert count_cf == len(papers_cf), \
+            f"category_filter={cf}: count={count_cf} != len={len(papers_cf)}"

@@ -510,6 +510,129 @@ h3 {
 
 .section-divider { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
 
+/* Papers checkbox column */
+.papers-table th.td-check,
+.papers-table td.td-check {
+  width: 40px;
+  text-align: center;
+  vertical-align: middle;
+}
+.papers-table td.td-check input[type="checkbox"] {
+  cursor: pointer;
+}
+.papers-table td.td-check input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+/* Toolbar inline checkboxes */
+.papers-toolbar .toolbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Sticky bottom selection bar */
+.sticky-selection-bar {
+  position: fixed;
+  bottom: 0;
+  left: 240px;
+  right: 0;
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  z-index: 900;
+}
+#selected-count { font-weight: 600; }
+.sticky-actions { display: flex; gap: 0.75rem; }
+
+@media (max-width: 768px) {
+  .sticky-selection-bar { left: 0; }
+}
+
+/* Papers pagination */
+.papers-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.papers-pagination .page-info { flex: 1; min-width: 0; }
+.papers-pagination .page-size-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.papers-pagination select {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.papers-pagination .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+.toast {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--success);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  padding: 0.9rem 1.1rem;
+  min-width: 260px;
+  max-width: 360px;
+  animation: toast-in 0.25s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.toast.toast-error { border-left-color: var(--failed); }
+.toast-message { font-size: 0.9rem; line-height: 1.4; }
+.toast-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.toast-actions a { text-decoration: none; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(20px); }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Score bars */
 .score-bar-wrap {
   position: relative;

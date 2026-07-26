@@ -65,6 +65,8 @@ app = FastAPI(title="PapersCrawler")
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
+
+
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 _running_phase: Optional[str] = None
@@ -156,9 +158,13 @@ def _pipeline_status():
                 out["failed_breakdown"] = breakdown
             phases[ps["label"]] = out
         effective_skip = {k: _get_effective_skip().get(k, False) for k in PHASE_ORDER}
-        # Count papers pending report (llm_summary success but not yet reported)
+        # Count papers pending report: A/B 相关 + LLM 总结成功 + 尚未被报告
         pending_report = db.conn.execute(
-            "SELECT COUNT(*) FROM papers WHERE llm_summary_status = 'success' AND report_date IS NULL"
+            "SELECT COUNT(*) FROM papers "
+            "WHERE llm_summary_status = 'success' "
+            "  AND report_date IS NULL "
+            "  AND llm_relevance_status = 'success' "
+            "  AND llm_relevance_category IN ('A', 'B')"
         ).fetchone()[0]
         return {
             "total": total,
@@ -493,20 +499,53 @@ async def pipeline_logs_sse():
 # ── Papers ─────────────────────────────────────────────────────────────────────
 
 @app.get("/papers", response_class=HTMLResponse)
-async def papers_page(request: Request, sort: str = "created"):
+async def papers_page(
+    request: Request,
+    sort: str = "created",
+    category: str = "ab",
+    has_summary: bool = False,
+    page: int = 1,
+    per_page: int = 100,
+):
     db = DatabaseClient(DB_PATH)
     try:
         db.init_db_papers()
-        sort_by = sort if sort in ("created", "published") else "created"
-        papers = db.get_papers(limit=100, sort_by=sort_by)
+        sort_by = sort if sort in ("created", "published", "summary") else "created"
+        category_filter = category if category in ("a", "b", "ab", "all") else "ab"
+        per_page = per_page if per_page in (50, 100, 200) else 100
+        page = page if page >= 1 else 1
+        offset = (page - 1) * per_page
+        papers = db.get_papers(limit=per_page, offset=offset, sort_by=sort_by, category_filter=category_filter)
+        if has_summary:
+            papers = [p for p in papers if getattr(p, "llm_summary_status", None) == "success"]
+        total_count = db.get_papers_count(category_filter=category_filter)
     finally:
         db.conn.close()
     return templates.TemplateResponse(request, "papers.html", {
-        "papers": papers, "sort_by": sort_by,
+        "papers": papers, "sort_by": sort_by, "category_filter": category_filter,
+        "has_summary_filter": has_summary,
+        "page": page, "per_page": per_page, "total_count": total_count,
     })
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────
+
+
+def _timeago(timestamp: float) -> str:
+    """Return a human-readable relative time string for a Unix timestamp."""
+    if not timestamp:
+        return ""
+    delta = datetime.now() - datetime.fromtimestamp(timestamp)
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    if seconds < 604800:
+        return f"{seconds // 86400}d ago"
+    return f"{seconds // 604800}w ago"
 
 
 def _list_reports():
@@ -516,30 +555,30 @@ def _list_reports():
         if not directory.exists():
             continue
         for f in sorted(directory.glob("report_*.md"), reverse=True):
+            mtime = f.stat().st_mtime
+            content = f.read_text(encoding="utf-8")
+            paper_count = content.count("**DOI**")
             reports.append({
                 "filename": f.name,
                 "source": source,
                 "path": str(f.relative_to(DATA_DIR.parent)),
-                "mtime": f.stat().st_mtime,
+                "mtime": mtime,
+                "timeago": _timeago(mtime),
+                "paper_count": paper_count,
             })
     reports.sort(key=lambda r: r["mtime"], reverse=True)
     return reports
 
 
 @app.get("/report", response_class=HTMLResponse)
-async def report_page(request: Request):
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        papers = db.get_papers_with_summaries()
-    finally:
-        db.conn.close()
-    publishers = load_publishers()
-    publisher_names = sorted(set(p["publisher"] for p in publishers if p.get("enabled", True)))
+async def report_page(request: Request, show: str = ""):
     reports = _list_reports()
+    selected_filename = show
+    if not selected_filename and reports:
+        selected_filename = reports[0]["filename"]
     return templates.TemplateResponse(
         request, "report.html", {
-            "papers": papers, "publishers": publisher_names, "reports": reports,
+            "reports": reports, "selected_filename": selected_filename,
         }
     )
 

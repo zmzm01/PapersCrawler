@@ -948,6 +948,8 @@ class DatabaseClient:
         SELECT * FROM papers
         WHERE llm_summary_status = 'success'
           AND report_date IS NULL
+          AND llm_relevance_category IN ('A', 'B')
+          AND llm_relevance_status = 'success'
         ORDER BY paperdate_rss DESC
         """)
         return cur.fetchall()
@@ -996,17 +998,25 @@ class DatabaseClient:
         """)
         return cur.fetchall()
 
-    def get_papers(self, limit=100, sort_by="created"):
+    def get_papers(self, limit=100, offset=0, sort_by="created", category_filter=None):
         """
         返回论文列表，支持按入库日期或发表日期排序。
 
         Parameters
         ----------
         limit : int
-            返回最大行数
+            返回最大行数（每页条数）
+        offset : int
+            跳过的行数（分页偏移）
         sort_by : str
             "created" = 按入库日期降序（默认）
             "published" = 按发表日期降序（COALESCE page > crossref > rss）
+            "summary" = 按 LLM 总结生成时间（llm_summary_date）降序
+        category_filter : str | None
+            None / "all" = 不过滤（所有论文）
+            "a" = 仅 LLM 判定为 A（直接相关）的论文
+            "b" = 仅 LLM 判定为 B（方法相关）的论文
+            "ab" = A 和 B 全部
 
         Returns
         -------
@@ -1016,21 +1026,61 @@ class DatabaseClient:
             "created": "created_date DESC",
             "published": ("COALESCE(paperdate_page, paperdate_crossref, "
                           "paperdate_rss) DESC, created_date DESC"),
+            "summary": "llm_summary_date DESC, created_date DESC",
         }
         order = order_clause.get(sort_by, order_clause["created"])
+        category_where = {
+            "ab": ("llm_relevance_status = 'success' "
+                   "AND llm_relevance_category IN ('A', 'B')"),
+            "a":  ("llm_relevance_status = 'success' "
+                   "AND llm_relevance_category = 'A'"),
+            "b":  ("llm_relevance_status = 'success' "
+                   "AND llm_relevance_category = 'B'"),
+        }
+        cond = category_where.get(category_filter)
+        where_clause = f"WHERE {cond}" if cond else ""
         cur = self.conn.execute(f"""
         SELECT doi, title, abstract, journal, publisher,
                paperdate_rss, paperdate_crossref, paperdate_page,
                created_date,
                llm_relevance_result, llm_relevance_category,
-               llm_relevance_subfields, llm_relevance_status
+               llm_relevance_subfields, llm_relevance_status,
+               llm_relevance_date,
+               llm_summary_status, llm_summary_date, llm_summary_result
         FROM papers
+        {where_clause}
         ORDER BY
           CASE WHEN llm_relevance_status IN ('skipped', 'pending') THEN 1 ELSE 0 END,
           {order}
-        LIMIT ?
-        """, (limit,))
+        LIMIT ? OFFSET ?
+        """, (limit, offset))
         return cur.fetchall()
+
+    def get_papers_count(self, category_filter=None):
+        """
+        统计满足分类筛选的论文总数（不受 limit/offset 影响），用于分页。
+
+        Parameters
+        ----------
+        category_filter : str | None
+            同 get_papers()。注意 sort_by 不影响计数。
+
+        Returns
+        -------
+        int
+        """
+        category_where = {
+            "ab": ("llm_relevance_status = 'success' "
+                   "AND llm_relevance_category IN ('A', 'B')"),
+            "a":  ("llm_relevance_status = 'success' "
+                   "AND llm_relevance_category = 'A'"),
+            "b":  ("llm_relevance_status = 'success' "
+                   "AND llm_relevance_category = 'B'"),
+        }
+        cond = category_where.get(category_filter)
+        where_clause = f"WHERE {cond}" if cond else ""
+        cur = self.conn.execute(f"SELECT COUNT(*) FROM papers {where_clause}")
+        return cur.fetchone()[0]
 
     def count_reset_impact(self, columns_where):
         """
