@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>报告解释 · {{ date_str }}</title>
+  <style>
+    :root {
+      --bg: #f6f7f8;
+      --card: #ffffff;
+      --text: #1a1d21;
+      --muted: #5a626a;
+      --border: #d4d8dc;
+      --border-light: #e9ecef;
+      --accent: #1e5aa8;
+      --c-success: #2b8a3e;
+      --c-failed: #c92a2a;
+      --c-skipped: #e67700;
+      --c-pending: #1864ab;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+    }
+
+    header {
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 3px solid var(--accent);
+    }
+
+    h1 {
+      margin: 0 0 .25rem;
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    h2 {
+      margin: 2.5rem 0 1rem;
+      font-size: 1.2rem;
+      font-weight: 600;
+    }
+
+    .dashboard {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+      padding: 1.25rem;
+      background: #fff;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--accent);
+    }
+
+    .stat-card.warning .stat-value {
+      color: var(--c-failed);
+    }
+
+    .stat-label {
+      margin-top: .5rem;
+      font-size: .85rem;
+      color: var(--muted);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin: .75rem 0 1rem;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+    }
+
+    .dot {
+      width: .65rem;
+      height: .65rem;
+      border-radius: 2px;
+      display: inline-block;
+    }
+
+    .chart-section {
+      margin-top: 1.5rem;
+    }
+
+    .section-title {
+      margin: 0 0 .75rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .chart-row {
+      display: grid;
+      grid-template-columns: 6.5rem 1fr 9rem;
+      align-items: center;
+      gap: .75rem;
+      padding: .5rem 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .chart-row:last-child {
+      border-bottom: none;
+    }
+
+    .chart-label {
+      font-size: .9rem;
+      font-weight: 500;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chart-bars {
+      display: flex;
+      height: 1.1rem;
+      background: var(--border-light);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .chart-bar {
+      height: 100%;
+      transition: opacity .15s ease;
+    }
+
+    .chart-bar:hover {
+      opacity: .85;
+    }
+
+    .chart-counts {
+      display: flex;
+      justify-content: flex-end;
+      gap: .65rem;
+      font-size: .85rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chart-counts span {
+      min-width: 1.4rem;
+      text-align: right;
+    }
+
+    .c-success { color: var(--c-success); }
+    .c-failed { color: var(--c-failed); }
+    .c-skipped { color: var(--c-skipped); }
+    .c-pending { color: var(--c-pending); }
+    .bg-success { background: var(--c-success); }
+    .bg-failed { background: var(--c-failed); }
+    .bg-skipped { background: var(--c-skipped); }
+    .bg-pending { background: var(--c-pending); }
+
+    .prompts {
+      margin-top: 2.5rem;
+    }
+
+    .details-block {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+
+    summary {
+      padding: .9rem 1rem;
+      font-weight: 600;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border-light);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    details[open] summary {
+      border-bottom-color: var(--border-light);
+    }
+
+    .details-body {
+      padding: 1rem;
+    }
+
+    pre {
+      margin: 0;
+      font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Monaco, Consolas, monospace;
+      font-size: .8rem;
+      line-height: 1.55;
+      background: #f1f3f5;
+      border: 1px solid var(--border-light);
+      border-radius: 4px;
+      padding: 1rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+      color: var(--text);
+    }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      font-size: .8rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: .5rem;
+    }
+
+    @media (max-width: 640px) {
+      .container { padding: 1rem; }
+      h1 { font-size: 1.5rem; }
+      .dashboard { padding: 1rem; }
+      .chart-row { grid-template-columns: 5rem 1fr 7rem; gap: .5rem; }
+      .chart-label { font-size: .8rem; }
+      .chart-counts { gap: .4rem; font-size: .75rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>报告解释 · {{ date_str }}</h1>
+      <div class="subtitle">本期论文推送的判定依据、阶段状态与 Prompt 快照</div>
+    </header>
+
+    {% macro pct(part, total) -%}
+      {%- if total > 0 -%}{{ (part / total * 100) | round(2) }}{%- else -%}0{%- endif -%}
+    {%- endmacro %}
+
+    <section class="dashboard">
+      <h2>本期数据</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value">{{ total_papers }}</div>
+          <div class="stat-label">总论文</div>
+        </div>
+        <div class="stat-card warning">
+          <div class="stat-value">{{ pending_report }}</div>
+          <div class="stat-label">待报告</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ publishers_count }}</div>
+          <div class="stat-label">出版社</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ phases_count }}</div>
+          <div class="stat-label">阶段</div>
+        </div>
+      </div>
+
+      <div class="chart-section">
+        <div class="section-title">阶段状态</div>
+        <div class="legend">
+          <span><span class="dot bg-success"></span>成功</span>
+          <span><span class="dot bg-failed"></span>失败</span>
+          <span><span class="dot bg-skipped"></span>跳过</span>
+          <span><span class="dot bg-pending"></span>待处理</span>
+        </div>
+        {% for phase in phase_status %}
+          {% set total = phase.success + phase.failed + phase.skipped + phase.pending %}
+          <div class="chart-row">
+            <div class="chart-label">{{ phase.name }}</div>
+            <div class="chart-bars">
+              {% if phase.success > 0 %}<div class="chart-bar bg-success" style="width: {{ pct(phase.success, total) }}%"></div>{% endif %}
+              {% if phase.failed > 0 %}<div class="chart-bar bg-failed" style="width: {{ pct(phase.failed, total) }}%"></div>{% endif %}
+              {% if phase.skipped > 0 %}<div class="chart-bar bg-skipped" style="width: {{ pct(phase.skipped, total) }}%"></div>{% endif %}
+              {% if phase.pending > 0 %}<div class="chart-bar bg-pending" style="width: {{ pct(phase.pending, total) }}%"></div>{% endif %}
+            </div>
+            <div class="chart-counts">
+              <span class="c-success">{{ phase.success }}</span>
+              <span class="c-failed">{{ phase.failed }}</span>
+              <span class="c-skipped">{{ phase.skipped }}</span>
+              <span class="c-pending">{{ phase.pending }}</span>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="chart-section">
+        <div class="section-title">近 7 天采集</div>
+        <div class="legend">
+          <span><span class="dot bg-success"></span>可报告</span>
+          <span><span class="dot bg-failed"></span>处理失败</span>
+          <span><span class="dot bg-pending"></span>其他 / 待处理</span>
+        </div>
+        {% for day in weekly %}
+          {% set total = day.reportable + day.total_failed + day.other %}
+          <div class="chart-row">
+            <div class="chart-label">{{ day.weekday }} {{ day.date[4:6] }}/{{ day.date[6:8] }}</div>
+            <div class="chart-bars">
+              {% if day.reportable > 0 %}<div class="chart-bar bg-success" style="width: {{ pct(day.reportable, total) }}%"></div>{% endif %}
+              {% if day.total_failed > 0 %}<div class="chart-bar bg-failed" style="width: {{ pct(day.total_failed, total) }}%"></div>{% endif %}
+              {% if day.other > 0 %}<div class="chart-bar bg-pending" style="width: {{ pct(day.other, total) }}%"></div>{% endif %}
+            </div>
+            <div class="chart-counts">
+              <span class="c-success">{{ day.reportable }}</span>
+              <span class="c-failed">{{ day.total_failed }}</span>
+              <span class="c-pending">{{ day.other }}</span>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="prompts">
+      <h2>完整 Prompt 快照</h2>
+
+      <details class="details-block" open>
+        <summary>Phase E — 相关性判断</summary>
+        <div class="details-body">
+          <pre>{{ relevance_prompt | e }}</pre>
+        </div>
+      </details>
+
+      <details class="details-block">
+        <summary>Phase F — 论文总结</summary>
+        <div class="details-body">
+          <pre>{{ summary_prompt | e }}</pre>
+        </div>
+      </details>
+    </section>
+
+    <footer>
+      <span>生成时间：{{ generated_at }}</span>
+      <span>PapersCrawler</span>
+    </footer>
+  </div>
+</body>
+</html>
