@@ -34,6 +34,7 @@ const I18N = {
     'papers.sort_label': '排序：',
     'papers.sort_created': '入库日期',
     'papers.sort_published': '发表日期',
+    'papers.sort_summary': '总结生成时间',
     'papers.relevance': 'LLM',
     'papers.skipped': '已跳过',
     'papers.pending': '待处理',
@@ -42,24 +43,34 @@ const I18N = {
     'papers.date': '日期',
     'papers.doi': 'DOI',
     'papers.pub_warning': '发表日期来自多个数据源（出版社页 > CrossRef > RSS），精度可能有限。',
+    'papers.category_label': 'LLM 分类：',
+    'papers.category_a': '仅 A',
+    'papers.category_b': '仅 B',
+    'papers.category_ab': 'A/B',
+    'papers.category_all': '全部',
+    'papers.empty': '当前筛选下没有匹配的论文。',
+    'papers.select_all': '全选当前页',
+    'papers.has_summary_only': '仅可报告',
+    'papers.page_info': '共 {total} 篇 · 第 {page} / {pages} 页',
+    'papers.per_page': '每页',
+    'papers.prev': '上一页',
+    'papers.next': '下一页',
+    'papers.no_summary': '该论文无 LLM 总结，无法加入报告',
+    'papers.selected_count': '{n} 篇已选',
+    'papers.clear': '清空',
+    'papers.generate': '生成报告',
+    'papers.generating': '生成中...',
+    'papers.toast_generated': '已生成 {filename}',
+    'papers.toast_failed': '生成失败: {msg}',
+    'papers.toast_view': '查看',
+    'papers.toast_download': '下载',
+    'papers.toast_network_error': '网络错误: {msg}',
 
     'report.title': '报告',
     'report.choose_report': '查看报告：',
-    'report.choose_hint': '从上方选择一个报告查看渲染内容。',
-    'report.no_report': '暂无报告。可在下方生成。',
-    'report.generate_title': '生成自定义报告',
-    'report.publisher': '出版社：',
-    'report.select_all': '全选',
-    'report.deselect_all': '取消全选',
-    'report.generate': '生成报告',
-    'report.doi': 'DOI',
-    'report.title_col': '标题',
-    'report.publisher_col': '出版社',
-    'report.summary_date': '总结日期',
-    'report.preview': '预览',
+    'report.no_report': '暂无报告。',
     'report.download': '下载',
-    'report.generated': '已生成：',
-    'report.select_hint': '请至少选择一篇论文',
+    'report.select_hint': '请选择一份报告',
 
     'logs.title': '流水线日志',
     'logs.description': '显示最近约 200 KB 的 <code>data/PaperCrawler.log</code>。日志文件累积所有运行记录（CLI + Web UI）。可使用下方过滤器按级别筛选。',
@@ -99,9 +110,10 @@ const I18N = {
     'home.guide_notes': '注意事项',
     'home.pipeline_desc': '独立运行各阶段、查看实时日志、重置阶段状态、查看进度图表',
     'home.pipeline_notes': 'Config 页面切换 SKIP 后，Pipeline 页面对应按钮会灰显禁用。重置时有影响范围确认弹窗。',
-    'home.papers_desc': '浏览论文，可按入库日期或发表日期排序。',
-    'home.report_desc': '选择有 LLM 总结的论文，生成 Markdown 报告，浏览器内预览和下载',
-    'home.report_notes': '仅 llm_summary_status = success 的论文出现在列表中。使用复选框选择特定论文。',
+    'home.papers_desc': '浏览/选取论文，生成自定义报告',
+    'home.papers_notes': '可全选/按需选取；点击 Generate Report 生成 Markdown 报告',
+    'home.report_desc': '查看已生成的报告，按来源/日期筛选',
+    'home.report_notes': '报告按自动/用户来源分组，按日期降序排列。通过侧栏或下拉菜单打开。',
     'home.logs_desc': '查看流水线日志文件，按级别过滤',
     'home.logs_notes': '显示最近 ~200 KB，新日志通过 SSE 实时推送。',
     'home.config_desc': '切换 SKIP 开关（持久化到文件）、编辑 publishers.yaml 和 keywords.yaml',
@@ -155,7 +167,7 @@ const I18N = {
 
     'dashboard.title': '仪表盘',
     'dashboard.total_papers': '论文总数',
-    'dashboard.pending_report': '待报告',
+    'dashboard.pending_report': '待报告 (A/B)',
     'dashboard.publishers': '出版社',
     'dashboard.phases': '流水线阶段',
     'dashboard.phase_charts': '流水线状态',
@@ -203,6 +215,7 @@ const I18N = {
     'papers.sort_label': 'Sort by:',
     'papers.sort_created': 'Created Date',
     'papers.sort_published': 'Published Date',
+    'papers.sort_summary': 'Summary Date',
     'papers.relevance': 'LLM',
     'papers.skipped': 'Skipped',
     'papers.pending': 'Pending',
@@ -211,24 +224,34 @@ const I18N = {
     'papers.date': 'Date',
     'papers.doi': 'DOI',
     'papers.pub_warning': 'Published dates come from multiple sources (publisher page > CrossRef > RSS) and may be inaccurate.',
+    'papers.category_label': 'LLM Category:',
+    'papers.category_a': 'A Only',
+    'papers.category_b': 'B Only',
+    'papers.category_ab': 'A/B',
+    'papers.category_all': 'All',
+    'papers.empty': 'No papers match the current filter.',
+    'papers.select_all': 'Select all on page',
+    'papers.has_summary_only': 'Reportable only',
+    'papers.page_info': '{total} total · page {page} / {pages}',
+    'papers.per_page': 'Per page',
+    'papers.prev': 'Prev',
+    'papers.next': 'Next',
+    'papers.no_summary': 'No LLM summary available',
+    'papers.selected_count': '{n} selected',
+    'papers.clear': 'Clear',
+    'papers.generate': 'Generate Report',
+    'papers.generating': 'Generating...',
+    'papers.toast_generated': 'Generated {filename}',
+    'papers.toast_failed': 'Generation failed: {msg}',
+    'papers.toast_view': 'View',
+    'papers.toast_download': 'Download',
+    'papers.toast_network_error': 'Network error: {msg}',
 
     'report.title': 'Report',
     'report.choose_report': 'Report:',
-    'report.choose_hint': 'Select a report above to view rendered content.',
-    'report.no_report': 'No reports found. Generate one below.',
-    'report.generate_title': 'Generate Custom Report',
-    'report.publisher': 'Publisher:',
-    'report.select_all': 'Select All',
-    'report.deselect_all': 'Deselect All',
-    'report.generate': 'Generate Report',
-    'report.doi': 'DOI',
-    'report.title_col': 'Title',
-    'report.publisher_col': 'Publisher',
-    'report.summary_date': 'Summary Date',
-    'report.preview': 'Preview',
+    'report.no_report': 'No reports found.',
     'report.download': 'Download',
-    'report.generated': 'Generated: ',
-    'report.select_hint': 'Select at least one paper',
+    'report.select_hint': 'Select a report',
 
     'logs.title': 'Pipeline Logs',
     'logs.description': 'Showing last ~200 KB of <code>data/PaperCrawler.log</code>. The log file accumulates across all runs (CLI + Web UI). Use filter below to narrow by level.',
@@ -272,9 +295,10 @@ const I18N = {
     'home.guide_notes': 'Notes',
     'home.pipeline_desc': 'Run individual phases, watch live logs with level filter, reset phase states, view progress charts',
     'home.pipeline_notes': 'SKIP toggles in Config page disable Pipeline buttons. Reset shows confirmation with impact details.',
-    'home.papers_desc': 'Browse papers, sort by created or published date.',
-    'home.report_desc': 'Select papers with LLM summaries, generate Markdown reports, preview in-browser and download',
-    'home.report_notes': 'Only papers with llm_summary_status = success appear in the list. Use checkboxes to select specific papers.',
+    'home.papers_desc': 'Browse and select papers, generate custom reports.',
+    'home.papers_notes': 'Select all or pick individual papers; click Generate Report to create a Markdown report.',
+    'home.report_desc': 'View generated reports, filter by source and date.',
+    'home.report_notes': 'Reports are grouped by auto/user source and sorted by date. Use the sidebar or dropdown to open one.',
     'home.logs_desc': 'View pipeline log file, filter by severity level',
     'home.logs_notes': 'Shows most recent ~200 KB. New log lines arrive in real time via SSE.',
     'home.config_desc': 'Toggle SKIP switches (persisted to file), edit publishers.yaml and keywords.yaml',
@@ -318,7 +342,7 @@ const I18N = {
 
     'dashboard.title': 'Dashboard',
     'dashboard.total_papers': 'Total Papers',
-    'dashboard.pending_report': 'Pending Report',
+    'dashboard.pending_report': 'Pending Report (A/B)',
     'dashboard.publishers': 'Publishers',
     'dashboard.phases': 'Pipeline Phases',
     'dashboard.phase_charts': 'Pipeline Status',
@@ -358,6 +382,13 @@ function switchLanguage(lang) {
       }
     }
   });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    const varsAttr = el.getAttribute('data-i18n-vars');
+    const vars = varsAttr ? JSON.parse(varsAttr) : undefined;
+    const text = getI18n(key, vars);
+    if (text) el.title = text;
+  });
   // update toggle button text
   const btn = document.getElementById('lang-toggle');
   if (btn) btn.textContent = currentLang === 'zh' ? 'EN' : '中';
@@ -384,6 +415,47 @@ document.getElementById('modal-confirm')?.addEventListener('click', function() {
   if (modalCallback) modalCallback();
   closeModal();
 });
+
+// ── Toast notifications ─────────────────────────────────────────────────────
+
+function _getToastContainer() {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  return container;
+}
+
+function showToast(message, actions) {
+  const container = _getToastContainer();
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  const messageEl = document.createElement('div');
+  messageEl.className = 'toast-message';
+  messageEl.textContent = message;
+  toast.appendChild(messageEl);
+  if (actions && actions.length) {
+    const actionsEl = document.createElement('div');
+    actionsEl.className = 'toast-actions';
+    actions.forEach(action => {
+      const a = document.createElement('a');
+      a.href = action.href;
+      a.textContent = action.text;
+      a.className = action.primary ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary';
+      a.addEventListener('click', () => toast.remove());
+      actionsEl.appendChild(a);
+    });
+    toast.appendChild(actionsEl);
+  }
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'toast-out 0.2s ease-in forwards';
+    toast.addEventListener('animationend', () => toast.remove());
+  }, 8000);
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 

@@ -4,22 +4,45 @@
 <h2 data-i18n="papers.title">Papers</h2>
 
 <div class="papers-toolbar">
+  <label data-i18n="papers.category_label">LLM Category:</label>
+  <select id="category-select" onchange="changeCategory()">
+    <option value="a" {% if category_filter == 'a' %}selected{% endif %} data-i18n="papers.category_a">A Only</option>
+    <option value="b" {% if category_filter == 'b' %}selected{% endif %} data-i18n="papers.category_b">B Only</option>
+    <option value="ab" {% if category_filter == 'ab' %}selected{% endif %} data-i18n="papers.category_ab">A/B Only</option>
+    <option value="all" {% if category_filter == 'all' %}selected{% endif %} data-i18n="papers.category_all">All</option>
+  </select>
   <label data-i18n="papers.sort_label">Sort by:</label>
   <select id="sort-select" onchange="changeSort()">
     <option value="created" {% if sort_by == 'created' %}selected{% endif %} data-i18n="papers.sort_created">Created Date</option>
     <option value="published" {% if sort_by == 'published' %}selected{% endif %} data-i18n="papers.sort_published">Published Date</option>
+    <option value="summary" {% if sort_by == 'summary' %}selected{% endif %} data-i18n="papers.sort_summary">Summary Date</option>
   </select>
+  <label class="toolbar-check" for="filter-has-summary">
+    <input type="checkbox" id="filter-has-summary" {% if has_summary_filter %}checked{% endif %} onchange="changeHasSummary()">
+    <span data-i18n="papers.has_summary_only">Reportable only</span>
+  </label>
+  <label class="toolbar-check" for="select-all">
+    <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)">
+    <span data-i18n="papers.select_all">Select all on page</span>
+  </label>
 </div>
 
 {% if sort_by == 'published' %}
 <div class="alert alert-warning">
-  ⚠ <span data-i18n="papers.pub_warning">Published dates come from multiple sources (publisher page > CrossRef > RSS) and may be inaccurate.</span>
+  <i class="fa-solid fa-triangle-exclamation"></i> <span data-i18n="papers.pub_warning">Published dates come from multiple sources (publisher page > CrossRef > RSS) and may be inaccurate.</span>
+</div>
+{% endif %}
+
+{% if not papers %}
+<div class="alert alert-info">
+  <span data-i18n="papers.empty">No papers match the current filter.</span>
 </div>
 {% endif %}
 
 <table class="papers-table">
   <thead>
     <tr>
+      <th class="td-check"><label for="select-all" class="sr-only" data-i18n="papers.select_all">Select all on page</label></th>
       <th data-i18n="papers.date">Date</th>
       <th data-i18n="papers.title_col">Title</th>
       <th data-i18n="papers.journal">Journal</th>
@@ -29,8 +52,18 @@
   </thead>
   <tbody>
     {% for p in papers %}
+    {% set can_report = p.llm_summary_status == 'success' %}
     <tr>
-      <td class="td-date">{{ (p.created_date or '—')[:10] if sort_by == 'created' else (p.paperdate_page or p.paperdate_crossref or p.paperdate_rss or '—')[:10] }}</td>
+      <td class="td-check">
+        <input type="checkbox" class="paper-check" value="{{ p.doi }}"
+          {% if not can_report %}disabled data-i18n-title="papers.no_summary"{% endif %}>
+      </td>
+      <td class="td-date">
+        {% if sort_by == 'created' %}{{ (p.created_date or '—')[:10] }}
+        {% elif sort_by == 'summary' %}{{ (p.llm_summary_date or '—')[:10] }}
+        {% else %}{{ (p.paperdate_page or p.paperdate_crossref or p.paperdate_rss or '—')[:10] }}
+        {% endif %}
+      </td>
       <td class="td-title">{{ p.title or '—' }}</td>
       <td>{{ p.journal or '—' }}</td>
       <td>
@@ -66,10 +99,152 @@
   <span><span class="badge badge-failed">D</span> Irrelevant</span>
 </div>
 
+{% set total_pages = ((total_count + per_page - 1) // per_page) if per_page > 0 else 1 %}
+{% if total_pages < 1 %}{% set total_pages = 1 %}{% endif %}
+{% if page > total_pages %}{% set page = total_pages %}{% endif %}
+<div class="papers-pagination">
+  <span class="page-info" data-i18n="papers.page_info" data-i18n-vars='{"total": {{ total_count }}, "page": {{ page }}, "pages": {{ total_pages }} }'>
+    共 {{ total_count }} 篇 · 第 {{ page }} / {{ total_pages }} 页
+  </span>
+  <label class="page-size-label">
+    <span data-i18n="papers.per_page">每页</span>
+    <select id="per-page-select" onchange="changePerPage()">
+      <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+      <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+      <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
+    </select>
+  </label>
+  <button class="btn btn-sm" id="page-prev" {% if page <= 1 %}disabled{% endif %} onclick="goPage({{ page - 1 }})">
+    <i class="fa-solid fa-chevron-left"></i> <span data-i18n="papers.prev">上一页</span>
+  </button>
+  <button class="btn btn-sm" id="page-next" {% if page >= total_pages %}disabled{% endif %} onclick="goPage({{ page + 1 }})">
+    <span data-i18n="papers.next">下一页</span> <i class="fa-solid fa-chevron-right"></i>
+  </button>
+</div>
+
+<div id="sticky-selection-bar" class="sticky-selection-bar" style="display:none;">
+  <span id="selected-count" data-i18n="papers.selected_count" data-i18n-vars='{"n": 0}'>0 篇已选</span>
+  <div class="sticky-actions">
+    <button class="btn btn-primary" id="generate-report-btn" onclick="generateReport()" data-i18n="papers.generate">生成报告</button>
+    <button class="btn btn-sm btn-secondary" onclick="clearSelection()" data-i18n="papers.clear">清空</button>
+  </div>
+</div>
+
 <script>
+function _urlWithParams(updates) {
+  const params = new URLSearchParams(window.location.search);
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === null || v === undefined || v === '') {
+      params.delete(k);
+    } else {
+      params.set(k, v);
+    }
+  }
+  const qs = params.toString();
+  return '/papers' + (qs ? '?' + qs : '');
+}
+
 function changeSort() {
   const val = document.getElementById('sort-select').value;
-  window.location.href = '/papers?sort=' + val;
+  window.location.href = _urlWithParams({sort: val, page: ''});
 }
+
+function changeCategory() {
+  const val = document.getElementById('category-select').value;
+  window.location.href = _urlWithParams({category: val, page: ''});
+}
+
+function changeHasSummary() {
+  const checked = document.getElementById('filter-has-summary').checked;
+  window.location.href = _urlWithParams({has_summary: checked ? '1' : '', page: ''});
+}
+
+function changePerPage() {
+  const val = document.getElementById('per-page-select').value;
+  window.location.href = _urlWithParams({per_page: val, page: ''});
+}
+
+function goPage(p) {
+  if (p < 1) p = 1;
+  window.location.href = _urlWithParams({page: p});
+}
+
+function getSelectableChecks() {
+  return Array.from(document.querySelectorAll('.paper-check:not(:disabled)'));
+}
+
+function updateSelectAllState() {
+  const checks = getSelectableChecks();
+  const selectAll = document.getElementById('select-all');
+  selectAll.disabled = checks.length === 0;
+  if (checks.length === 0) {
+    selectAll.checked = false;
+    return;
+  }
+  const allChecked = checks.every(cb => cb.checked);
+  selectAll.checked = allChecked;
+}
+
+function updateStickyBar() {
+  const checked = document.querySelectorAll('.paper-check:checked:not(:disabled)');
+  const bar = document.getElementById('sticky-selection-bar');
+  const countEl = document.getElementById('selected-count');
+  const n = checked.length;
+  if (n > 0) {
+    bar.style.display = 'flex';
+    countEl.setAttribute('data-i18n-vars', JSON.stringify({n: n}));
+    countEl.textContent = getI18n('papers.selected_count', {n: n});
+  } else {
+    bar.style.display = 'none';
+  }
+  updateSelectAllState();
+}
+
+function toggleSelectAll(master) {
+  getSelectableChecks().forEach(cb => cb.checked = master.checked);
+  updateStickyBar();
+}
+
+function clearSelection() {
+  document.querySelectorAll('.paper-check:checked').forEach(cb => cb.checked = false);
+  document.getElementById('select-all').checked = false;
+  updateStickyBar();
+}
+
+async function generateReport() {
+  const dois = Array.from(document.querySelectorAll('.paper-check:checked:not(:disabled)')).map(cb => cb.value);
+  if (!dois.length) return;
+  const btn = document.getElementById('generate-report-btn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = getI18n('papers.generating');
+  try {
+    const r = await fetch('/report/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({dois: dois})
+    });
+    const data = await r.json();
+    if (data.ok) {
+      showToast(getI18n('papers.toast_generated', {filename: data.filename}), [
+        {text: getI18n('papers.toast_view'), href: '/report?show=' + encodeURIComponent(data.filename), primary: true},
+        {text: getI18n('papers.toast_download'), href: '/report/download/' + encodeURIComponent(data.filename)}
+      ]);
+    } else {
+      showToast(getI18n('papers.toast_failed', {msg: data.error || 'unknown'}), []);
+    }
+  } catch (e) {
+    showToast(getI18n('papers.toast_network_error', {msg: e.message}), []);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+document.querySelectorAll('.paper-check').forEach(cb => {
+  cb.addEventListener('change', updateStickyBar);
+});
+
+updateSelectAllState();
 </script>
 {% endblock %}
