@@ -43,6 +43,10 @@ function renderReportContent(markdown) {
     function(m) { var k = '@@KX' + (pid++) + '@@'; placeholders[k] = m; return k; }
   );
   var html = marked.parse(protected_md, { breaks: true, gfm: true });
+  // 反 XSS：DOMPurify 净化 marked 输出的 HTML
+  if (typeof DOMPurify !== 'undefined') {
+    html = DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
+  }
   for (var k in placeholders) {
     html = html.split(k).join(placeholders[k]);
   }

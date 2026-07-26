@@ -164,16 +164,6 @@ h3 {
 .badge-pending { background: #f1f5f9; color: #475569; }
 .badge-warning { background: #dbeafe; color: #1e40af; }
 
-.relevance-legend {
-  margin-bottom: 1rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  display: flex;
-  gap: 1.5rem;
-  flex-wrap: wrap;
-}
-.relevance-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
-
 /* Buttons */
 .btn {
   display: inline-block;
@@ -509,53 +499,6 @@ h3 {
 .report-content .katex-error { color: #cc0000; font-size: 0.85rem; }
 
 .section-divider { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
-
-/* Papers checkbox column */
-.papers-table th.td-check,
-.papers-table td.td-check {
-  width: 40px;
-  text-align: center;
-  vertical-align: middle;
-}
-.papers-table td.td-check input[type="checkbox"] {
-  cursor: pointer;
-}
-.papers-table td.td-check input[type="checkbox"]:disabled {
-  cursor: not-allowed;
-}
-
-/* Toolbar inline checkboxes */
-.papers-toolbar .toolbar-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.9rem;
-  cursor: pointer;
-  user-select: none;
-}
-
-/* Sticky bottom selection bar */
-.sticky-selection-bar {
-  position: fixed;
-  bottom: 0;
-  left: 240px;
-  right: 0;
-  background: var(--card-bg);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
-  padding: 0.75rem 1.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  z-index: 900;
-}
-#selected-count { font-weight: 600; }
-.sticky-actions { display: flex; gap: 0.75rem; }
-
-@media (max-width: 768px) {
-  .sticky-selection-bar { left: 0; }
-}
 
 /* Papers pagination */
 .papers-pagination {

@@ -1,9 +1,62 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-07-26 P4: WebUI 安全加固 R1-R4
+
+- R1 路径遍历：`/report/data/{filename}` 和 `/report/download/{filename}` 加 `Path.resolve()` + `startswith` 防护，返回 400 而非 200+泄露
+- R2 DOMPurify：base.html 追加 `dompurify@3.2.4` CDN（cdnjs）；report.html `renderReportContent()` 中 `marked.parse()` 输出经 `DOMPurify.sanitize()` 净化（保留 `target` 属性）
+- R3 innerHTML→textContent：logs.html filter 函数改用 `textContent` 安全赋值（CSS 已有 `white-space: pre-wrap`）
+- R4 安全响应头：`@app.middleware("http")` 注入 `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / `Permissions-Policy`
+- 文档同步：design.md 定位节重写（只读定位）、页面功能表精简（删 Data Sources/Subscriptions/Config 行 + 删任务执行模型/Reset 级联逻辑整段）、新增 WebUI 安全章节；tasks.md 追加本条
+- 验证：pytest 233 passed，路径遍历返回 400，安全响应头全部存在
+- 文件清单：src/web/app.py (+24/-4)、src/web/templates/base.html (+1)、src/web/templates/report.html (+3/-1)、src/web/templates/logs.html (+2/-2)、docs/design.md (重写定位+页面表+启动方式，新增安全章)、docs/tasks.md (+15 行)
+
+## 2026-07-26 P3: 新建 CLI 工具 + 单元测试
+
+- 新建 `tools/run_pipeline.py` — 统一流水线 CLI 入口，替代 `schedule_daily.py` / `schedule_weekly.py` / `src/main.py`
+  - 互斥模式：`--daily` / `--weekly` / `--all` / `--phases A,B,C`（默认 `--all`）
+  - 参数：`--dry-run`、`--reset-publisher`/`--no-reset-publisher`、`--reset-mineru`/`--no-reset-mineru`、`--log-level`
+  - 复制 `schedule_daily.py` 的 logging + auto-reset 逻辑
+  - `--dry-run` 打印执行计划但不调用任何 pipeline 函数
+  - 顶部 docstring 含所有调用模式 + cron 配置 + xvfb-run 提示
+- 新建 `tools/send_report.py` — CLI 邮件发送工具，复用 `phase_h_email()`
+  - 必填 `--report` + 可选 `--recipients` / `--dry-run` / `--log-level`
+  - AUTO_REPORT_DIR / USER_REPORT_DIR 双目录查找，文件不存在 exit code 2
+  - `--recipients` 解析：逗号分隔、去空白、保留非空项
+- 新建 `tests/test_run_pipeline.py` — 8 个测试覆盖两个 CLI 工具
+  - subprocess 验证退出码和输出 + unittest.mock.patch 验证函数调用
+  - 测试 dry-run 不调用 run_pipeline、phases 解析、empty phases 处理、daily 调用 run_daily
+  - 测试 send_report missing exit code 2、recipients 透传、默认收件人回退
+- 文档同步：`docs/usage.md` 新增 `run_pipeline.py` / `send_report.py` 条目，标记旧入口 deprecated
+
+**关键设计决策**：
+- CLI 脚本用 `main(argv=None)` 函数包装，`if __name__ == "__main__"` 只调用 `main()`，便于测试直接导入并传参
+- `send_report.py` 的 `DatabaseClient` 在 `main()` 内部按需导入（非模块级），避免导入副作用
+- 测试使用 subprocess（验证退出码）+ mock（验证函数调用）混合策略
+
+**验证结果**：8 passed in 2.07s
+
+**文件清单**：
+| 文件 | 行数 | 说明 |
+|------|------|------|
+| `tools/run_pipeline.py` | 209 | 统一流水线 CLI 入口 |
+| `tools/send_report.py` | 169 | CLI 邮件发送工具 |
+| `tests/test_run_pipeline.py` | 209 | 8 个测试用例 |
+
+## 2026-07-26 P2: 合并配置层到 settings/email.yaml
+
+- 删除 data/skip_overrides.json（WebUI 引入的运行时层，现已无 UI 引用）
+- 删除 SQLite subscribers 表 + 4 个函数
+- 新建 data/email.yaml，格式 [{email, name, enabled}]，per-user 开关
+- phase_h.py 收件人来源从 DB 改 email.yaml，回退 .env SMTP_TO_ADDRS
+- runner.py 删 _load_skip_overrides / _get_effective_skip，use_overrides 参数废弃
+- app.py 同步清理
+- 文档同步（design.md / tasks.md / usage.md）
+
 # 变更汇总
 
 | 模块 | 变更 | 日期 |
 |------|------|------|
+| **CLI 工具 + 测试** | 新建 `tools/run_pipeline.py`（统一入口，替代旧 main/schedule_*）、`tools/send_report.py`（邮件发送）、`tests/test_run_pipeline.py`（8 测试）；文档同步 | 07-26 |
 | **报告预览工具** | 新增 `tools/preview_report.py`：生成报告但**不**调 `mark_papers_reported()`，完全不污染数据库；已报告论文（`report_date NOT NULL`）也可再次包含，便于重看历史或生成回顾性快照。**与 Phase G auto 模式的关键差异**：(1) 不调 `mark_papers_reported()` → 下次 Phase G 仍能拾取这些论文；(2) SQL 去掉 `report_date IS NULL` 过滤 → 允许回看已报告论文；(3) `--scope` 参数决定论文范围（`all` 全部 / `week` 近 7 天 / `today` 当天），按 `created_date` 过滤；(4) 输出路径由 `--output` 必填指定（必须 `.md` 结尾），不写默认 `data/reports/auto/`；(5) explainer 文件名强制 `report_<ref_date>_explained.html`（`ref_date` 默认今天，`--date YYYY-MM-DD` 覆盖），让 explainer 的 `_extract_date_from_path` 正确识别日期，避免 "using today" warning；(6) 可选 `--no-explainer` 跳过 explainer 生成。**实现**：(1) 不依赖 `phase_g_report()` user 模式（user 模式需 doi_list），直接调底层 API：自定义 SQL + `generate_report` + `write_explained_html`；(2) `_build_paper_dicts()` 镜像 `phase_g.py:90-114` 20 字段构造逻辑；(3) `_atomic_write()` 用 `tmp + rename` 防半写文件。**CLI**：`--scope {all,week,today}` (默认 all) / `--output PATH` (必填 .md) / `--date YYYY-MM-DD` (默认今天) / `--no-explainer`。**验证**：跑 4 种 scope 组合 + 2 种错误路径（错误日期格式 / 错误输出后缀），运行前后 `report_date NOT NULL` 计数不变；自定义 `--date 2026-07-20` 时 explainer 无 "using today" warning；`--scope today` 今天无新论文时正常返回 0 篇。 | 07-26 |
 | **报告解释页模板** | 创建 `templates/report/html/explained.html.j2`：独立风格、零外部依赖，复用现有 Jinja2 env（`loader` 指向 `templates/report/`）。模板输出单文件自包含 HTML，含 4 统计卡片 + 5 阶段 CSS 堆叠柱状图 + 近 7 天采集图 + 完整 `relevance_prompt` / `summary_prompt` `<details>` 快照。字体栈为系统字体，无 CDN/Google Fonts/KaTeX。渲染 mock 验证通过（14.6KB）。后续由 `pipeline.generate_explained_html` 调用并生成 `report_YYYYMMDD_explained.html`。 | 07-26 |
 | **报告解释页** | 新增 `report_YYYYMMDD_explained.html`：在 Phase G 写完 md 报告后，由 `pipeline.generate_explained_html` 控制生成。HTML 含 4 统计卡片 + 5 阶段状态柱状图 + 7 天每日采集 + 完整 relevance/summary prompt 快照（`{scope_block}` 展开 + `{title}/{abstract}` 保留）。模板 `templates/report/html/explained.html.j2` 独立风格，零外部依赖，复用现有 Jinja2 env。开关默认 `true`，关闭后行为不变。 | 07-26 |

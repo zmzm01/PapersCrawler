@@ -237,20 +237,21 @@ Phase H: 邮件推送
 
 **状态值**：`FetchStatus` 枚举 (`pending` → `success` / `failed` / `skipped`)
 
-### subscribers 表（邮件订阅者）
+### 邮件收件人配置 (email.yaml)
 
-```
-subscribers:
-  id              INTEGER PRIMARY KEY AUTOINCREMENT
-  email           TEXT UNIQUE NOT NULL      -- 订阅邮箱
-  name            TEXT DEFAULT ''           -- 订阅者姓名（可选）
-  active          INTEGER DEFAULT 1         -- 1=启用, 0=停用
-  delivery_method TEXT DEFAULT 'email'      -- 投递方式 (预留: email/webhook/wechat)
-  created_date    TEXT                      -- 创建时间
-  updated_date    TEXT                      -- 更新时间
+收件人列表存储在 `data/email.yaml`，格式为 `recipients` 数组，每项含 `email`、`name`（可选）、`enabled`（默认 `true`）：
+
+```yaml
+recipients:
+  - email: user1@example.com
+    name: "User 1"
+    enabled: true
+  - email: user2@example.com
+    name: "User 2"
+    enabled: false
 ```
 
-Phase H（邮件推送）优先使用 `subscribers` 表中 `active=1` 的邮箱列表作为收件人。当表中无订阅者时，回退到 `.env` 的 `SMTP_TO_ADDRS` 配置，保证向后兼容。
+Phase H（邮件推送）优先读取此文件（过滤 `enabled=true`），文件不存在或解析失败时回退到 `.env` 的 `SMTP_TO_ADDRS`。这是对原 `subscribers` 表（已移除）的替代方案——不再依赖 SQLite，纯 YAML 配置更易管理。
 
 ### skipped_dois 表（跳过/删除的论文 DOI）
 
@@ -623,20 +624,14 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 
 ## 定位
 
-> **Web UI 是 Pipeline 监控仪表盘 + 报告工作站，不是 CLI 的替代品。**
+> **Web UI 是只读展示台（Dashboard + Report 阅览 + Pipeline 状态 + Logs），不接受写入操作。** 所有配置修改走配置文件，所有运行控制走 `tools/run_pipeline.py`。
 
 | CLI 擅长 | Web UI 擅长 |
 |----------|------------|
 | 定时/自动化运行（cron） | 可视化监控：一眼看清各阶段状态分布 |
-| ad-hoc 重置/调试（reset 工具） | 精准控制：Config 页切换 SKIP → Pipeline 页按钮灰显 |
-| 深度调试（debug 脚本） | 交互式报告：勾选论文、预览、下载（CLI 做不到） |
-| 批量全流程 | 配置编辑：领域描述文本框 + 连通性测试 + 期刊启用开关 |
-
-### 配置隔离原则
-
-- **CLI** 的 SKIP 配置完全由 `src/config.py` 控制，不受 Web UI 影响
-- **Web UI** 的 SKIP 切换写入 `data/skip_overrides.json`，仅影响 Pipeline 页的按钮状态
-- 两者互不干扰，无暗规则
+| ad-hoc 重置/调试（reset 工具） | 交互式报告：阅览、筛选、下载（marked + KaTeX + DOMPurify） |
+| 深度调试（debug 脚本） | SSE 实时日志推送 + 级别过滤 |
+| 批量全流程 | Pipeline 状态柱状图 + 7 天采集趋势 |
 
 ## 页面功能
 
@@ -644,37 +639,34 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 |------|------|------|
 | Home | `GET /` | 项目介绍、论文/出版社统计、快速入口 |
 | Dashboard | `GET /dashboard` | 状态概览：论文总数 + Pipeline 各阶段状态分布 + **Pending Report 数**（`llm_summary_status='success' AND report_date IS NULL AND llm_relevance_status='success' AND llm_relevance_category IN ('A','B')` — 仅 A/B 类可报告论文）+ 阶段状态柱状图；通过 `/pipeline/status` 端点每 5 秒自动刷新 |
-| Pipeline | `GET /pipeline` | 10 阶段 Run/Reset 按钮（A-RSS / A-CR 独立）+ 状态图表（CSS 柱状图）+ SSE 实时日志（支持级别过滤）+ 子进程执行。被 Config 跳过的阶段按钮灰显不可点击 |
-| Papers | `GET /papers?sort=created\|published\|summary&category=a\|b\|ab\|all&has_summary=0\|1&page=N&per_page=50\|100\|200` | **浏览 + 选取** 双职责论文页。**浏览**：三种排序（入库/发表/LLM 总结生成时间）、四类筛选（A/B/AB/All）、`has_summary` 仅显示可报告论文；**分页**：底部分页器 `共 M 篇 · 第 N/T 页 · [每页 K ▾] [‹ 上一页] [下一页 ›]`，per_page 白名单 50/100/200，filter 切换自动重置 page=1；**选取**：常驻 checkbox 列（无 summary 论文自动 disabled + tooltip）+ 工具栏「全选当前页」「仅可报告」 + 底部 sticky 操作栏（N 篇已选 / [生成报告] [清空]）；点击生成 → POST `/report/generate` → 右上 toast 浮窗「已生成 [filename] [查看] [下载]」（[查看] 链到 `/report?show=X`，保留选区上下文不打断） |
-| Report | `GET /report?show=<filename>` | **报告档案馆**，仅查看不编辑。顶部下拉选择器按 `mtime DESC` 列出所有报告（每条：日期切片/来源/论文数/相对时间，auto + user 混排），主区渲染选中报告（marked + KaTeX）；下载链接常驻右侧。URL `?show=<filename>` 自动选中并加载；移除原论文选取表 / Select All / Publisher 过滤 / Generate 按钮 / Preview 区 |
-| Data Sources | `GET /datasources` | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源开关。更改保存到 `data/journal_overrides.json`，不修改 publishers.yaml |
-| Logs | `GET /logs` | 日志查看（支持级别过滤，修复 innerHTML bug） |
-| Subscriptions | `GET /subscriptions` | 邮件订阅者管理（添加/删除/启用停用/发送测试邮件/从 .env 导入），Phase H 优先使用 DB 订阅者列表；"发送日报"按钮通过 `POST /subscriptions/send-report` 直接调用 Phase H |
-| Config | `GET /config` | SKIP 开关切换（影响 Pipeline 页按钮）+ 研究领域描述文本框 + 连通性测试（DeepSeek/CrossRef/MinerU 一键测试）+ MinerU Token 过期色标 + YAML 编辑器（语法校验 + 二次确认） |
+| Pipeline | `GET /pipeline` | 10 阶段只读状态展示（CSS 柱状图），无 Run/Reset 按钮。SSE 实时日志（支持级别过滤 + `textContent` 安全渲染） |
+| Papers | `GET /papers?sort=created\|published\|summary&category=a\|b\|ab\|all&has_summary=0\|1&page=N&per_page=50\|100\|200` | **只读浏览**：三种排序（入库/发表/LLM 总结生成时间）、四类筛选（A/B/AB/All）、`has_summary` 筛选可报告论文；**分页**：底部分页器 `共 M 篇 · 第 N/T 页 · [每页 K ▾] [‹ 上一页] [下一页 ›]`，per_page 白名单 50/100/200。无 checkbox 选取、无生成按钮 |
+| Report | `GET /report?show=<filename>` | **报告档案馆**，仅查看不编辑。顶部下拉选择器按 `mtime DESC` 列出所有报告（每条：日期切片/来源/论文数/相对时间，auto + user 混排），主区渲染选中报告（marked + KaTeX + DOMPurify 反 XSS）；下载链接常驻右侧 |
+| Logs | `GET /logs` | 日志查看（支持级别过滤，`textContent` 安全渲染 + `white-space: pre-wrap`） |
 
-## 任务执行模型
+## WebUI 安全
 
-- 点击 Run → `POST /pipeline/run/{phase}` → FastAPI 后台线程启动子进程 → 子进程调用 `pipeline.runner.run_phases(force=True)` → 写日志到同一文件
-- Config 页跳过的阶段：Pipeline 页按钮灰显、`POST /pipeline/run/{phase}` 返回 400、子进程自动跳过
-- `_phase_lock`（asyncio.Lock）确保同一时间只有一个阶段在运行
-- 前端通过 SSE (`GET /pipeline/logs`) 接收实时日志推送
+WebUI 已降级为纯只读前端（无 POST 端点），并实施以下安全加固：
 
-## Reset 级联逻辑
+| 编号 | 措施 | 说明 |
+|------|------|------|
+| R1 | 路径遍历防护 | `/report/data/{filename}` 和 `/report/download/{filename}` 使用 `Path.resolve()` + `startswith` 检查，防止 `../../etc/passwd` 逃逸 |
+| R2 | DOMPurify XSS 过滤 | `report.html` 中 `marked.parse()` 输出经 `DOMPurify.sanitize()` 净化，仅保留 `target` 属性（链接 `_blank` 必须），CDN 同源（cdnjs） |
+| R3 | textContent 替代 innerHTML | `logs.html` SSE 更新和级别过滤均使用 `textContent` 而非 `innerHTML`，避免日志内容注入脚本。CSS 已有 `white-space: pre-wrap` 保障换行渲染 |
+| R4 | 安全响应头 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy: geolocation=(), microphone=(), camera=()` |
 
-| 阶段 | 重置列 | 级联 | 条件 |
-|------|--------|------|------|
-| A-RSS / A-CR | 无（Phase A 无状态列，仅做发现） | — | — |
-| B | cr_metadata_fetched | — | 所有非 pending |
-| C | publisher_page_fetched | — | 非 pending 且非 NonResearchPageError |
-| E | llm_relevance | — | 所有非 pending |
-| E2 | mineru_parse + llm_summary + report | llm_summary, report | 所有非 pending |
-| F | llm_summary + report | report | 所有非 pending |
-| G | report_status + report_date | — | reported |
+**Remaining risks（建议在生产部署前处理）**：
+- 建议用 **nginx 反代** 统一管理 TLS 证书 + 限速 + Basic Auth
+- 用 **防火墙/安全组** 限制访问源 IP（192.168.0.0/16 等）
+- **暂不上公网** — 该 UI 为内网工具设计；如需公网访问，务请前置 nginx 并配置 CSP + HSTS
 
-## 启动方式
+### 启动方式
 
 ```bash
-# 桌面环境
+# 内网最小暴露：仅监听本地，由 Nginx 反代 + Basic Auth 对外
+PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 8080
+
+# 桌面开发
 PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
 
 # 无头服务器（Phase C 需要 Xvfb 虚拟显示）
@@ -697,7 +689,6 @@ SKIP_PHASE_B = False
 | 配置源 | 影响范围 | 说明 |
 |--------|---------|------|
 | `src/config.py` 的 `SKIP_PHASE_*` | CLI (`python src/main.py`) | CLI 默认值，Web UI 不读取 |
-| `data/skip_overrides.json` | Web UI Pipeline 页 | Config 页 Toggle 按钮写入此文件。跳过的阶段按钮灰显 + 后端拒绝执行 |
 
 配套 `MAX_PAPERS_PER_PHASE` 控制每阶段处理上限（0 = 不限制），该限制对 CLI 和 Web UI 均生效。
 
@@ -1683,9 +1674,10 @@ Web UI 的 6 个 save 端点统一使用 `_atomic_write()`（先写 .tmp 再 `os
 
 Phase E2 不再向数据库 `mineru_fulltext` 列写入全文文本（文本已存在于 `data/mineru_output/{doi}/full.md`）。Phase F 改为从文件直接读取，避免 SQLite 因大量全文数据急剧膨胀。
 
-## force 参数语义拆分
+## force 参数语义简化 (P2)
 
-`runner.py` 中 `run_phases(use_overrides=True)` 表示加载 `skip_overrides.json`，`run_pipeline(run_all=True)` 表示忽略 SKIP 运行全部阶段。`force` 参数保留兼容但标记 deprecated。
+`runner.py` 的 `run_phases(force=True)` 表示忽略 SKIP_PHASE_* 配置运行全部阶段。
+`use_overrides` 参数已移除（配套的 `skip_overrides.json` 已删除）。`run_pipeline(run_all=True)` 等效于 `run_phases(force=True)`，`force` 保留兼容。
 
 # WebUI 改进 (2026-06-10)
 

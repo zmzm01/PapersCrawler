@@ -27,13 +27,13 @@
 | 维度 | CLI 模式 | Web UI 模式 |
 |------|---------|------------|
 | **定位** | 自动化、定时任务、深度调试 | 监控仪表盘、报告工作站、交互式配置 |
-| **入口** | `python src/main.py` 等 | `uvicorn src.web.app:app` |
+| **入口** | `python tools/run_pipeline.py` **（推荐，替代旧 `src/main.py`）** | `uvicorn src.web.app:app` |
 | **典型用户** | cron 调度、批量全流程 | 日常用户检查、手动生成报告 |
-| **配置来源** | `src/config.py` 的 `SKIP_PHASE_*` 开关 | `data/skip_overrides.json`（Config 页切换写入） |
+| **配置来源** | `src/config.py` 的 `SKIP_PHASE_*` 开关 | `src/config.py` 的 `SKIP_PHASE_*` 开关（WebUI 不覆写） |
 | **典型环境** | 无头服务器（需 Xvfb 跑 Phase C） | 桌面或局域网（推荐） |
 | **并发** | 单进程 | FastAPI 后台线程 + 浏览器 SSE 实时日志 |
 
-**重要：配置隔离原则**——CLI 不读取 `data/skip_overrides.json`，WebUI Config 页的切换不影响 CLI 默认行为。两套配置互不干扰。
+**注意**：阶段开关（`SKIP_PHASE_*`）在 CLI 和 WebUI 间保持一致，均读取 `src/config.py` > `settings.yaml` 的配置。不再存在独立的运行时覆写层（P2 合并配置层后 `skip_overrides.json` 已移除）。
 
 ---
 
@@ -43,51 +43,58 @@
 
 ### 全流程入口
 
-#### `python src/main.py`
+#### `python tools/run_pipeline.py` **（推荐）**
 
-从 Phase A 跑到 Phase H（全流程）。**仅在调试或一次性大流程时使用**，日常应拆分为 daily + weekly 调度。
+统一流水线入口，替代 `src/main.py` / `schedule_daily.py` / `schedule_weekly.py`。
 
-```bash
-python src/main.py                  # 完整 A→H
-LOG_LEVEL=DEBUG python src/main.py  # 调试模式
-```
+支持四种互斥模式：
 
-#### `python tools/schedule_daily.py`
-
-每日 cron 入口。跑 Phase **A→F**（发现 → LLM 总结），**不**生成报告、不发邮件。
-
-```bash
-python tools/schedule_daily.py
-python tools/schedule_daily.py --no-reset-publisher   # 不重置 failed Phase C
-python tools/schedule_daily.py --no-reset-mineru      # 不重置 failed Phase E2
-```
-
-默认会在入口处自动重置以下状态为 `pending`（确保 failed 论文重试）：
-- `publisher_page_fetched_status = 'failed'`
-- `mineru_parse_status = 'failed'`
-
-通过 `--no-reset-*` 开关可单独禁用某类重置。`SKIP_PHASE_*` 在 `configs/settings.yaml` 中配置，CLI 默认行为。
-
-**典型 cron**（`run_daily.sh` 包装）：
-```bash
-0 10 * * * /path/to/PapersCrawler/run_daily.sh >> /path/to/crawler_daily.log 2>&1
-```
-
-#### `python tools/schedule_weekly.py`
-
-每周 cron 入口。跑 Phase **G→H**（报告生成 → 邮件推送）。**不**重新发现论文或重跑 LLM。
+| 模式 | 说明 | 等效旧入口 |
+|------|------|-----------|
+| `--daily` | 每日调度：Phase A-RSS/A-CR/B/C/E/E2/F | `schedule_daily.py` |
+| `--weekly` | 每周调度：Phase G/H | `schedule_weekly.py` |
+| `--all` | 全流程强制：忽略 SKIP 配置执行全部阶段 | `src/main.py` |
+| `--phases A,B,C` | 自定义阶段列表 | — |
 
 ```bash
-python tools/schedule_weekly.py
+# 每日调度（cron 用）
+python tools/run_pipeline.py --daily
+
+# 每周调度（cron 用）
+python tools/run_pipeline.py --weekly
+
+# 全流程强制（调试用）
+python tools/run_pipeline.py --all
+
+# 选定阶段
+python tools/run_pipeline.py --phases A-RSS,B,C,F
 ```
 
-**典型 cron**（`run_weekly.sh` 包装，集成 Hugo 部署）：
+默认行为（不传任何模式）等效 `--all`。
+
+**其他参数**：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--dry-run` | 关闭 | 只打印执行计划，不实际运行 |
+| `--reset-publisher` / `--no-reset-publisher` | reset | 运行前重置失败 Publisher 抓取 |
+| `--reset-mineru` / `--no-reset-mineru` | reset | 运行前重置失败 MinerU 解析 |
+| `--log-level DEBUG\|INFO\|WARNING\|ERROR` | `LOG_LEVEL` env | 日志级别 |
+
+自动重置逻辑与 `schedule_daily.py` 一致：
+- `publisher_page_fetched_status = 'failed'` → `pending`
+- `mineru_parse_status IN ('failed', 'skipped')` → `pending`
+
+**典型 cron**：
 ```bash
-0 8 * * 1 /path/to/PapersCrawler/run_weekly.sh >> /path/to/crawler_weekly.log 2>&1
+# 每天 2:00
+0 2 * * * cd /path/to/PapersCrawler && python tools/run_pipeline.py --daily
+
+# 每周一 9:00（配合 xvfb-run）
+0 9 * * 1 cd /path/to/PapersCrawler && xvfb-run -a python tools/run_pipeline.py --weekly
 ```
 
-`run_weekly.sh` 在 Phase G/H 之后自动运行 `convert_reports_to_hugo.py --all --hugo --deploy`，
-将所有报告转换为 Hugo 站点并部署到 GitHub Pages。
+> **⚠️ `src/main.py` / `schedule_daily.py` / `schedule_weekly.py` 已弃用** —— 请迁移到 `tools/run_pipeline.py`。旧入口保留向后兼容，不再主动维护。
 
 ### 阶段开关（SKIP_PHASE）
 
@@ -106,7 +113,7 @@ skip_phases:
   H: true            # 邮件推送（默认关闭，需配 SMTP）
 ```
 
-CLI 不读取 `data/skip_overrides.json`（仅 WebUI 用）。如需单次跳过，编辑 settings.yaml。
+阶段跳过统一通过 `settings.yaml` 的 `skip_phases` 节控制。不再有独立的运行时覆写文件。
 
 ### 日志
 
@@ -169,17 +176,13 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
   - `ab`：A 或 B（默认）
   - `all`：全部（含 C/D）
 
-### Subscriptions 页
+### Email 收件人配置
 
-- 优先使用 DB `subscribers` 表中 `active=1` 的邮箱
-- 表为空时回退到 `.env` 的 `SMTP_TO_ADDRS`（向后兼容）
-- "Send Report" 按钮 → `POST /subscriptions/send-report` → 直接调 Phase H
+收件人列表通过 `data/email.yaml` 管理（详见 [data/email.yaml](#-dataemail.yaml--邮件收件人配置)），`enabled: true` 的收件人会被 Phase H 使用。文件不存在或为空时回退到 `.env SMTP_TO_ADDRS`。
 
 ### Config 页
 
-**两类配置**：
-- **Pipeline 阶段开关**（影响 WebUI Pipeline 页按钮）：写到 `data/skip_overrides.json`
-- **运行时配置**（`configs/*.yaml`）：通过 WebUI 直接编辑，有 YAML 语法校验 + 二次确认
+**配置来源**：运行时配置（`configs/*.yaml`）：通过 WebUI 直接编辑，有 YAML 语法校验 + 二次确认。
 
 **连通性测试**（一键测）：
 - DeepSeek API（验证 `DEEPSEEK_API_KEY`）
@@ -304,6 +307,8 @@ SMTP_PASSWORD=your_auth_code
 SMTP_FROM_ADDR=your_email@qq.com
 SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 ```
+
+> 推荐迁移到 `data/email.yaml`（支持 per-user 开关，详见下文 `data/email.yaml` 节）。
 
 `src/config.py` 通过 `os.getenv()` 读取，缺失时留空（对应功能跳过）。
 
@@ -436,23 +441,30 @@ context_gates:
 
 文件不存在时自动回退到 `src/config.py` 内嵌后备值。
 
-### `data/skip_overrides.json` — WebUI 阶段跳过覆写
+### `data/email.yaml` — 邮件收件人配置
 
-```json
-{
-  "A_RSS": false,
-  "A_CR": false,
-  "B": false,
-  "C": false,
-  "E": false,
-  "E2": false,
-  "F": false,
-  "G": false,
-  "H": true
-}
+```yaml
+# PapersCrawler 邮件收件人配置
+#
+# 字段说明:
+#   - email:   收件人邮箱地址（必填）
+#   - name:    显示名（可选，邮件正文中使用）
+#   - enabled: 是否启用（true=发送，false=跳过；默认 true）
+#
+# 行为:
+#   - 文件存在但解析失败/为空 → 回退 .env SMTP_TO_ADDRS
+#   - 文件不存在 → 回退 .env SMTP_TO_ADDRS
+#   - enabled=false 的收件人会被过滤掉
+#   - Phase H 按此列表发送；空列表则跳过 Phase H
+
+recipients:
+  - email: user1@example.com
+    name: "User 1"
+    enabled: true
+  - email: user2@example.com
+    name: "User 2"
+    enabled: false
 ```
-
-仅 WebUI Pipeline 页读取。Config 页切换写入，**不影响 CLI**。
 
 ### `data/journal_overrides.json` — 期刊启用覆写
 
@@ -473,12 +485,45 @@ Data Sources 页设置。CLI 模式（`force=False`）**不**读取此文件，�
 
 所有工具位于 `tools/` 目录，按用途分类。
 
+#### `python tools/send_report.py`
+
+邮件推送工具 —— 通过 Phase H 发送指定报告。
+
+```bash
+# 发送今日日报
+python tools/send_report.py --report report_20260726.md
+
+# 发送自定义报告，覆盖收件人
+python tools/send_report.py --report report_20260726.md --recipients a@x.com,b@y.com
+
+# 干跑预览
+python tools/send_report.py --report report_20260726.md --dry-run
+```
+
+**参数**：
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--report FILENAME` | ✅ | 报告文件名（在 `auto/` 或 `user/` 目录中查找） |
+| `--recipients a@x.com,b@y.com` | ❌ | 逗号分隔的收件人列表，覆盖默认配置 |
+| `--dry-run` | ❌ | 只打印发送计划，不实际发送 |
+| `--log-level` | ❌ | 日志级别（默认 `LOG_LEVEL` env，未设置则为 INFO） |
+
+文件不存在时退出码为 2。
+
 ### 调度入口
 
 | 工具 | 说明 | 典型用法 |
 |------|------|---------|
-| `schedule_daily.py` | 每日 A→F，含自动重置 failed | `python tools/schedule_daily.py` |
-| `schedule_weekly.py` | 每周 G→H | `python tools/schedule_weekly.py` |
+| `run_pipeline.py` **（推荐）** | 统一流水线入口（替代以下三个） | `python tools/run_pipeline.py --daily` |
+| `schedule_daily.py` ⚠️ **deprecated** (→ `run_pipeline.py`) | 每日 A→F，含自动重置 failed | `python tools/schedule_daily.py` |
+| `schedule_weekly.py` ⚠️ **deprecated** (→ `run_pipeline.py`) | 每周 G→H | `python tools/schedule_weekly.py` |
+
+### 邮件推送
+
+| 工具 | 说明 | 典型用法 |
+|------|------|---------|
+| `send_report.py` | 通过 Phase H 发送指定报告 | `python tools/send_report.py --report report_20260726.md` |
 
 ### 状态重置
 
@@ -664,7 +709,7 @@ Phase F (DeepSeek) ──────── LLM 结构化总结
        ↓
 Phase G ─────────────────── Markdown 报告 + explained.html 解释页
        ↓
-Phase H (SMTP) ──────────── 邮件推送（DB subscribers → .env SMTP_TO_ADDRS 回退）
+Phase H (SMTP) ──────────── 邮件推送（email.yaml → .env SMTP_TO_ADDRS 回退）
 ```
 
 ### 数据库 Schema
@@ -701,7 +746,7 @@ Phase H (SMTP) ──────────── 邮件推送（DB subscriber
 
 **辅助表**：
 
-- `subscribers` — 邮件订阅者（`active=1` 优先于 .env `SMTP_TO_ADDRS`）
+- `email.yaml` — 邮件收件人配置（`enabled=true` 优先于 .env `SMTP_TO_ADDRS`）
 - `skipped_dois` — 被永久跳过的论文 DOI（`NonResearchPageError` 等）
 
 ### 报告输出

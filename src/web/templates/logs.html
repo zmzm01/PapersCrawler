@@ -34,9 +34,9 @@ function filterLogs() {
   const level = document.getElementById('log-filter').value;
   const lines = rawLogText.split('\n');
   if (level === 'ALL') {
-    logViewer.innerHTML = lines.join('\n');
+    logViewer.textContent = lines.join('\n');
   } else {
-    logViewer.innerHTML = lines.filter(l => l.includes('[' + level + ']')).join('\n');
+    logViewer.textContent = lines.filter(l => l.includes('[' + level + ']')).join('\n');
   }
   logViewer.scrollTop = logViewer.scrollHeight;
 }
