@@ -2,7 +2,8 @@
 """
 每日调度入口：发现 → LLM 总结。
 
-等价于依次执行 Phase A-RSS / A-CR / B / C / D / E / E2 / F。
+等价于依次执行 Phase A-RSS / A-CR / B / C / E / E2 / F。
+（Phase D 语义相似度已于 2026-07-24 废弃，SKIP_PHASE_D=True。）
 尊重 settings.yaml 中的 SKIP_PHASE_* 配置（CLI 模式，force=False）。
 
 可选参数:

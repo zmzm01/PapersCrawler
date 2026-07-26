@@ -26,7 +26,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import MINERU_OUTPUT_DIR, DB_PATH
+from config import DB_PATH, MINERU_OUTPUT_DIR
 from db.database import DatabaseClient
 
 
@@ -123,8 +123,7 @@ def reset_mineru_status(doi: str) -> int:
     SystemExit
         DOI 在数据库中不存在时 exit code 3。
     """
-    db = DatabaseClient(DB_PATH)
-    try:
+    with DatabaseClient(DB_PATH) as db:
         if not db.paper_doi_exists(doi):
             print(
                 f"警告: DOI '{doi}' 在数据库中不存在。\n"
@@ -141,11 +140,7 @@ def reset_mineru_status(doi: str) -> int:
             " WHERE doi = ?",
             ('pending', doi),
         )
-        rowcount = cur.rowcount
-        db.conn.commit()
-        return rowcount
-    finally:
-        db.conn.close()
+        return cur.rowcount
 
 
 def main():

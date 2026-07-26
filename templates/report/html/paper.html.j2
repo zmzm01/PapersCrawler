@@ -1,0 +1,42 @@
+{# ==========================================================================
+   templates/report/html/paper.html.j2
+   --------------------------------------------------------------------------
+   单篇论文的 HTML 片段宏。Python 端已完成所有文本处理。
+
+   WARNING: The Jinja2 Environment is configured with autoescape=False.
+   All user-controlled fields are HTML-escaped in Python
+   (see _process_text_for_html and _html_escape in
+   paper_report_generator.py). Do NOT remove escaping when editing.
+   See paper_report_generator.py:_get_template_env() for rationale.
+
+   字段顺序与 markdown/paper.md.j2 保持一致：
+     出版社, 作者, 日期, DOI, 页面, 相关性等级, 判断理由, 原文摘要, 一句话,
+     研究动机与目标, 关键方法与设置, 主要结果与物理内涵, 要点总结
+   2026-07-25 删：期刊 / 相关方向 / PDF。详细说明见 markdown 版注释。
+   ========================================================================== #}
+{% macro paper(p) -%}
+<section>
+  <h2>{{ p.title|default('无标题') }}</h2>
+  <p>{% if p.journal %}<strong>期刊:</strong> {{ p.journal }}<br>{% endif -%}
+{% if p.authors %}  <strong>作者:</strong> {{ p.authors|default('') }}<br>{% endif -%}
+{% if p.date %}  <strong>日期:</strong> {{ p.date|default('未知') }}<br>{% endif -%}
+{% if p.doi %}  <strong>DOI:</strong> <a href="https://doi.org/{{ p.doi }}">{{ p.doi }}</a><br>{% endif -%}
+{% if p.page_url %}  <strong>页面:</strong> <a href="{{ p.page_url }}">{{ p.page_url }}</a><br>{% endif -%}
+{% if p.relevance_category %}  <strong>相关性等级:</strong> {{ p.relevance_category }}<br>{% endif -%}
+{% if p.relevance_reason %}  <strong>判断理由:</strong> {{ p.relevance_reason }}<br>{% endif -%}
+  </p>
+{% if p.abstract %}
+  <p><strong>原文摘要:</strong> {{ p.abstract }}</p>
+{% endif %}
+  <p><strong>一句话:</strong> {{ p.one_sentence|default('') }}</p>
+  <h3>研究动机与目标</h3>
+  <p>{{ p.motivation_and_goal|default('') }}</p>
+  <h3>关键方法与设置</h3>
+  <p>{{ p.key_setup_and_method|default('') }}</p>
+  <h3>主要结果与物理内涵</h3>
+  <p>{{ p.main_results_and_physics|default('') }}</p>
+  <h3>要点总结</h3>
+  <p>{{ p.take_home_message|default('') }}</p>
+</section>
+<hr>
+{%- endmacro %}

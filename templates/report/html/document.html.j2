@@ -1,0 +1,41 @@
+{# ==========================================================================
+   templates/report/html/document.html.j2
+   --------------------------------------------------------------------------
+   完整 HTML 文档：DOCTYPE + head（含 CSS）+ body（legend + papers）。
+
+   context 变量：
+     - papers (list[dict]): 论文字典列表
+     - full_document (bool): 是否输出完整 HTML 文档
+     - style_css (str): 内联 CSS 内容（来自 html/style.css）
+   ========================================================================== #}
+{% import "html/paper.html.j2" as paper_tmpl %}
+{% import "html/legend.html.j2" as legend_tmpl %}
+{% import "html/sort_note.html.j2" as sort_note_tmpl %}
+{% import "html/disclaimers.html.j2" as disclaimers_tmpl -%}
+{% if full_document -%}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文献报告</title>
+  <style>
+{{ style_css }}
+  </style>
+</head>
+<body>
+  <h1>文献报告</h1>
+{{ sort_note_tmpl.sort_note() }}
+{{ legend_tmpl.legend() }}
+{{ disclaimers_tmpl.disclaimers() }}
+{% for p in papers %}{{ paper_tmpl.paper(p) }}
+{% endfor %}
+</body>
+</html>
+{%- else -%}
+{{ sort_note_tmpl.sort_note() }}
+{{ legend_tmpl.legend() }}
+{{ disclaimers_tmpl.disclaimers() }}
+{% for p in papers %}{{ paper_tmpl.paper(p) }}
+{% endfor %}
+{%- endif %}

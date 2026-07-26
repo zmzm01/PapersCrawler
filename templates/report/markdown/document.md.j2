@@ -1,0 +1,32 @@
+{# ==========================================================================
+   templates/report/markdown/document.md.j2
+   --------------------------------------------------------------------------
+   完整 Markdown 报告：排序说明（始终在最前）+ 相关性图例 + 可选的多论文标题/TOC + 各篇论文。
+
+   context 变量：
+     - papers (list[dict]): 论文字典列表，元素已通过 _make_paper_payload 预处理
+     - toc (bool): 是否生成目录（仅 papers 长度 > 1 时生效）
+   ========================================================================== #}
+{% import "markdown/paper.md.j2" as paper_tmpl %}
+{% import "markdown/legend.md.j2" as legend_tmpl %}
+{% import "markdown/sort_note.md.j2" as sort_note_tmpl %}
+{% import "markdown/disclaimers.md.j2" as disclaimers_tmpl -%}
+{{ sort_note_tmpl.sort_note() }}
+{{ legend_tmpl.legend() }}
+{{ disclaimers_tmpl.disclaimers() }}
+{% if papers|length > 1 -%}
+# 文献报告
+
+{% if toc -%}
+## 目录
+
+{% for p in papers -%}
+- [{{ loop.index }}. {{ p.title|default('论文' ~ loop.index) }}](#{{ (p.title or '')|replace(' ', '-') }})
+{% endfor %}
+
+---
+
+{% endif -%}
+{% endif -%}
+{% for p in papers %}{{ paper_tmpl.paper(p) }}
+{% endfor %}

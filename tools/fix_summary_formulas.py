@@ -101,9 +101,8 @@ def analyze_papers(papers, fixer, verbose=False, force=False):
     return stats, paper_results
 
 
-def fix_papers(papers, fixer, dry_run=False):
+def fix_papers(papers, fixer, db, dry_run=False):
     """对论文的总结字段执行公式修复，写回 DB。"""
-    db = DatabaseClient(DB_PATH)
     timestamp = str(datetime.now())
     fixed_count = 0
     field_fix_count = 0
@@ -147,28 +146,27 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="显示每个字段的检测结果")
     args = parser.parse_args()
 
-    db = DatabaseClient(DB_PATH)
-    papers = load_papers(db, doi=args.doi, publisher=args.publisher)
-    del db
+    with DatabaseClient(DB_PATH) as db:
+        papers = load_papers(db, doi=args.doi, publisher=args.publisher)
 
-    fixer = FormulaFixer(llm_api_config=CFG.LLM_API_CONFIG_DICT_RELE, force=args.force)
+        fixer = FormulaFixer(llm_api_config=CFG.LLM_API_CONFIG_DICT_RELE, force=args.force)
 
-    logger.info(f"共 {len(papers)} 篇论文，正在检测公式格式问题...")
-    stats, paper_results = analyze_papers(papers, fixer, verbose=args.verbose, force=args.force)
+        logger.info(f"共 {len(papers)} 篇论文，正在检测公式格式问题...")
+        stats, paper_results = analyze_papers(papers, fixer, verbose=args.verbose, force=args.force)
 
-    print(f"\n统计: {stats['total_fields']} 个字段中 {stats['needs_fix']} 个需要修复")
-    if stats["needs_fix"] == 0:
-        print("无需修复，退出。")
-        return
-
-    if not args.dry_run:
-        answer = input(f"\n将修复 {stats['needs_fix']} 个字段（{stats['total']} 篇论文），确认？[y/N] ")
-        if answer.lower() != "y":
-            print("已取消")
+        print(f"\n统计: {stats['total_fields']} 个字段中 {stats['needs_fix']} 个需要修复")
+        if stats["needs_fix"] == 0:
+            print("无需修复，退出。")
             return
 
-    fixed_papers, fixed_fields = fix_papers(papers, fixer, dry_run=args.dry_run)
-    print(f"\n完成: {fixed_papers} 篇论文共 {fixed_fields} 个字段已修复")
+        if not args.dry_run:
+            answer = input(f"\n将修复 {stats['needs_fix']} 个字段（{stats['total']} 篇论文），确认？[y/N] ")
+            if answer.lower() != "y":
+                print("已取消")
+                return
+
+        fixed_papers, fixed_fields = fix_papers(papers, fixer, db, dry_run=args.dry_run)
+        print(f"\n完成: {fixed_papers} 篇论文共 {fixed_fields} 个字段已修复")
 
 
 if __name__ == "__main__":

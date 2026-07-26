@@ -42,8 +42,14 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         papers = db.get_papers_for_report()
     else:
         placeholders = ",".join("?" for _ in doi_list)
+        # 与 get_papers_for_report 保持一致：relevance 过滤必须显式存在，
+        # 因为 update_llm_relevance() 不会级联重置 llm_summary_*。
         cur = db.conn.execute(
-            f"SELECT * FROM papers WHERE llm_summary_status = 'success' AND doi IN ({placeholders})",
+            f"SELECT * FROM papers "
+            f"WHERE llm_summary_status = 'success' "
+            f"  AND llm_relevance_category IN ('A', 'B') "
+            f"  AND llm_relevance_status = 'success' "
+            f"  AND doi IN ({placeholders})",
             doi_list,
         )
         papers = cur.fetchall()
@@ -94,6 +100,8 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
             "journal": p["journal"] or "",
             "publisher": p["publisher"] or "",
             "matched_subdomains": subfields,
+            "relevance_category": p["llm_relevance_category"] or "",
+            "relevance_reason": p["llm_relevance_reason"] or "",
             "page_url": p["page_url"] or "",
             "pdf_url": p["pdf_url"] or "",
             "abstract": p["abstract"] or "",
@@ -106,8 +114,8 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         paper_list.append(paper_dict)
         reported_dois.append(p["doi"])
 
-    # 按期刊 + 日期排序
-    paper_list.sort(key=lambda p: (p.get("journal", "") or "", p.get("date", "") or ""))
+    # 排序统一交给 paper_report_generator._sort_papers()（2026-07-25 起）：
+    # 规则 = 相关性等级 A 先 → 同级日期倒序。这里不再 pre-sort。
 
     if is_auto:
         out_dir = Path(auto_dir)
@@ -132,6 +140,19 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
     tmp_path.write_text(md_report, encoding="utf-8")
     tmp_path.replace(md_path)
     logger.info(f"Report saved: {md_path}")
+
+    # 写完 md 后条件性生成 explained.html（仅自动报告）
+    if is_auto and getattr(CFG, "GENERATE_EXPLAINED_HTML", False):
+        try:
+            from processors.report_explainer import write_explained_html
+            html_path = Path(auto_dir) / f"report_{date_str}_explained.html"
+            write_explained_html(db, html_path)
+            logger.info(f"Explained HTML written: {html_path.name}")
+        except Exception:
+            logger.warning(
+                "Explained HTML generation failed — md report is still complete",
+                exc_info=True,
+            )
 
     # 文件落盘成功后再标记 DB — 避免中间崩溃导致永久丢稿
     if is_auto:
