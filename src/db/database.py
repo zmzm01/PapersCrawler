@@ -922,9 +922,14 @@ class DatabaseClient:
         """
         获取待汇入报告的新论文：LLM 总结成功且尚未被报告过。
 
-        查询条件: llm_summary_status = 'success' AND report_date IS NULL
+        查询条件: llm_summary_status = 'success'
+                  AND report_date IS NULL
+                  AND llm_relevance_category IN ('A', 'B')
+                  AND llm_relevance_status = 'success'
         用 report_date 替代 report_status 作为过滤条件，支持按日期重置重报。
-        排序: 按 RSS 日期倒序
+        显式加 relevance 过滤是必要的：update_llm_relevance() 不会重置
+        llm_summary_* 字段，若论文被从 A/B 重判为 C/D，summary_status 仍
+        为 'success'，没有此过滤会被误入报。排序: 按 RSS 日期倒序。
 
         Returns:
             list[sqlite3.Row]
