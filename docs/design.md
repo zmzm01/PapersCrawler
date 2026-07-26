@@ -30,10 +30,13 @@ PapersCrawler/
 │   ├── mineru_output/           # MinerU PDF 解析输出 (按论文子目录)
 │   └── session_cached/          # 浏览器 Session 缓存 (按 publisher 分子目录)
 ├── docs/                        # 设计文档、数据源调研、API 参考
-│   ├── doc-设计.md               # 本文 — 需求与架构设计
-│   ├── doc-任务.md               # 执行步骤、关键决策、经验教训
+│   ├── design.md                # 本文 — 需求与架构设计
+│   ├── tasks.md                 # 执行步骤、关键决策、经验教训
+│   ├── usage.md                 # 详细使用手册（所有入口/工具/配置）
 │   ├── doc-MinerU-Usage.md      # MinerU API 使用参考
-│   └── doc-Data-Sources-Invest.md  # 数据源调研记录
+│   ├── doc-Data-Sources-Invest.md  # 数据源调研记录
+│   ├── doc-DeepSeek-ErrorCodes.md  # DeepSeek 错误码表
+│   └── reviews/                 # 历次 Code Review 报告
 ├── slides/                      # 报告/演示文稿区域 (预留)
 ├── templates/                   # 非 Web UI 模板
 │   └── email/                   #   邮件 HTML 模板 (default.html)
