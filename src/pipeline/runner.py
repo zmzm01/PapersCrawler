@@ -4,7 +4,6 @@ Pipeline orchestrator.
 Provides run_pipeline() for full execution and run_phases() for selective runs.
 """
 
-import json
 import logging
 
 from config import (
@@ -15,26 +14,13 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
-def _load_skip_overrides():
-    """Load SKIP_PHASE overrides from data/skip_overrides.json."""
-    path = DATA_DIR / "skip_overrides.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, Exception):
-        return {}
-
-
-def _get_effective_skip(overrides):
-    """Build effective skip dict: overrides take precedence over defaults."""
-    defaults = {
-        "A_RSS": CFG.SKIP_PHASE_A_RSS, "A_CR": CFG.SKIP_PHASE_A_CR,
-        "B": CFG.SKIP_PHASE_B, "C": CFG.SKIP_PHASE_C,
-        "E": CFG.SKIP_PHASE_E, "E2": CFG.SKIP_PHASE_E2,
-        "F": CFG.SKIP_PHASE_F, "G": CFG.SKIP_PHASE_G, "H": CFG.SKIP_PHASE_H,
-    }
-    return {k: overrides.get(k, defaults[k]) for k in defaults}
+# Phase short key → CFG attribute mapping used for effective-skip resolution.
+_PHASE_KEY_MAP = {
+    "A-RSS": "SKIP_PHASE_A_RSS", "A-CR": "SKIP_PHASE_A_CR",
+    "B": "SKIP_PHASE_B", "C": "SKIP_PHASE_C",
+    "E": "SKIP_PHASE_E", "E2": "SKIP_PHASE_E2",
+    "F": "SKIP_PHASE_F", "G": "SKIP_PHASE_G", "H": "SKIP_PHASE_H",
+}
 
 
 from db.database import DatabaseClient
@@ -49,7 +35,7 @@ from pipeline.phase_g import phase_g_report
 from pipeline.phase_h import phase_h_email
 
 
-def run_phases(phase_list=None, force=False, use_overrides=False):
+def run_phases(phase_list=None, force=False):
     """Run selected phases of the pipeline.
 
     Parameters
@@ -58,12 +44,7 @@ def run_phases(phase_list=None, force=False, use_overrides=False):
         Phase names to run (e.g. ["A", "C", "F"]).
         If None, runs all non-skipped phases.
     force : bool, optional
-        Deprecated. Use ``use_overrides`` instead.
-        If True, load SKIP overrides from data/skip_overrides.json.
-    use_overrides : bool, optional
-        If True, load SKIP overrides from data/skip_overrides.json.
-        Used by Web UI: overrides are set via Config page SKIP toggles.
-        CLI (use_overrides=False) always uses config.py defaults only.
+        If True, run every phase regardless of SKIP_PHASE_* settings.
     """
     publishers = load_publishers()
     keywords = load_keywords()
@@ -78,11 +59,10 @@ def run_phases(phase_list=None, force=False, use_overrides=False):
     db.init_db_papers()
     logger.info(f"Database ready: {DB_PATH}")
 
-    overrides = _load_skip_overrides() if (use_overrides or force) else {}
-    effective_skip = _get_effective_skip(overrides)
+    effective_skip = {key: getattr(CFG, _PHASE_KEY_MAP[key]) for key in _PHASE_KEY_MAP}
     phase_map = {
-        "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A_RSS"]),
-        "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A_CR"]),
+        "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A-RSS"]),
+        "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A-CR"]),
         "B": (phase_b_crossref, [db], not effective_skip["B"]),
         "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
         "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),

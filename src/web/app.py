@@ -50,6 +50,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import (
     CFG,
@@ -59,9 +60,20 @@ from config import (
     load_publishers, load_keywords, load_settings,
 )
 from db.database import DatabaseClient
-from pipeline.runner import _load_skip_overrides
 
 app = FastAPI(title="PapersCrawler")
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """注入安全响应头防止 clickjacking / MIME sniffing / 信息泄露。"""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
+
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
@@ -89,9 +101,6 @@ _PHASE_KEY_MAP = {
     "F": "SKIP_PHASE_F", "G": "SKIP_PHASE_G", "H": "SKIP_PHASE_H",
 }
 
-SKIP_OVERRIDES_PATH = DATA_DIR / "skip_overrides.json"
-
-
 def _atomic_write(path, content):
     """原子写入文件：先写 .tmp，再 os.replace 原子替换。"""
     import tempfile as _tempfile
@@ -105,8 +114,7 @@ def _atomic_write(path, content):
 
 
 def _get_effective_skip():
-    overrides = _load_skip_overrides()
-    return {k: overrides.get(k, getattr(CFG, _PHASE_KEY_MAP[k])) for k in _PHASE_KEY_MAP}
+    return {k: getattr(CFG, _PHASE_KEY_MAP[k]) for k in _PHASE_KEY_MAP}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -235,7 +243,7 @@ def _run_phase_subprocess(phase, is_all=False):
                     f" handlers=[logging.FileHandler(r'{log_file_abs}', encoding='utf-8'),"
                     f"           logging.StreamHandler(sys.stderr)]);"
                     f"from pipeline.runner import run_phases;"
-                    f"run_phases({[phase]!r}, use_overrides=True)"
+                    f"run_phases({[phase]!r}, force=True)"
                 )
             logger.info(f"Subprocess starting: phase={phase}, is_all={is_all}")
             result = subprocess.run(
@@ -368,95 +376,7 @@ async def pipeline_weekly_stats():
         db.conn.close()
 
 
-@app.post("/pipeline/run/{phase}")
-async def run_phase(phase: str):
-    global _running_phase
-    if phase not in PHASE_LABELS:
-        return JSONResponse({"error": f"Unknown phase: {phase}"}, status_code=400)
-    effective = _get_effective_skip()
-    if effective.get(phase, False):
-        return JSONResponse({"error": f"Phase {phase} is skipped in Config — enable it first"}, status_code=400)
-    async with _phase_lock:
-        if _running_phase:
-            return JSONResponse({"error": f"Phase {_running_phase} is already running"}, status_code=409)
-        _running_phase = phase
-    _run_phase_subprocess(phase)
-    return JSONResponse({"ok": True, "phase": phase})
 
-
-@app.post("/pipeline/run-all")
-async def run_all():
-    global _running_phase
-    async with _phase_lock:
-        if _running_phase:
-            return JSONResponse({"error": f"Phase {_running_phase} is already running"}, status_code=409)
-        _running_phase = "ALL"
-    _run_phase_subprocess(None, is_all=True)
-    return JSONResponse({"ok": True, "phase": "ALL"})
-
-
-def _get_reset_cols(phase: str) -> list[str]:
-    """Return all column names that should be reset for a given phase."""
-    cols, _, _ = RESET_DEFS[phase]
-    return list(dict.fromkeys(cols))
-
-
-def _count_reset_impact(phase: str, reset_cols: list[str]) -> dict[str, int]:
-    """Count papers affected for a reset operation (read-only).
-
-    Uses RESET_DEFS condition to count affected rows.
-    Reports count keyed by primary status column only.
-    """
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        _, condition, _ = RESET_DEFS[phase]
-        impact = {}
-        status_col = next((c for c in reset_cols if c.endswith('_status')), None)
-        if status_col:
-            db._validate_column(status_col)
-            cur = db.conn.execute(f"SELECT COUNT(*) FROM papers WHERE {condition}")
-            impact[status_col] = cur.fetchone()[0]
-        return impact
-    finally:
-        db.conn.close()
-
-
-def _execute_reset(phase: str, reset_cols: list[str]):
-    """Execute the reset for all columns in a phase, using the RESET_DEFS condition."""
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        _, condition, _ = RESET_DEFS[phase]
-        status_like = {c for c in reset_cols if c.endswith(('_status', '_error', '_date'))}
-        for c in reset_cols:
-            if c in status_like:
-                db.batch_reset_status([(c, "pending")], condition)
-            else:
-                db.batch_reset_status([(c, None)], condition)
-    finally:
-        db.conn.close()
-
-
-@app.post("/pipeline/reset/{phase}")
-async def reset_preview(phase: str):
-    """Preview reset impact — counts affected papers without mutating DB."""
-    if phase not in RESET_DEFS:
-        return JSONResponse({"error": f"Unsupported reset phase: {phase}"}, status_code=400)
-    reset_cols = _get_reset_cols(phase)
-    impact = _count_reset_impact(phase, reset_cols)
-    return JSONResponse({"ok": True, "phase": phase, "impact": impact})
-
-
-@app.post("/pipeline/reset/{phase}/execute")
-async def reset_execute(phase: str):
-    """Execute the reset after user confirmation."""
-    if phase not in RESET_DEFS:
-        return JSONResponse({"error": f"Unsupported reset phase: {phase}"}, status_code=400)
-    reset_cols = _get_reset_cols(phase)
-    impact = _count_reset_impact(phase, reset_cols)
-    _execute_reset(phase, reset_cols)
-    return JSONResponse({"ok": True, "phase": phase, "impact": impact})
 
 
 async def _log_event_stream():
@@ -591,38 +511,26 @@ async def report_list():
 @app.get("/report/data/{filename:path}")
 async def report_data(filename: str):
     for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
-        file_path = directory / filename
+        file_path = (directory / filename).resolve()
+        # 防止 ../../etc/passwd 这类路径遍历
+        if not str(file_path).startswith(str(directory.resolve())):
+            return JSONResponse({"error": "Invalid path"}, status_code=400)
         if file_path.exists():
             content = file_path.read_text(encoding="utf-8")
             return JSONResponse({"ok": True, "content": content, "filename": filename})
     return JSONResponse({"error": "Report not found"}, status_code=404)
 
 
-@app.post("/report/generate")
-async def generate_report(request: Request):
-    body = await request.json()
-    dois = body.get("dois", [])
 
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        from pipeline.phase_g import phase_g_report
-        phase_g_report(db, AUTO_REPORT_DIR, USER_REPORT_DIR, doi_list=dois)
-    finally:
-        db.conn.close()
-
-    # Find latest user report
-    user_dir = Path(USER_REPORT_DIR)
-    md_files = sorted(user_dir.glob("report_*.md"), reverse=True)
-    filename = md_files[0].name if md_files else ""
-    preview = md_files[0].read_text(encoding="utf-8") if md_files else ""
-    return JSONResponse({"ok": True, "filename": filename, "preview": preview})
 
 
 @app.get("/report/download/{filename:path}")
 async def download_report(filename: str):
     for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
-        file_path = directory / filename
+        file_path = (directory / filename).resolve()
+        # 防止 ../../etc/passwd 这类路径遍历
+        if not str(file_path).startswith(str(directory.resolve())):
+            return JSONResponse({"error": "Invalid path"}, status_code=400)
         if file_path.exists():
             return FileResponse(str(file_path), filename=filename, media_type="text/markdown")
     return JSONResponse({"error": "File not found"}, status_code=404)
@@ -639,432 +547,14 @@ async def logs_page(request: Request):
     return templates.TemplateResponse(request, "logs.html", {"log_content": log_content})
 
 
-# ── Config ─────────────────────────────────────────────────────────────────────
-
-@app.get("/config", response_class=HTMLResponse)
-async def config_page(request: Request):
-    publishers = load_publishers()
-    keywords = load_keywords()
-    skip_config = _get_effective_skip()
-    overrides_raw = json.dumps(_load_skip_overrides(), indent=2)
-    publishers_raw = (CONFIG_DIR / "publishers.yaml").read_text(encoding="utf-8")
-    keywords_raw = (CONFIG_DIR / "keywords.yaml").read_text(encoding="utf-8")
-    domain_description = "\n\n".join(
-        f"## {k}\n{v.get('description','').strip()}"
-        for k, v in keywords.get("scope_definition", {}).items()
-    )
-
-    # 加载 settings.yaml
-    settings_path = CONFIG_DIR / "settings.yaml"
-    settings_raw = settings_path.read_text(encoding="utf-8") if settings_path.exists() else ""
-
-    # 加载 prompts
-    prompts = {}
-    for pname in ["summary", "relevance", "fix"]:
-        ppath = PROMPTS_DIR / f"{pname}.yaml"
-        prompts[pname] = ppath.read_text(encoding="utf-8") if ppath.exists() else ""
-
-    email_templates = sorted(
-        f.stem for f in EMAIL_TEMPLATE_DIR.glob("*.html")
-    ) if EMAIL_TEMPLATE_DIR.exists() else ["default"]
-
-    # Determine current selection: override path content, or the active EMAIL_TEMPLATE_NAME
-    override_path = DATA_DIR / "email_template_override.txt"
-    current_override = override_path.read_text(encoding="utf-8").strip() if override_path.exists() else ""
-
-    return templates.TemplateResponse(request, "config.html", {
-        "publishers": publishers, "keywords": keywords,
-        "skip_config": skip_config, "overrides_raw": overrides_raw,
-        "publishers_raw": publishers_raw, "keywords_raw": keywords_raw,
-        "domain_description": domain_description,
-        "settings_raw": settings_raw,
-        "prompts_raw": prompts,
-        "email_template_name": CFG.EMAIL_TEMPLATE_NAME,
-        "email_template_default": CFG.EMAIL_TEMPLATE_DEFAULT,
-        "email_templates": email_templates,
-        "current_override": current_override,
-    })
 
 
-@app.post("/config/skip-toggle/{phase}")
-async def config_skip_toggle(phase: str):
-    if phase not in PHASE_LABELS:
-        return JSONResponse({"error": f"Unknown phase: {phase}"}, status_code=400)
-    overrides = _load_skip_overrides()
-    phase_attr = _PHASE_KEY_MAP.get(phase)
-    default_val = getattr(CFG, phase_attr) if phase_attr else False
-    current = overrides.get(phase, default_val)
-    overrides[phase] = not current
-    _atomic_write(SKIP_OVERRIDES_PATH, json.dumps(overrides, indent=2))
-    return JSONResponse({"ok": True, "phase": phase, "skipped": overrides[phase]})
 
 
-@app.post("/config/save-publishers")
-async def config_save_publishers(request: Request):
-    body = await request.json()
-    content = body.get("content", "")
-    try:
-        import yaml
-        parsed = yaml.safe_load(content)
-    except Exception as e:
-        return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
-    path = CONFIG_DIR / "publishers.yaml"
-    _atomic_write(path, content)
-    from config import reload_config
-    reload_config()
-    return JSONResponse({"ok": True, "path": str(path)})
 
 
-@app.post("/config/save-keywords")
-async def config_save_keywords(request: Request):
-    body = await request.json()
-    content = body.get("content", "")
-    try:
-        import yaml
-        parsed = yaml.safe_load(content)
-    except Exception as e:
-        return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
-    path = CONFIG_DIR / "keywords.yaml"
-    _atomic_write(path, content)
-    from config import reload_config
-    reload_config()
-    return JSONResponse({"ok": True, "path": str(path)})
 
 
-@app.post("/config/save-settings")
-async def config_save_settings(request: Request):
-    body = await request.json()
-    content = body.get("content", "")
-    try:
-        import yaml
-        parsed = yaml.safe_load(content)
-    except Exception as e:
-        return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
-    path = CONFIG_DIR / "settings.yaml"
-    _atomic_write(path, content)
-    from config import reload_config
-    reload_config()
 
 
-@app.post("/config/save-email-template")
-async def config_save_email_template(request: Request):
-    body = await request.json()
-    value = body.get("value", "").strip()
-    path = DATA_DIR / "email_template_override.txt"
-    if value:
-        path.write_text(value, encoding="utf-8")
-    else:
-        path.unlink(missing_ok=True)
-    from config import reload_config
-    reload_config()
-    return JSONResponse({"ok": True})
 
-
-@app.post("/config/save-prompt/{name}")
-async def config_save_prompt(request: Request, name: str):
-    body = await request.json()
-    content = body.get("content", "")
-    try:
-        import yaml
-        parsed = yaml.safe_load(content)
-    except Exception as e:
-        return JSONResponse({"error": f"YAML syntax error: {e}"}, status_code=400)
-    path = PROMPTS_DIR / f"{name}.yaml"
-    _atomic_write(path, content)
-    return JSONResponse({"ok": True, "path": str(path)})
-
-
-@app.get("/config/mineru-token")
-async def config_mineru_token_status():
-    import base64, time
-    token = os.getenv("MINERU_TOKEN", "")
-    if not token:
-        return JSONResponse({"ok": True, "valid": False, "error": "Not configured"})
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return JSONResponse({"ok": True, "valid": False, "error": "Invalid JWT format"})
-        payload = parts[1]
-        data = json.loads(base64.urlsafe_b64decode(payload + "=="))
-        exp = data.get("exp", 0)
-        if not exp:
-            return JSONResponse({"ok": True, "valid": True, "days_left": None})
-        days_left = (exp - time.time()) / 86400
-        return JSONResponse({"ok": True, "valid": True, "days_left": round(days_left, 1)})
-    except Exception as e:
-        return JSONResponse({"ok": True, "valid": False, "error": str(e)})
-
-
-@app.post("/config/test-deepseek")
-async def config_test_deepseek():
-    api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    if not api_key or api_key.startswith("sk-placeholder"):
-        return JSONResponse({"ok": False, "error": "DEEPSEEK_API_KEY not configured"})
-    try:
-        import requests
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            json={"model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return JSONResponse({"ok": True})
-        else:
-            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@app.post("/config/test-crossref")
-async def config_test_crossref():
-    try:
-        import requests
-        resp = requests.get(
-            "https://api.crossref.org/works/10.1038/nature12373",
-            headers={"User-Agent": "PaperCrawler (mailto:your_email@example.com) Python"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return JSONResponse({"ok": True})
-        else:
-            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}"})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@app.post("/config/save-domain")
-async def config_save_domain(request: Request):
-    body = await request.json()
-    content = body.get("content", "")
-    try:
-        from ruamel.yaml import YAML
-        kw_path = CONFIG_DIR / "keywords.yaml"
-        ryaml = YAML()
-        kw = ryaml.load(kw_path)
-        if kw is None or not isinstance(kw, dict):
-            kw = {"scope_definition": {}}
-        sd = kw.get("scope_definition", {})
-        first_key = next(iter(sd.keys()), None) if sd else None
-        if first_key:
-            sd[first_key]["description"] = content
-        else:
-            sd["custom"] = {"description": content, "topics": []}
-        kw["scope_definition"] = sd
-        ryaml.dump(kw, kw_path)
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@app.post("/config/test-mineru")
-async def config_test_mineru():
-    token = os.getenv("MINERU_TOKEN", "")
-    if not token:
-        return JSONResponse({"ok": False, "error": "MINERU_TOKEN not configured"})
-    try:
-        import requests
-        resp = requests.get(
-            "https://mineru.net/api/v1/user/info",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return JSONResponse({"ok": True})
-        else:
-            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-# ── Data Sources ──────────────────────────────────────────────────────────────
-
-from pipeline.base import load_journal_overrides, journal_effective
-
-
-@app.get("/datasources", response_class=HTMLResponse)
-async def datasources_page(request: Request):
-    publishers = load_publishers()
-    overrides = load_journal_overrides()
-    journals = []
-    for j in publishers:
-        jid = j["id"]
-        ov = overrides.get("journals", {}).get(jid, {})
-        enabled_default = j.get("enabled", True)
-        override_enabled = journal_effective(j, overrides, "enabled")
-        override_rss = journal_effective(j, overrides, "rss_enabled")
-        override_cr = journal_effective(j, overrides, "cr_enabled")
-        journals.append({
-            "id": jid,
-            "name": j.get("name", ""),
-            "publisher": j.get("publisher", ""),
-            "issn": j.get("issn", ""),
-            "has_rss": bool(j.get("rss")),
-            "has_issn": bool(j.get("issn")),
-            "enabled_default": bool(enabled_default),
-            "override_enabled": override_enabled,
-            "override_rss": override_rss,
-            "override_cr": override_cr,
-        })
-    return templates.TemplateResponse(request, "datasources.html", {"journals": journals})
-
-
-@app.post("/datasources/save")
-async def datasources_save(request: Request):
-    body = await request.json()
-    journals = body.get("journals", {})
-    overrides = {"journals": journals}
-    _atomic_write(JOURNAL_OVERRIDES_PATH, json.dumps(overrides, indent=2))
-    return JSONResponse({"ok": True, "path": str(JOURNAL_OVERRIDES_PATH)})
-
-
-# ── Subscriptions ─────────────────────────────────────────────────────────────
-
-@app.get("/subscriptions", response_class=HTMLResponse)
-async def subscriptions_page(request: Request):
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        subscribers = db.get_subscribers(active_only=False)
-    finally:
-        db.conn.close()
-    subs_list = []
-    for s in subscribers:
-        subs_list.append({
-            "email": s["email"],
-            "name": s["name"] or "",
-            "active": bool(s["active"]),
-            "created_date": s["created_date"] or "",
-        })
-    return templates.TemplateResponse(request, "subscriptions.html", {
-        "subscribers": subs_list,
-        "reports": _list_reports(),
-    })
-
-
-@app.post("/subscriptions/add")
-async def subscriptions_add(request: Request):
-    body = await request.json()
-    email = body.get("email", "").strip().lower()
-    name = body.get("name", "").strip()
-    if not email or "@" not in email:
-        return JSONResponse({"ok": False, "error": "Invalid email"})
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        ok = db.add_subscriber(email, name)
-    finally:
-        db.conn.close()
-    return JSONResponse({"ok": ok, "error": None if ok else "Duplicate email"})
-
-
-@app.post("/subscriptions/remove")
-async def subscriptions_remove(request: Request):
-    body = await request.json()
-    email = body.get("email", "")
-    if not email:
-        return JSONResponse({"ok": False, "error": "Missing email"})
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        db.remove_subscriber(email)
-    finally:
-        db.conn.close()
-    return JSONResponse({"ok": True})
-
-
-@app.post("/subscriptions/toggle")
-async def subscriptions_toggle(request: Request):
-    body = await request.json()
-    email = body.get("email", "")
-    active = body.get("active", True)
-    if not email:
-        return JSONResponse({"ok": False, "error": "Missing email"})
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        db.toggle_subscriber(email, 1 if active else 0)
-    finally:
-        db.conn.close()
-    return JSONResponse({"ok": True})
-
-
-@app.post("/subscriptions/import-from-env")
-async def subscriptions_import_env():
-    from config import load_email_config
-    cfg = load_email_config()
-    to_addrs = cfg.get("to_addrs", []) if cfg else []
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        imported = 0
-        for addr in to_addrs:
-            if db.add_subscriber(addr.strip().lower()):
-                imported += 1
-    finally:
-        db.conn.close()
-    return JSONResponse({"ok": True, "imported": imported})
-
-
-@app.post("/subscriptions/test/{email}")
-async def subscriptions_test(email: str):
-    from config import load_email_config
-    from processors.email_sender import EmailSender
-    cfg = load_email_config()
-    if not cfg:
-        return JSONResponse({"ok": False, "error": "SMTP not configured"})
-    try:
-        sender = EmailSender(
-            smtp_host=cfg["smtp_host"],
-            smtp_port=cfg["smtp_port"],
-            username=cfg["username"],
-            password=cfg["password"],
-            from_addr=cfg["from_addr"],
-            to_addrs=[email],
-            use_tls=cfg.get("use_tls", True),
-        )
-        sender.send(
-            subject="PapersCrawler Test",
-            body="This is a test message from PapersCrawler.\n\nIf you received this, SMTP configuration is working.",
-            body_type="plain",
-        )
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@app.post("/subscriptions/send-report")
-async def subscriptions_send_report(request: Request):
-    """Send a report by email.
-
-    If ``emails`` list is provided, sends only to those recipients
-    (selective sending). Otherwise sends to all active subscribers.
-
-    If report_filename is provided, resolves it against AUTO_REPORT_DIR
-    and USER_REPORT_DIR. Otherwise sends the latest auto report.
-    """
-    body = await request.json()
-    report_filename = body.get("report_filename", "") or ""
-    emails = body.get("emails")  # Optional list[str] for selective sending
-
-    report_path = None
-    if report_filename:
-        for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
-            candidate = directory / report_filename
-            if candidate.exists():
-                report_path = candidate
-                break
-        if not report_path:
-            return JSONResponse({"ok": False, "error": f"Report not found: {report_filename}"})
-
-    db = DatabaseClient(DB_PATH)
-    try:
-        db.init_db_papers()
-        from pipeline.phase_h import phase_h_email
-        phase_h_email(db, AUTO_REPORT_DIR, report_path=report_path, to_addrs=emails)
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        logger.error(f"Send report failed: {e}")
-        return JSONResponse({"ok": False, "error": str(e)})
-    finally:
-        db.conn.close()

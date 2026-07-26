@@ -570,6 +570,30 @@ def load_email_config():
     }
 
 
+def load_email_recipients():
+    """
+    加载邮件收件人列表。
+
+    优先从 data/email.yaml 读取（每条 {email, name, enabled}，仅保留 enabled=true）。
+    文件不存在或解析失败/为空时，回退到 .env SMTP_TO_ADDRS（向后兼容）。
+
+    Returns
+    -------
+    list[str]
+        收件人邮箱地址列表。
+    """
+    path = DATA_DIR / "email.yaml"
+    if path.exists():
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            recipients = data.get("recipients", [])
+            return [r["email"].strip() for r in recipients
+                    if r.get("enabled", True) and r.get("email")]
+        except (yaml.YAMLError, KeyError, TypeError, AttributeError):
+            pass  # fall through to .env
+    return load_email_config().get("to_addrs", [])
+
+
 # ==================================================================
 # MinerU Token 过期检测
 # ==================================================================

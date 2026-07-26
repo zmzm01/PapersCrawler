@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.8/marked.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify@3.2.4/purify.min.js" defer></script>
 </head>
 <body>
   <div class="layout">
@@ -24,10 +25,7 @@
         <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}"><i class="fa-solid fa-gears"></i><span data-i18n="nav.pipeline">Pipeline</span></a></li>
         <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><i class="fa-solid fa-file-lines"></i><span data-i18n="nav.papers">Papers</span></a></li>
         <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><i class="fa-solid fa-newspaper"></i><span data-i18n="nav.report">Report</span></a></li>
-        <li><a href="/datasources" class="{% if request.url.path == '/datasources' %}active{% endif %}"><i class="fa-solid fa-database"></i><span data-i18n="nav.datasources">Data Sources</span></a></li>
         <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}"><i class="fa-solid fa-terminal"></i><span data-i18n="nav.logs">Logs</span></a></li>
-        <li><a href="/subscriptions" class="{% if request.url.path == '/subscriptions' %}active{% endif %}"><i class="fa-solid fa-bell"></i><span data-i18n="nav.subscriptions">Subscriptions</span></a></li>
-        <li><a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}"><i class="fa-solid fa-sliders"></i><span data-i18n="nav.config">Config</span></a></li>
       </ul>
     </nav>
     <main class="content">

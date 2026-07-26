@@ -14,7 +14,8 @@ from pathlib import Path
 
 from config import (
     CFG, EMAIL_TEMPLATE_DIR,
-    load_email_config, load_publishers, load_keywords,
+    load_email_config, load_email_recipients,
+    load_publishers, load_keywords,
     build_scope_block,
 )
 from processors.email_sender import EmailSender
@@ -53,9 +54,10 @@ def _render_email_template(template_name: str, **kwargs) -> str:
 def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
     """Send today's auto report or a no-update notification via email.
 
-    Recipients are read from the ``to_addrs`` parameter first (if provided
-    for selective sending by the WebUI), then from the subscribers table,
-    and finally from .env SMTP_TO_ADDRS as fallback.
+    Recipients are resolved via ``load_email_recipients()`` (reads
+    ``data/email.yaml`` first, falls back to ``.env SMTP_TO_ADDRS``).
+    The ``to_addrs`` parameter overrides this when provided (e.g. for
+    selective sending — currently unused, kept for API compatibility).
 
     Parameters
     ----------
@@ -65,8 +67,8 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
     report_path : Path, optional
         Specific report file to send. If None, uses today's auto report.
     to_addrs : list of str, optional
-        Explicit recipient list (selective sending from WebUI).
-        If None, resolves from DB subscribers then .env.
+        Explicit recipient list (deprecated — kept for signature compat).
+        If None, resolves via load_email_recipients().
     """
     logger.info("--- Phase H: Email delivery ---")
     if CFG.SKIP_PHASE_H:
@@ -88,11 +90,9 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
         logger.info("Phase H: email credentials not configured, skipping")
         return
 
-    # 收件人优先级：to_addrs 参数（选择性发送）> DB 订阅者 > .env 配置
+    # 收件人来源：to_addrs 参数（选择性发送）> email.yaml / .env 回退
     if to_addrs is None:
-        to_addrs = db.get_active_emails()
-        if not to_addrs:
-            to_addrs = email_cfg.get("to_addrs", [])
+        to_addrs = load_email_recipients()
     if not to_addrs:
         logger.info("Phase H: no recipients, skipping")
         return
