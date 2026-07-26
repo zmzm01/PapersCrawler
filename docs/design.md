@@ -90,14 +90,12 @@ PapersCrawler/
 │           ├── css/style.css
 │           └── js/app.js
 ├── tools/                       # 辅助工具
-│   ├── reset_pipeline.py        # 重置流水线状态（5 子命令 + --publisher 过滤）
-│   ├── convert_md_to_pdf.py     # Markdown → PDF (pandoc + cloakbrowser 主路径)
-│   ├── reset_empty_abstract.py  # 重置空摘要论文的 Phase E/G
-│   ├── debug_llm_summary.py     # 诊断 LLM Summary JSON 解析失败
-│   ├── debug_publisher_urls.py  # 诊断 Publisher URL 抓取（headful 浏览器）
+│   ├── reset_pipeline.py        # 重置流水线状态（6 子命令 + --publisher 过滤）
+│   ├── convert_reports_to_hugo.py  # Phase G 报告转 Hugo content + 部署
+│   ├── fix_summary_formulas.py  # 批量 FormulaFixer 修复 LaTeX
+│   ├── import_local_pdf.py      # 手动导入本地 PDF 到 MinerU 队列
 │   ├── schedule_daily.py        # 每日调度入口（A→F，支持 --no-reset-* 开关）
 │   ├── schedule_weekly.py       # 每周调度入口（G→H）
-│   ├── migrate_db_v2.py         # 数据库迁移 v2（新增 skipped_dois 表）
 └── README.md                    # 项目使用说明
 ```
 
@@ -228,6 +226,7 @@ Phase H: 邮件推送
 - `report_date` 是主要过滤条件：`get_papers_for_report()` 使用 `report_date IS NULL` 查询未报告论文
 - `report_status` 保留为辅助标记，`mark_papers_reported()` 同时写入两者
 - 支持 `reset-report --days N` 按日期范围重置，方便同一天重试
+- **显式 relevance 过滤（2026-07-25）**：除 `report_date IS NULL` 外，`get_papers_for_report()` 还要求 `llm_relevance_category IN ('A','B')` + `llm_relevance_status='success'`，且 `phase_g.py` 用户模式 SQL 同步加入。`update_llm_relevance()` **不重置** `llm_summary_*` 字段，必须由查询层显式拦截，否则「已总结但被重判为 C/D」的论文会被误入报（覆盖真实判定）。
 
 **时间戳** (全局)
 - `created_date`, `updated_date`
@@ -349,14 +348,61 @@ Phase H 检测逻辑：
 
 ### 报告元信息增强（2026-06-15）
 
-Markdown/HTML 报告新增以下元信息行，显示在每篇论文的标题下方：
-- `**期刊**: {journal}` — 发表期刊名
-- `**出版社**: {publisher}` — 出版社名
-- `**相关方向**: {labels}` — LLM 判断的子领域中文短标签
+Markdown/HTML 报告**当前**显示在每篇论文标题下方的元信息行（2026-07-25 调整后顺序）：
+- `**期刊**: {journal}` — 发表期刊名（如 Nature Physics）
+- `**作者**: {authors}` — 论文作者列表
+- `**日期**: {date}` — 论文发表日期（按 CrossRef / Page / RSS 优先级取）
+- `**DOI**: [{doi}](https://doi.org/{doi})` — DOI 链接
+- `**页面**: [链接]({page_url})` — 出版商页面
+- `**相关性等级**: {category}` — LLM 判定的四级分类（A/B/C/D，Phase E 输出）
+- `**判断理由**: {reason}` — LLM 给出相关 / 不相关的简要理由
+- `**原文摘要**: {abstract}` — 论文原始摘要
+- `**一句话**: {one_sentence}` — LLM 的一句话总结
 
-匹配子领域值来自 `llm_relevance_subfields` DB 列（Phase E 输出），通过 `_build_subdomain_labels()` 将 `scope_definition` 中各子域 `description` 的首个有意义的短语（如 `"本方向研究高功率激光与固体/气体靶相互作用驱动离子和质子加速"` → `"加速"`）作为简短标签。`discovery_source` 来源行根据用户反馈已移除。
+随后是 4 个 H3 子节，顺序与文本保持不变：研究动机与目标 / 关键方法与设置 / 主要结果与物理内涵 / 要点总结。
 
-**报告排序**（2026-06-16）：`phase_g_report()` 新增 `paper_list.sort(key=lambda p: (p["journal"], p["date"]))`，按期刊+日期排序。
+`relevance_category` 与 `relevance_reason` 来自 `llm_relevance_category` / `llm_relevance_reason` DB 列（Phase E 输出），`reason` 是 LLM 自由文本，统一通过 `_process_results_markdown()` 处理（LaTeX 公式修复 + 字面量换行转换 + 内部标题重定级），与 `motivation` / `method` 等 LLM 总结字段保持一致的安全渲染。
+
+**2026-07-25 调整**：
+- **删除** `**出版社**`（与 `**期刊**` 信息重叠，保留更具体的期刊名足矣）
+- **删除** `**相关方向**`（LLM 子领域匹配过宽/不够准确，`**判断理由**` 已能说明问题）
+- **删除** `**PDF**`（Markdown/邮件内 PDF 链接点击率低，DOI + 页面足够回溯）
+- **重排顺序**：`期刊 → 作者 → 日期 → DOI → 页面 → 相关性等级 → 判断理由 → 原文摘要 → 一句话`
+
+**报告头部图例（2026-07-25）**：为让读者在看到「相关性等级」字段时能立即理解 A/B/C/D 的判定标准，报告开头插入相关性等级图例（Markdown `>` 引用块 / HTML `<blockquote class="relevance-legend">`），转写自 `configs/prompts/relevance.yaml` 中 Phase E LLM Prompt 的权威定义。生成入口在 `paper_report_generator.py` 的 `_relevance_legend_md()` / `_relevance_legend_html()`，分别由 `generate_markdown()` / `generate_html()` 调用。**用户反馈后简化**：图例不再标注 `configs/prompts/relevance.yaml` 来源路径，仅保留 A/B/C/D 简表。
+
+**报告排序说明（2026-07-25 新增）**：报告最顶端（在相关性图例之前）插入一行「报告排序」说明（Markdown `>` 引用块 / HTML `<blockquote class="sort-note">`），告知读者排序规则（按相关性等级 A→B→C→D、同级内日期倒序）。该说明文本与 `_sort_papers()` 实际行为一致，模板位于 `templates/report/{markdown,html}/sort_note.{md,html}.j2`，可由用户自行编辑。
+
+**报告其他说明（2026-07-25 新增）**：图例之后插入「其他说明」块（Markdown `>` 引用块 / HTML `<blockquote class="disclaimers">`），列 3 条局限性提示帮助读者正确解读报告收录与排序：
+- 筛选 prompt 调整后，部分历史文献可能被重新召回，使单次报告收录量明显增加。
+- RSS 历史回溯可能纳入较早发表（数月甚至数年前）的文献。
+- 相关性判定受 prompt 表述、LLM 能力上限及仅以摘要为输入的信息局限影响，结果可能存在偏差，请结合论文全文进一步判断。
+
+模板位于 `templates/report/{markdown,html}/disclaimers.{md,html}.j2`，可由用户自行编辑。CSS：淡橙底 + 橙色左竖线，与 `sort-note`（黄）和 `relevance-legend`（蓝）形成三色区分：蓝=图例（结构）、黄=排序（流程）、橙=说明（解读）。
+
+**报告排序**（2026-07-25 改）：`paper_report_generator._sort_papers()` 用稳定 sort 实现「相关性等级 A 先 → 同级日期倒序（最新在前）」：
+- 一级 key：`relevance_category` 经 `_RELEVANCE_RANK = {"A":0, "B":1, "C":2, "D":3}` 映射升序（未知值 rank=99 排末位）
+- 二级 key：`date` 字符串倒序；ISO `YYYY-MM-DD` 字符串字典序 ≡ 时间序，无需 datetime 解析
+- 实现技巧：先 `sort(date, reverse=True)` 再 `sort(category)`，利用 Python 排序稳定性
+- 由 `generate_markdown()` / `generate_html()` 在最顶端调用，auto + user 两种模式都受益；`phase_g.py` 的旧 `paper_list.sort(...)` 已删除
+
+### 报告解释页（2026-07-26 新增）
+
+每期 Phase G 生成 Markdown/HTML 报告后，额外生成一份独立 HTML 解释页 `report_YYYYMMDD_explained.html`，帮助读者理解「为什么这篇论文被 LLM 判为 A/B 相关」。
+
+- **模板文件**：`templates/report/html/explained.html.j2`
+- **渲染环境**：复用 `src/processors/paper_report_generator.py:_get_template_env()` 创建的 Jinja2 Environment（`FileSystemLoader` 指向 `templates/report/`），不引入新的 Environment。
+- **输出要求**：单文件自包含 HTML，无外部 `<link>` / `<script>` / CDN / Google Fonts；全部 CSS 内联在 `<style>` 中；字体使用系统栈。
+- **页面结构**：
+  1. Header：标题「报告解释 · {{ date_str }}」+ 副标题。
+  2. 本期数据：4 个统计卡片（总论文 / 待报告 / 出版社 / 阶段）。
+  3. 阶段状态：5 阶段水平堆叠柱状图（CrossRef / Publisher / Relevance / MinerU / Summary；success 绿 / failed 红 / skipped 黄 / pending 蓝）。
+  4. 近 7 天采集：每天一行水平堆叠柱状图（reportable 绿 / failed 红 / other 蓝）。
+  5. 完整 Prompt 快照：两个 `<details>` 折叠区，Phase E 相关性判断默认展开，Phase F 论文总结默认折叠，均用 `<pre>` 保留源码（含 LaTeX）不渲染。
+  6. Footer：生成时间 + 项目名。
+- **模板变量**：`date_str`、`total_papers`、`pending_report`、`publishers_count`、`phases_count`、`phase_status`、`weekly`、`relevance_prompt`、`summary_prompt`、`generated_at`。
+- **图表实现**：纯 CSS flexbox + 百分比宽度，无 chart.js；0 计数分段不渲染，避免最小宽度造成的误导色条。
+- **Prompt 安全渲染**：因 Environment 配置 `autoescape=False`，模板内对 `relevance_prompt` / `summary_prompt` 显式使用 `| e` 过滤，防止 `<` / `>` 等字符破坏 HTML。
 
 ## 10. LLM 总结输出简单化
 
@@ -516,31 +562,34 @@ irrelevant_fields:
     - "Space plasma: Solar wind, Magnetosphere..."
 ```
 
-### 字段分工
+### 字段分工（三层职责不重叠）
 
-| 字段 | 用途 | 语种 | 要求 |
-|------|------|------|------|
-| `scope_definition` | Phase E LLM prompt — 完整领域定义 | 中文 | 每子域含 `description`（段落描述）+ `topics`（展开关键词列表） |
-| `irrelevant_fields` | Phase E LLM prompt — 降低误判 | 中文 | 定义"不相关"边界 |
-| `context_gates` | Phase E LLM prompt — 全局语境消歧 | 中文 | 跨子域的高歧义词汇判定规则（如"fusion"→D），匹配时直接归为不相关或约束子域分配 |
+| 字段 | 决策步骤 | 用途 | 语种 | 要求 |
+|------|---------|------|------|------|
+| `context_gates` | Step 1 | Phase E LLM prompt — **per-term 词义消歧** | 中文 | 跨子域的高歧义词汇判定规则（如 "plasma" 在 fusion vs 加速器语境）。负责 term-level 消歧，决定某 term 的某次出现是否算 in-scope |
+| `irrelevant_fields` | Step 2 | Phase E LLM prompt — **topic-level 黑名单** | 中文 | "per-term 消歧抓不住、必须靠 topic 整篇匹配"的主题兜底。**只放 Step 1 覆盖不到的主题**；已被 context_gates 覆盖的（如 fusion plasma）不再重复 |
+| `scope_definition` | Step 3 | Phase E LLM prompt — **正类子域分类** | 中文 | 每子域含 `description`（段落描述）+ `topics`（展开关键词列表），供 LLM 决定 A/B + sub-domain key |
 
-`scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释即可。
+**三步关系**：Step 1 解决"这个词是不是我们要的那个意思"；Step 2 解决"这篇文章整个主题是不是不在我们范围"；Step 3 解决"在范围内的话属于哪个子域、几级相关"。每步只做一件事，互不替代。`scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释即可。
 
 ### Phase E Prompt 构建流程
 
 ```
 keywords.yaml:
-  scope_definition (6 sub-domains)
-  irrelevant_fields
-  context_gates
+  context_gates      (Step 1 — per-term 词义消歧)
+  irrelevant_fields  (Step 2 — topic-level 黑名单)
+  scope_definition   (Step 3 — 正类子域)
           ↓
   src/config.py: build_scope_block()
+    渲染顺序: Step 1 → Step 2 → Step 3
+    标题前缀: "# Step 1: ...", "# Step 2: ...", "# Sub-Domain: ..."
           ↓
   Plain text block with ## headers + bullet lists
           ↓
   configs/prompts/relevance.yaml template (scope_block placeholder)
+    决策树: (a) Context Gates → (b) Irrelevant Fields → (c) A/B/C/D → (d) sub-domain
           ↓
-  LLM: classification task with Steps 1-4, JSON output
+  LLM: classification task, JSON output
 ```
 
 ## .env
@@ -590,9 +639,10 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 | 页面 | 路由 | 功能 |
 |------|------|------|
 | Home | `GET /` | 项目介绍、论文/出版社统计、快速入口 |
+| Dashboard | `GET /dashboard` | 状态概览：论文总数 + Pipeline 各阶段状态分布 + **Pending Report 数**（`llm_summary_status='success' AND report_date IS NULL AND llm_relevance_status='success' AND llm_relevance_category IN ('A','B')` — 仅 A/B 类可报告论文）+ 阶段状态柱状图；通过 `/pipeline/status` 端点每 5 秒自动刷新 |
 | Pipeline | `GET /pipeline` | 10 阶段 Run/Reset 按钮（A-RSS / A-CR 独立）+ 状态图表（CSS 柱状图）+ SSE 实时日志（支持级别过滤）+ 子进程执行。被 Config 跳过的阶段按钮灰显不可点击 |
-| Papers | `GET /papers?sort=created\|published` | 论文列表，默认按入库日期降序，可选按发表日期排序（显示精度警告）。展示 LLM 相关性状态 |
-| Report | `GET /report` | 勾选有 LLM 总结的论文 → 生成 Markdown 报告（写入 user/ 目录）→ 浏览器预览 + 下载 |
+| Papers | `GET /papers?sort=created\|published\|summary&category=a\|b\|ab\|all&has_summary=0\|1&page=N&per_page=50\|100\|200` | **浏览 + 选取** 双职责论文页。**浏览**：三种排序（入库/发表/LLM 总结生成时间）、四类筛选（A/B/AB/All）、`has_summary` 仅显示可报告论文；**分页**：底部分页器 `共 M 篇 · 第 N/T 页 · [每页 K ▾] [‹ 上一页] [下一页 ›]`，per_page 白名单 50/100/200，filter 切换自动重置 page=1；**选取**：常驻 checkbox 列（无 summary 论文自动 disabled + tooltip）+ 工具栏「全选当前页」「仅可报告」 + 底部 sticky 操作栏（N 篇已选 / [生成报告] [清空]）；点击生成 → POST `/report/generate` → 右上 toast 浮窗「已生成 [filename] [查看] [下载]」（[查看] 链到 `/report?show=X`，保留选区上下文不打断） |
+| Report | `GET /report?show=<filename>` | **报告档案馆**，仅查看不编辑。顶部下拉选择器按 `mtime DESC` 列出所有报告（每条：日期切片/来源/论文数/相对时间，auto + user 混排），主区渲染选中报告（marked + KaTeX）；下载链接常驻右侧。URL `?show=<filename>` 自动选中并加载；移除原论文选取表 / Select All / Publisher 过滤 / Generate 按钮 / Preview 区 |
 | Data Sources | `GET /datasources` | 期刊启用/禁用表格，每个期刊可独立控制 RSS 和 CrossRef 数据源开关。更改保存到 `data/journal_overrides.json`，不修改 publishers.yaml |
 | Logs | `GET /logs` | 日志查看（支持级别过滤，修复 innerHTML bug） |
 | Subscriptions | `GET /subscriptions` | 邮件订阅者管理（添加/删除/启用停用/发送测试邮件/从 .env 导入），Phase H 优先使用 DB 订阅者列表；"发送日报"按钮通过 `POST /subscriptions/send-report` 直接调用 Phase H |
@@ -1003,13 +1053,18 @@ LLM 输出中的子领域 key 存在约 5% 的格式偏差（大小写不一、�
 
 ### Prompt 策略
 
-Prompt 使用 `configs/keywords.yaml` 中的 `scope_definition`（完整的中文领域定义，含 6 个子域的段落描述 + 展开关键词列表）和 `irrelevant_fields`（不相关领域边界），由 `config.build_scope_block()` 格式化为带标题的分节文本块，嵌入 `configs/prompts/relevance.yaml` 模板。
+Prompt 使用 `configs/keywords.yaml` 中的 `context_gates`（Step 1 词义消歧）、`irrelevant_fields`（Step 2 主题黑名单）、`scope_definition`（Step 3 正类子域）三段，由 `config.build_scope_block()` 按 Step 1 → Step 2 → Step 3 顺序渲染为带 `# Step N: ...` 前缀的分节文本块，嵌入 `configs/prompts/relevance.yaml` 模板。
 
-LLM 被要求执行 4 个步骤：
-1. 判断论文属于 scope_definition 中哪些子领域
-2. 分配相关性类别 A/B/C/D
-3. 给出置信度 high/medium/low
-4. 简要说明判断理由
+LLM 被要求按**决策树**顺序执行：
+
+| 步骤 | 操作 | 终止条件 |
+|------|------|---------|
+| (a) | 应用 context_gates 做 per-term 消歧 | out-of-scope 标记的 term **不得**进入 sub-domain 匹配 |
+| (b) | 论文主话题是否匹配 irrelevant_fields | **YES → D + MatchedSubfields 空 + 停止** |
+| (c) | 分配 A/B/C/D（基于 scope_definition） | A=直接研究子域；B=方法/技术可迁移；C=同领域但距离远；D=不在研究领域（Step 2 没拦住的残差） |
+| (d) | 若 A/B 列 sub-domain key（最多 2 个） | 无明确匹配时 MatchedSubfields 留空 |
+
+A/B/C/D 的权威定义在 `configs/prompts/relevance.yaml` 决策树 (c) 步内，**报告头部图例**（`_relevance_legend_md`/`_relevance_legend_html`）从同一来源转写以保持一致。
 
 ### 旧版到新版的迁移
 
@@ -1398,12 +1453,7 @@ APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的�
 python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 ```
 
-**传统路径 A**：`tools/convert_md_to_pdf.py` — pandoc → HTML → cloakbrowser → PDF
-1. `pandoc --mathml --standalone` 生成含 MathML 的 HTML
-2. cloakbrowser 加载 HTML，打印为 PDF
-3. ⚠️ **已知问题**：`\(`/`\[\]` 公式渲染空白（MathML 无法解析 LaTeX 定界符）
-
-**传统路径 B**：`src/processors/pdf_converter.py` — pandoc + xelatex
+**传统路径**：`src/processors/pdf_converter.py` — pandoc + xelatex
 - 策略 A：自定义 LaTeX 模板（含 `xeCJK`、`Noto Sans CJK SC`、`\times` 兼容宏）
 - 策略 B：无模板回退（适用于纯英文场景）
 - 返回 `None` 表示失败（不抛异常）

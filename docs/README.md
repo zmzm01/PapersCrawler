@@ -188,15 +188,15 @@ formula_fix:                    # LLM 总结中 LaTeX 公式修复
 
 ### `configs/keywords.yaml` — 研究领域定义
 
-三个字段决定论文筛选标准：
+三个字段对应 Phase E LLM 决策树三步（详见 `configs/prompts/relevance.yaml`），职责不重叠：
 
-| 字段 | 用途 | 语种 |
-|------|------|------|
-| `scope_definition` | Phase E LLM prompt：子领域描述 + 关键词列表 | 中文 |
-| `irrelevant_fields` | 不相关领域边界，降低误判 | 中文 |
-| `context_gates` | 跨子域消歧规则，如 `fusion` → 直接归 D | 中文 |
+| 字段 | 决策步骤 | 用途 | 语种 |
+|------|---------|------|------|
+| `context_gates` | Step 1 (a) | per-term 词义消歧：高歧义词汇的 relevant / irrelevant contexts | 中文 |
+| `irrelevant_fields` | Step 2 (b) | topic-level 黑名单：仅放 term 消歧抓不住的主题 | 中文 |
+| `scope_definition` | Step 3 (c)(d) | 正类子域分类依据 + A/B/C/D 类别 | 中文 |
 
-`scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释掉。
+**维护原则**：已被 `context_gates` 覆盖的 topic（如 fusion plasma / space plasma / general AI/ML）不要重复写进 `irrelevant_fields`。`scope_definition` 的子域可独立注释，不关注的域直接 YAML 注释掉。
 
 ### `configs/prompts/*.yaml` — LLM 提示词
 
@@ -262,7 +262,6 @@ python tools/reset_empty_abstract.py             # 重置空摘要论文状态
 
 ```bash
 python src/processors/md_to_pdf_katex.py <input.md> [output.pdf]  # KaTeX + cloakbrowser（实验性）
-python tools/convert_md_to_pdf.py <input.md>                       # pandoc + cloakbrowser（备用）
 ```
 
 ---
@@ -332,7 +331,10 @@ PapersCrawler/
 │   ├── schedule_weekly.py#   每周 cron
 │   ├── reset_pipeline.py #   状态重置
 │   └── fix_summary_formulas.py
-├── templates/email/      # 邮件 HTML 模板
+├── templates/email/      # 邮件 HTML 模板（Phase H 推信用）
+├── templates/report/     # 报告内容模板（Markdown/HTML，Jinja2 渲染）
+│   ├── markdown/         #   Markdown 报告：legend/paper/document 宏
+│   ├── html/             #   HTML 报告：legend/paper/document 宏 + style.css + explained.html.j2
 ├── data/                 # 运行时数据（gitignored）
 │   ├── reports/auto/     # 自动日报
 │   ├── reports/user/     # 用户自选报告
