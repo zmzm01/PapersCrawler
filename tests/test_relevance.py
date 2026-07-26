@@ -125,6 +125,134 @@ def test_init_with_whitespace_keywords():
     assert "laser" in checker.keywords
 
 
+# ---- Prompt structure: 3-step decision tree (a)/(b)/(c)/(d) ----
+
+def _make_full_keywords():
+    """Build a keywords dict covering all three steps (gates + denylist + sub-domains)."""
+    return {
+        "scope_definition": {
+            "acceleration": {
+                "description": "本方向研究激光驱动离子加速。",
+                "topics": ["Target Normal Sheath Acceleration (TNSA)"],
+            },
+        },
+        "context_gates": [
+            {
+                "term": "plasma",
+                "description": '"Plasma" 出现在 fusion 语境时不应视为相关。',
+                "relevant_contexts": ["laser-driven particle acceleration"],
+                "irrelevant_contexts": ["fusion plasma (tokamak, ITER)"],
+            },
+        ],
+        "irrelevant_fields": {
+            "description": "Topic-level 黑名单。",
+            "topics": ["Collider physics: Standard Model, dark matter"],
+        },
+    }
+
+
+def test_build_scope_block_renders_in_three_step_order():
+    """scope_block must render Step 1 (gates) -> Step 2 (denylist) -> Step 3 (sub-domains)."""
+    from config import build_scope_block
+
+    block = build_scope_block(
+        scope_definition=_make_full_keywords()["scope_definition"],
+        context_gates=_make_full_keywords()["context_gates"],
+        irrelevant_fields=_make_full_keywords()["irrelevant_fields"],
+    )
+
+    pos_gates = block.find("Step 1: Global Context Rules")
+    pos_irr = block.find("Step 2: Irrelevant Fields")
+    pos_sub = block.find("Sub-Domain: acceleration")
+
+    assert pos_gates != -1, "Step 1 section missing"
+    assert pos_irr != -1, "Step 2 section missing"
+    assert pos_sub != -1, "Sub-Domain section missing"
+    assert pos_gates < pos_irr < pos_sub, (
+        f"Rendering order must be gates -> denylist -> sub-domains, "
+        f"got positions {pos_gates} {pos_irr} {pos_sub}"
+    )
+
+
+def test_build_default_prompt_contains_decision_tree_steps():
+    """Final prompt must surface the (a)/(b)/(c)/(d) decision tree."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    prompt = checker.build_default_prompt(
+        title="Test Title",
+        abstract="Test abstract.",
+        doi="10.1234/test",
+    )
+
+    # Decision tree branches
+    assert "(a)" in prompt
+    assert "(b)" in prompt
+    assert "(c)" in prompt
+    assert "(d)" in prompt
+
+    # Step 2 explicit YES/NO branch
+    assert "YES" in prompt and "NO" in prompt
+
+    # Step 1/2 section titles rendered into scope_block
+    assert "Step 1: Global Context Rules" in prompt
+    assert "Step 2: Irrelevant Fields" in prompt
+
+
+def test_build_default_prompt_contains_category_definitions():
+    """A/B/C/D must be defined in the decision tree (c) step."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    prompt = checker.build_default_prompt(
+        title="T", abstract="A", doi="10.1/x"
+    )
+
+    # Anchored phrases unique to the (c) descriptions
+    assert "Directly studies the group's core topics" in prompt
+    assert "transferable method/technology" in prompt
+    assert "Same broad field, but distant" in prompt
+    assert "Outside the research area" in prompt
+
+
+def test_irrelevant_topic_collision_removed():
+    """Topics covered by context_gates must NOT appear in irrelevant_fields.
+
+    Regression guard: if someone re-adds "Fusion" to irrelevant_fields, the
+    two layers would conflict (Step 1 says irrelevant_contexts excludes
+    fusion plasma, Step 2 says whole Fusion field is D — but Step 1 is
+    term-level and Step 2 is topic-level, so the topic Fusion is now
+    covered by Step 1's gate "plasma").
+    """
+    keywords = _make_full_keywords()
+    assert "Fusion" not in keywords["irrelevant_fields"]["topics"], (
+        "Fusion is covered by context_gates[plasma].irrelevant_contexts; "
+        "do not duplicate in irrelevant_fields"
+    )
+    assert "Space plasma" not in keywords["irrelevant_fields"]["topics"]
+    assert "Semiconductor plasma" not in keywords["irrelevant_fields"]["topics"]
+    assert "General AI/ML" not in keywords["irrelevant_fields"]["topics"]
+
+
+def test_decision_tree_a_assigns_d_on_irrelevant_term():
+    """Step (a) must instruct: PRIMARY SUBJECT in Irrelevant Context → D.
+
+    Topic-level judgment, not term-level: a minor passing mention of an
+    out-of-scope term does not trigger D — only when the out-of-scope
+    usage is what the paper is fundamentally about.
+    """
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    prompt = checker.build_default_prompt(title="T", abstract="A", doi="10.1/x")
+
+    a_block = prompt.split("(a) Apply Context Gates", 1)[1].split("(b)", 1)[0]
+    # Must surface the topic-level D trigger
+    assert "Assign D directly" in a_block
+    assert "PRIMARY SUBJECT" in a_block or "primary subject" in a_block.lower()
+    # Must explicitly carve out minor mentions
+    assert "Minor passing mentions" in a_block, (
+        "Step (a) must clarify that minor passing mentions of an "
+        "out-of-scope term do NOT trigger D"
+    )
+    # Out-of-scope term usages must still be excluded from sub-domain matching
+    assert "MUST NOT contribute to sub-domain matching" in a_block
+
+
 # ---- DeepSeek API call (mocked) ----
 
 def test_call_deepseek_api_mocked():

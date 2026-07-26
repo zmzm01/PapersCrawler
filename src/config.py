@@ -68,6 +68,8 @@ USER_REPORT_DIR = DATA_DIR / "reports" / "user"  # 用户自选报告目录 (Web
 
 # 邮件模板目录
 EMAIL_TEMPLATE_DIR = BASE_DIR / "templates" / "email"
+# 报告模板目录（Markdown/HTML，paper_report_generator.py 加载）
+REPORT_TEMPLATE_DIR = BASE_DIR / "templates" / "report"
 MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 
 # Web UI journal enable/disable 覆写文件
@@ -224,6 +226,7 @@ CFG.SKIP_NATURE_NEWS = True
 # ---------- 非研究论文检测 ----------
 CFG.PREFETCH_NON_RESEARCH = True
 CFG.POSTFETCH_NON_RESEARCH = True
+CFG.GENERATE_EXPLAINED_HTML = True
 CFG.NON_RESEARCH_KEYWORDS = [
     "erratum",
     "author correction:",
@@ -308,6 +311,7 @@ def _apply_settings(settings):
     CFG.SKIP_NATURE_NEWS = pp.get("skip_nature_news", CFG.SKIP_NATURE_NEWS)
     CFG.PREFETCH_NON_RESEARCH = pp.get("prefetch_non_research", CFG.PREFETCH_NON_RESEARCH)
     CFG.POSTFETCH_NON_RESEARCH = pp.get("postfetch_non_research", CFG.POSTFETCH_NON_RESEARCH)
+    CFG.GENERATE_EXPLAINED_HTML = pp.get("generate_explained_html", CFG.GENERATE_EXPLAINED_HTML)
     CFG.NON_RESEARCH_KEYWORDS = pp.get("non_research_keywords", CFG.NON_RESEARCH_KEYWORDS)
 
     # 爬虫参数
@@ -427,10 +431,12 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
         "",
     ]
 
-    # 1. Global context gates (word sense disambiguation)
+    # 1. Global context gates (word sense disambiguation) — Step 1 of the
+    # 3-step classification flow. Rendered first so the LLM applies term
+    # disambiguation before any other rule.
     gates = context_gates or []
     if gates:
-        lines.append("# Global Context Rules (apply to all sub-domains)")
+        lines.append("# Step 1: Global Context Rules (term disambiguation, apply to all sub-domains)")
         lines.append("")
         for gate in gates:
             term = gate.get("term", "")
@@ -453,7 +459,23 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
                 lines.append("")
         lines.append("")
 
-    # 2. Per sub-domain iteration
+    # 2. Irrelevant fields (topic-level denylist) — Step 2 of the
+    # 3-step classification flow. Rendered between gates and sub-domains so
+    # the LLM has the term senses resolved before consulting the denylist.
+    irr = irrelevant_fields or {}
+    irr_desc = irr.get("description", "").strip()
+    if irr_desc or irr.get("topics"):
+        lines.append("# Step 2: Irrelevant Fields (topic-level denylist)")
+        if irr_desc:
+            lines.append(irr_desc)
+            lines.append("")
+        for t in irr.get("topics", []):
+            lines.append(f"- {t}")
+        lines.append("")
+
+    # 3. Per sub-domain iteration — Step 3 of the 3-step classification
+    # flow. Rendered last so the LLM only reaches the positive taxonomy
+    # after gates + denylist pass.
     for key, section in scope_definition.items():
         lines.append(f"# Sub-Domain: {key}")
 
@@ -464,19 +486,38 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
             lines.append(f"- {t}")
         lines.append("")
 
-    # 3. Irrelevant fields
-    irr = irrelevant_fields or {}
-    irr_desc = irr.get("description", "").strip()
-    if irr_desc or irr.get("topics"):
-        lines.append("# Irrelevant Fields")
-        if irr_desc:
-            lines.append(irr_desc)
-            lines.append("")
-        for t in irr.get("topics", []):
-            lines.append(f"- {t}")
-        lines.append("")
-
     return "\n".join(lines)
+
+
+def build_default_prompt(scope_definition=None):
+    """生成 JSON 格式示例字符串，用于 LLM prompt 的 {json_example} 占位符替换。
+
+    从 scope_definition 中提取合法的子领域 key 作为示例值，
+    使 LLM 输出格式与实际分类标签保持一致。
+
+    Parameters
+    ----------
+    scope_definition : dict, optional
+        由 load_keywords() 返回的 scope_definition 字段。
+        各 key 对应子领域标识。为 None 或空时使用默认占位子领域。
+
+    Returns
+    -------
+    str
+        JSON 示例字符串（单行，无额外空白），可直接嵌入 prompt。
+    """
+    import json as _json
+    if scope_definition:
+        known_keys = list(scope_definition.keys())
+        example_keys = known_keys[:2] if len(known_keys) >= 2 else known_keys
+    else:
+        example_keys = ["sub_domain_a", "sub_domain_b"]
+    return _json.dumps({
+        "PredictedCategory": "B",
+        "MatchedSubfields": example_keys,
+        "Confidence": "high",
+        "Notes": "The paper studies laser-driven ion acceleration with plasma diagnostics.",
+    }, ensure_ascii=False)
 
 
 def load_email_config():
