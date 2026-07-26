@@ -132,6 +132,11 @@ class DatabaseClient:
         """
         打开数据库连接。
 
+        启用 WAL (Write-Ahead Logging) 模式:
+          - 允许 WebUI 读取与 Pipeline 写入并发执行不互相阻塞
+          - 同步策略降为 NORMAL（牺牲极端崩溃下的少量已提交事务换取 ~10x 写入吞吐）
+          - 对所有现有读写语义透明，向后兼容
+
         Args:
             dbPath: SQLite 数据库文件路径 (字符串或 Path 对象)
                    文件不存在时会自动创建。
@@ -139,6 +144,11 @@ class DatabaseClient:
         # sqlite3.Row 工厂使查询结果支持通过列名访问: row["doi"]
         self.conn = sqlite3.connect(str(dbPath))
         self.conn.row_factory = sqlite3.Row
+        # 启用 WAL 模式（Write-Ahead Logging）— 写不阻塞读，
+        # 适合 WebUI 频繁查询 + Pipeline 后台写入的并发场景
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        # WAL 模式下推荐搭配 NORMAL 同步（默认 FULL 在 WAL 下过度保守）
+        self.conn.execute("PRAGMA synchronous=NORMAL")
 
     def close(self) -> None:
         """Close the underlying SQLite connection.
