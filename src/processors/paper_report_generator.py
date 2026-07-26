@@ -1,37 +1,57 @@
 """
-paper_report_generator.py (v2)
-===============================
+paper_report_generator.py (v3)
+==============================
 根据论文信息字典自动生成 Markdown / HTML 报告。
 
 核心功能：
 - 接收单篇或多篇论文的结构化信息（标题、作者、日期、DOI、URL 以及 LLM 生成的总结字段）。
-- 自动生成格式化的 Markdown 或 HTML 报告，支持目录（TOC）生成。
-- 处理所有 LLM 总结字段中的 Markdown 标题，自动将其重定级（re-level）以适应报告整体结构。
+- 通过 Jinja2 模板引擎渲染 ``templates/report/`` 下的 Markdown / HTML 模板，
+  Python 端只负责数据预处理（LaTeX 修复、HTML 转义、标题重定级、子领域标签映射等）。
+- 模板可由用户直接编辑，无需修改 Python 代码。
 
 模块组成概览：
 
 【辅助函数（private helpers）】
 - _fix_latex_backslashes_for_display: 将双反斜杠还原为单反斜杠，修复 LLM 输出中 LaTeX 命令的转义问题（单向，仅用于显示）。
-- _process_text_for_markdown: 处理普通文本字段，修复 LaTeX 并将 \n 转为 Markdown 强制换行（行尾两个空格 + 换行）。
-- _process_text_for_html: 处理普通文本字段用于 HTML 输出（修复 LaTeX → HTML 转义 → \n 替换为 <br>）。
+- _process_text_for_markdown: 处理普通文本字段，修复 LaTeX 并将 \\n 转为 Markdown 强制换行（行尾两个空格 + 换行）。
+- _process_text_for_html: 处理普通文本字段用于 HTML 输出（修复 LaTeX → HTML 转义 → \\n 替换为 <br>）。
 - _adjust_headings: 标题重定级算法——将 Markdown 文本中的内部标题上移/下移若干级别。
 - _process_results_markdown: 综合处理所有 LLM 总结字段（修复 LaTeX + 标题重定级 + 换行转换）。
 - _authors_str: 将作者列表（List[str]）转换为逗号分隔的字符串。
-- _make_markdown_section: 为单篇论文生成 Markdown 片段（## 标题 + 元信息 + 结构化总结内容）。
-- _make_html_section: 为单篇论文生成 HTML 片段（<section> + 元信息 + 结构化总结内容）。
+- _build_subdomain_labels: 子领域 key → 中文短标签固定映射。
+
+【模板基础设施】
+- _get_template_env: 懒加载 Jinja2 Environment（FileSystemLoader 指向 REPORT_TEMPLATE_DIR）。
+- _load_style_css: 读取 templates/report/html/style.css 内容。
+
+【payload 构造器】
+- _make_paper_payload_md: 为 Markdown 模板准备干净的论文字典（_process_results_markdown 预处理）。
+- _make_paper_payload_html: 为 HTML 模板准备干净的论文字典（_process_text_for_html 预处理）。
 
 【公共接口（public API）】
-- generate_markdown: 生成 Markdown 格式报告（支持多篇论文、目录、可配置的标题起始级别）。
-- generate_html: 生成 HTML 格式报告（支持完整文档模式或纯 body 模式）。
+- _relevance_legend_md: 报告头部图例 Markdown（薄包装，调模板宏，测试直接调用）。
+- _relevance_legend_html: 报告头部图例 HTML（薄包装，调模板宏，测试直接调用）。
+- generate_markdown: 生成 Markdown 格式报告（通过 Jinja2 模板渲染，支持多篇论文、目录）。
+- generate_html: 生成 HTML 格式报告（通过 Jinja2 模板渲染，支持完整文档模式或纯 body 模式）。
 - generate_report: 统一报告生成接口，根据 format 参数路由到 markdown 或 html 生成函数。
 """
 
 from typing import Dict, List, Union, Optional
 import re
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
+
+from config import REPORT_TEMPLATE_DIR
 
 
 # 多领域报告分组（当前未使用，保留供后续扩展）
 _UNCLASSIFIED_KEY = "__unclassified__"
+
+
+# ======================================================================
+# 文本处理 helpers（被 payload 构造器调用）
+# ======================================================================
 
 
 def _fix_latex_backslashes_for_display(text: str) -> str:
@@ -130,9 +150,9 @@ def _adjust_headings(markdown_text: str, base_level: int = 4) -> str:
     5. 对每个标题应用偏移，同时保证不超过 Markdown 的 6 级标题上限。
 
     示例：
-    - 输入文本: "# 结果\n## 细节"    base_level=4
+    - 输入文本: "# 结果\\n## 细节"    base_level=4
     - 检测到 min_level=1，shift=3
-    - 输出: "#### 结果\n##### 细节"
+    - 输出: "#### 结果\\n##### 细节"
 
     边界情况：
     - 偏移后标题超过 6 级 → 截断为 6 级（Markdown 规范最多 6 级）。
@@ -240,6 +260,54 @@ def _process_text_for_html(text: str) -> str:
     return text
 
 
+def _html_escape(text: str) -> str:
+    """Escape HTML special characters for safe insertion into HTML output.
+
+    用于短文本字段（journal, authors, doi, date, relevance_category 等），
+    这些字段不需要 LaTeX 修复或换行转换，只需转义 HTML 特殊字符。
+
+    Parameters
+    ----------
+    text : str
+        待转义的文本。
+
+    Returns
+    -------
+    str
+        HTML 特殊字符已转义的文本。
+    """
+    if not text:
+        return ""
+    return (text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;"))
+
+
+def _safe_url(url: str) -> str:
+    """Validate URL scheme to prevent XSS via javascript: or data: URIs.
+
+    只允许 http://, https:// 和 mailto: 三种 scheme，
+    其他 scheme（javascript:, data:, vbscript: 等）返回空字符串。
+
+    Parameters
+    ----------
+    url : str
+        待验证的 URL。
+
+    Returns
+    -------
+    str
+        验证通过的原 URL，或空字符串（拒绝）。
+    """
+    if not url:
+        return ""
+    url = url.strip()
+    if url.startswith(("http://", "https://", "mailto:")):
+        return url
+    return ""
+
+
 def _authors_str(authors: List[str]) -> str:
     """
     将作者列表转换为逗号分隔的字符串。
@@ -252,113 +320,8 @@ def _authors_str(authors: List[str]) -> str:
 
 
 # ======================================================================
-# Markdown 生成
-# ======================================================================
-
-def _make_markdown_section(paper: Dict, heading_level: int = 2,
-                           heading_base: Optional[int] = None) -> str:
-    """
-    为单篇论文生成 Markdown 片段。
-
-    生成的结构（按顺序，以 heading_level=2 为例）：
-    ## {标题}                     ← 固定使用 ## 二级标题（每篇论文的顶级标题）
-    **作者**: ...
-    **日期**: ...
-    **DOI**: ...（可选）
-    **页面**: ...（可选）
-    **PDF**: ...（可选）
-    **一句话**: ...
-    ### 研究动机与目标             ← 使用 ### 三级标题
-    {motivation_and_goal 内容}
-    ### 关键方法与设置
-    {key_setup_and_method 内容}
-    ### 主要结果与物理内涵
-    {main_results_and_physics 内容}  ← 内部标题已通过 _adjust_headings 重定级
-    ### 要点总结
-    {take_home_message 内容}  ← 同样经过标题重定级
-    ### 要点总结
-    {take_home_message 内容}
-    ---                           ← 分割线，分隔不同论文
-
-    层次设计：
-    - 每篇论文的顶级标题 = h = heading_level 级（默认 ## 2 级）
-    - 论文内部子标题 = sub_h = heading_level + 1 级（默认 ### 3 级）
-    - 主要结果内部标题 = heading_base 级（默认 heading_level + 2，即 4 级 ####）
-
-    Parameters
-    ----------
-    paper : Dict
-        论文信息字典，包含 title, authors, date, doi, page_url, pdf_url 等元信息字段，
-        以及 one_sentence, motivation_and_goal, key_setup_and_method,
-        main_results_and_physics, take_home_message 等 LLM 总结字段。
-    heading_level : int
-        论文标题的 Markdown 标题级别，默认 2（##）。
-    heading_base : int, optional
-        main_results_and_physics 内部标题的起始级别。
-        默认值为 heading_level + 2。
-
-    Returns
-    -------
-    str
-        单篇论文的 Markdown 片段。
-    """
-    if heading_base is None:
-        heading_base = heading_level + 2
-    h = "#" * heading_level
-    sub_h = "#" * (heading_level + 1)
-
-    title = paper.get('title', '无标题')
-    authors = _authors_str(paper.get('authors', []))
-    date = paper.get('date', '未知')
-    doi = paper.get('doi', '')
-    journal = paper.get('journal', '')
-    publisher = paper.get('publisher', '')
-    matched_subdomains = paper.get('matched_subdomains', [])
-    page_url = paper.get('page_url', '')
-    pdf_url = paper.get('pdf_url', '')
-    abstract = _process_text_for_markdown(paper.get('abstract', ''))
-    one_sentence = _process_text_for_markdown(paper.get('one_sentence', ''))
-    # 所有 LLM 生成的总结字段都可能包含 Markdown 标题，统一通过
-    # _process_results_markdown 进行 LaTeX 修复 + 标题重定级 + 换行转换，
-    # 防止 LLM 输出的 ## 等高级标题破坏报告整体层次结构。
-    motivation = _process_results_markdown(paper.get('motivation_and_goal', ''), heading_base)
-    method = _process_results_markdown(paper.get('key_setup_and_method', ''), heading_base)
-    results = _process_results_markdown(paper.get('main_results_and_physics', ''), heading_base)
-    take_home = _process_results_markdown(paper.get('take_home_message', ''), heading_base)
-
-    md = f"{h} {title}\n\n"
-    md += f"**作者**: {authors}  \n"
-    md += f"**日期**: {date}  \n"
-    if journal:
-        md += f"**期刊**: {journal}  \n"
-    if publisher:
-        md += f"**出版社**: {publisher}  \n"
-    if doi:
-        md += f"**DOI**: [{doi}](https://doi.org/{doi})  \n"
-    if matched_subdomains:
-        labels = paper.get("_subdomain_labels", {})
-        display = [labels.get(k, k) for k in matched_subdomains]
-        md += f"**相关方向**: {', '.join(display)}  \n"
-    if page_url:
-        md += f"**页面**: [链接]({page_url})  \n"
-    if pdf_url:
-        md += f"**PDF**: [下载]({pdf_url})  \n"
-    md += "\n"
-    if abstract:
-        md += f"**原文摘要**: {abstract}\n\n"
-    md += f"**一句话**: {one_sentence}\n\n"
-    md += f"{sub_h} 研究动机与目标\n\n{motivation}\n\n"
-    md += f"{sub_h} 关键方法与设置\n\n{method}\n\n"
-    md += f"{sub_h} 主要结果与物理内涵\n\n{results}\n\n"
-    md += f"{sub_h} 要点总结\n\n{take_home}\n\n"
-    md += "---\n\n"
-    return md
-
-
-# ======================================================================
 # 子领域标签映射
 # ======================================================================
-
 
 # 子领域 key → 中文短标签的固定映射。
 #
@@ -398,213 +361,356 @@ def _build_subdomain_labels(scope_definition: Dict) -> Dict[str, str]:
     return labels
 
 
-def generate_markdown(papers: Union[Dict, List[Dict]], toc: bool = False,
-                      results_heading_base: int = 4) -> str:
-    """
-    生成 Markdown 格式的报告。
+# ======================================================================
+# 模板基础设施（Jinja2）
+# ======================================================================
 
-    生成逻辑：
-    1. 如果 papers 是单篇字典，包装为列表统一处理。
-    2. 多篇时生成 # 一级标题"文献报告"和可选的目录（TOC）。
-       - TOC 通过 Markdown 链接 + 锚点（anchor）实现，锚点为标题或将空格替换为 - 后得到（会损失中文支持）。
-    3. 遍历每篇论文，调用 _make_markdown_section 生成片段并拼接。
+_template_env_cache: Optional[Environment] = None
+
+
+def _get_template_env() -> Environment:
+    """懒加载 Jinja2 Environment（FileSystemLoader 指向 ``REPORT_TEMPLATE_DIR``）。
+
+    设计要点：
+    - **不开启 autoescape**：HTML 转义已由 ``_process_text_for_html`` 完成，
+      避免 Jinja2 二次转义导致 ``&lt;`` 等实体被错误转义。
+    - ``keep_trailing_newline=True``：保留模板文件末尾的换行符，避免拼接时缺行。
+    - ``trim_blocks=True`` / ``lstrip_blocks=True``：消除 Jinja2 标签行对
+      空行的干扰，使模板作者更易控制输出格式。
+    - 单次进程内复用同一 Environment 以利用 Jinja2 的模板编译缓存。
+
+    Returns
+    -------
+    Environment
+    配置好的 Jinja2 Environment 实例。
+    """
+    global _template_env_cache
+    if _template_env_cache is not None:
+        return _template_env_cache
+    loader = FileSystemLoader(str(REPORT_TEMPLATE_DIR))
+    _template_env_cache = Environment(
+        loader=loader,
+        autoescape=False,
+        keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    return _template_env_cache
+
+
+def _load_style_css() -> str:
+    """读取 ``templates/report/html/style.css`` 原始内容。
+
+    用于内联到完整 HTML 文档的 ``<style>`` 块中。设计目标：让样式修改只
+    需编辑单个 CSS 文件，不必改 Python 端。
+
+    Returns
+    -------
+    str
+        CSS 文本（utf-8 解码）。
+    """
+    css_path = Path(REPORT_TEMPLATE_DIR) / "html" / "style.css"
+    return css_path.read_text(encoding="utf-8")
+
+
+# ======================================================================
+# Payload 构造器（Python 端做所有文本处理，模板只负责排版）
+# ======================================================================
+
+
+def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
+                           heading_base: int = 4) -> Dict:
+    """为 Markdown 模板准备干净的论文字典。
+
+    文本处理：
+    - 普通字段（abstract, one_sentence）走 ``_process_text_for_markdown``。
+    - LLM 总结字段（motivation, method, results, take_home, reason）
+      走 ``_process_results_markdown(text, heading_base)``，
+      完成 LaTeX 修复 + 字面量换行 + 内部标题重定级。
+
+    子领域 key → 中文短标签的映射：
+    - 优先使用 ``scope_definition``（来自 ``keywords.yaml``）。
+    - 缺失时回退到 ``paper.get('_subdomain_labels', {})``（兼容旧调用方）。
+
+    Parameters
+    ----------
+    paper : Dict
+        原始论文字典。
+    scope_definition : dict, optional
+        子领域定义字典（``keywords.yaml`` 的 ``scope_definition`` 字段）。
+    heading_base : int
+        main_results_and_physics 等字段内部标题的起始级别（默认 4）。
+
+    Returns
+    -------
+    Dict
+        模板可直接使用的字段字典（见 templates/report/markdown/paper.md.j2）。
+    """
+    relevance_reason = paper.get('relevance_reason', '')
+
+    if scope_definition is not None:
+        labels = _build_subdomain_labels(scope_definition)
+    else:
+        labels = paper.get('_subdomain_labels', {})
+    matched_subdomains_labels = [
+        labels.get(k, k) for k in paper.get('matched_subdomains', [])
+    ]
+
+    return {
+        'title': paper.get('title', '无标题'),
+        'authors': _authors_str(paper.get('authors', [])),
+        'date': paper.get('date', '未知') or '未知',
+        'doi': paper.get('doi', ''),
+        'journal': paper.get('journal', ''),
+        'publisher': paper.get('publisher', ''),
+        'relevance_category': paper.get('relevance_category', ''),
+        'relevance_reason': (
+            _process_results_markdown(relevance_reason, heading_base)
+            if relevance_reason else ""
+        ),
+        'matched_subdomains_labels': matched_subdomains_labels,
+        'page_url': paper.get('page_url', ''),
+        'pdf_url': paper.get('pdf_url', ''),
+        'abstract': _process_text_for_markdown(paper.get('abstract', '')),
+        'one_sentence': _process_text_for_markdown(paper.get('one_sentence', '')),
+        'motivation_and_goal': _process_results_markdown(
+            paper.get('motivation_and_goal', ''), heading_base),
+        'key_setup_and_method': _process_results_markdown(
+            paper.get('key_setup_and_method', ''), heading_base),
+        'main_results_and_physics': _process_results_markdown(
+            paper.get('main_results_and_physics', ''), heading_base),
+        'take_home_message': _process_results_markdown(
+            paper.get('take_home_message', ''), heading_base),
+    }
+
+
+def _make_paper_payload_html(paper: Dict, scope_definition: Optional[Dict] = None) -> Dict:
+    """为 HTML 模板准备干净的论文字典。
+
+    文本处理：所有用户可控字段走 ``_process_text_for_html``（LaTeX 修复 +
+    HTML 转义 + \\n→<br>）。标题不重定级（HTML 模式不使用 Markdown 标题语法）。
+
+    子领域标签映射逻辑同 ``_make_paper_payload_md``。
+
+    Parameters
+    ----------
+    paper : Dict
+        原始论文字典。
+    scope_definition : dict, optional
+        子领域定义字典。
+
+    Returns
+    -------
+    Dict
+        模板可直接使用的字段字典（见 templates/report/html/paper.html.j2）。
+    """
+    if scope_definition is not None:
+        labels = _build_subdomain_labels(scope_definition)
+    else:
+        labels = paper.get('_subdomain_labels', {})
+    matched_subdomains_labels = [
+        labels.get(k, k) for k in paper.get('matched_subdomains', [])
+    ]
+
+    return {
+        'title': _process_text_for_html(paper.get('title', '无标题')),
+        'authors': _html_escape(_authors_str(paper.get('authors', []))),
+        'date': _html_escape(paper.get('date', '未知') or '未知'),
+        'doi': _html_escape(paper.get('doi', '')),
+        'journal': _html_escape(paper.get('journal', '')),
+        'publisher': _html_escape(paper.get('publisher', '')),
+        'relevance_category': _html_escape(paper.get('relevance_category', '')),
+        'relevance_reason': _process_text_for_html(
+            paper.get('relevance_reason', '')),
+        'matched_subdomains_labels': matched_subdomains_labels,
+        'page_url': _safe_url(paper.get('page_url', '')),
+        'pdf_url': _safe_url(paper.get('pdf_url', '')),
+        'abstract': _process_text_for_html(paper.get('abstract', '')),
+        'one_sentence': _process_text_for_html(paper.get('one_sentence', '')),
+        'motivation_and_goal': _process_text_for_html(
+            paper.get('motivation_and_goal', '')),
+        'key_setup_and_method': _process_text_for_html(
+            paper.get('key_setup_and_method', '')),
+        'main_results_and_physics': _process_text_for_html(
+            paper.get('main_results_and_physics', '')),
+        'take_home_message': _process_text_for_html(
+            paper.get('take_home_message', '')),
+    }
+
+
+# ======================================================================
+# 相关性等级说明（薄包装：测试直接调用，内部委托给模板宏）
+# ======================================================================
+
+
+def _relevance_legend_md() -> str:
+    """生成报告头部的相关性等级图例（Markdown blockquote 形式）。
+
+    实际从 ``templates/report/markdown/legend.md.j2`` 加载 ``legend()`` 宏渲染。
+    保留为模块级公共函数是为了让测试和外部调用方无需感知模板细节。
+
+    Returns
+    -------
+    str
+        以 ``>`` 引用块开头的多行 Markdown 文本，可直接拼接到报告顶端。
+    """
+    env = _get_template_env()
+    template = env.get_template('markdown/legend.md.j2')
+    return template.module.legend()
+
+
+def _relevance_legend_html() -> str:
+    """生成报告头部的相关性等级图例（HTML blockquote 形式）。
+
+    实际从 ``templates/report/html/legend.html.j2`` 加载 ``legend()`` 宏渲染。
+    视觉样式由 ``templates/report/html/style.css`` 中的
+    ``blockquote.relevance-legend`` 块控制。
+
+    Returns
+    -------
+    str
+        ``<blockquote>`` 片段，可直接拼接到 HTML 报告 body 顶端。
+    """
+    env = _get_template_env()
+    template = env.get_template('html/legend.html.j2')
+    return template.module.legend()
+
+
+# ======================================================================
+# 报告排序
+# ======================================================================
+
+# 相关性等级 → 排序优先级（A 最先；空值/未知排末尾）。
+# 与 Phase E LLM Prompt 的 A/B/C/D 分类对应。
+_RELEVANCE_RANK: Dict[str, int] = {"A": 0, "B": 1, "C": 2, "D": 3}
+
+
+def _sort_papers(papers: List[Dict]) -> List[Dict]:
+    """
+    按「相关性等级 → 日期倒序」对论文列表排序（就地修改，返回同一列表）。
+
+    排序规则（2026-07-25 起）：
+    1. 一级 key：``relevance_category``，A → B → C → D 顺序；
+       缺字段或未知值（A/B/C/D 之外）排到末尾，不影响其他论文。
+    2. 二级 key：``date`` 字符串倒序（最新在前）；空日期排到该 category 末尾。
+       直接对 ISO 日期字符串（YYYY-MM-DD）做字符串倒序等同于时间倒序，
+       无需 datetime 解析。
+
+    使用 Python ``list.sort`` 的稳定性：先按 date 倒序排，再按 category
+    升序排，二次 sort 不打乱同 category 内的 date 顺序。
+
+    Parameters
+    ----------
+    papers : list of dict
+        论文字典列表（每项需含 ``relevance_category`` 与 ``date`` 字段，
+        缺则用空字符串兜底）。
+
+    Returns
+    -------
+    list of dict
+        排序后的同一列表（in-place + return，便于链式调用）。
+    """
+    # 一级：date 倒序（字符串字典序与时间序一致，前缀越长越新越靠前）
+    papers.sort(key=lambda p: p.get("date", "") or "", reverse=True)
+    # 二级：relevance_category 升序（rank 越小越靠前，未知 rank=99 排末位）
+    papers.sort(key=lambda p: _RELEVANCE_RANK.get(p.get("relevance_category", "") or "", 99))
+    return papers
+
+
+# ======================================================================
+# Markdown 生成（通过 Jinja2 模板渲染）
+# ======================================================================
+
+
+def generate_markdown(papers: Union[Dict, List[Dict]], toc: bool = False,
+                      results_heading_base: int = 4,
+                      scope_definition: Optional[Dict] = None) -> str:
+    """生成 Markdown 格式的报告。
+
+    渲染 ``templates/report/markdown/document.md.j2``，模板负责：
+    1. 头部相关性等级图例（始终在最前）。
+    2. 多篇论文时的 ``# 文献报告`` 一级标题 + 可选 ``## 目录``。
+    3. 循环渲染每篇论文（``markdown/paper.md.j2`` 的 ``paper()`` 宏）。
+
+    Python 端仅做数据预处理：文本处理 + 子领域标签映射。
 
     Args:
         papers: 单篇论文字典或列表。
         toc: 是否生成目录（仅在 papers 为多篇列表时生效）。
-        results_heading_base: main_results_and_physics 内部标题的起始级别，默认为 4（####）。
+        results_heading_base: main_results_and_physics 内部标题的起始级别（默认 4）。
+        scope_definition: dict, optional
+            子领域定义字典（来自 keywords.yaml 的 ``scope_definition`` 字段）。
+            传入后用于生成子领域中文短标签。
 
     Returns:
         生成的 Markdown 报告字符串。
     """
     if isinstance(papers, dict):
         papers = [papers]
-
-    doc = ""
-    if len(papers) > 1:
-        doc += "# 文献报告\n\n"
-        if toc:
-            doc += "## 目录\n\n"
-            for i, p in enumerate(papers, start=1):
-                title = p.get('title', f'论文{i}')
-                # 简单生成锚点，替换空格
-                # 注意：这种方式对中文标题不完美，但 Markdown 渲染器通常能处理
-                anchor = title.replace(' ', '-')
-                doc += f"- [{i}. {title}](#{anchor})\n"
-            doc += "\n---\n\n"
-
-    for p in papers:
-        doc += _make_markdown_section(p, heading_base=results_heading_base)
-
-    return doc
+    # 统一排序：相关性等级 A 先 → 同级日期倒序（详见 _sort_papers 注释）
+    _sort_papers(papers)
+    payloads = [
+        _make_paper_payload_md(p, scope_definition=scope_definition,
+                               heading_base=results_heading_base)
+        for p in papers
+    ]
+    env = _get_template_env()
+    template = env.get_template('markdown/document.md.j2')
+    return template.render(papers=payloads, toc=toc)
 
 
 # ======================================================================
-# HTML 生成
+# HTML 生成（通过 Jinja2 模板渲染）
 # ======================================================================
 
-def _make_html_section(paper: Dict) -> str:
-    """
-    为单篇论文生成 HTML 片段。
 
-    生成的结构：
-    <section>
-      <h2>{标题}</h2>                     ← 固定 h2 二级标题
-      <p><strong>作者:</strong> ...</p>   ← 元信息
-      <p><strong>一句话:</strong> ...</p>
-      <h3>研究动机与目标</h3>             ← 使用 h3 三级标题
-      <p>...</p>
-      <h3>关键方法与设置</h3>
-      <p>...</p>
-      <h3>主要结果与物理内涵</h3>
-      <p>...</p>
-      <h3>要点总结</h3>
-      <p>...</p>
-    </section>
-    <hr>
+def generate_html(papers: Union[Dict, List[Dict]], full_document: bool = True,
+                  scope_definition: Optional[Dict] = None) -> str:
+    """生成 HTML 格式的报告。
 
-    字段处理：
-    - 普通文本字段经过 _process_text_for_html 处理（修复 LaTeX + HTML 转义 + \n→<br>）。
-    - 注意：HTML 模式下不对 Markdown 标题做重定级处理，因为 Markdown 标记在 HTML 中不被渲染。
-      如需 HTML 中的标题层次，应使用 Markdown → HTML 转换器。
-    """
-    title = _process_text_for_html(paper.get('title', '无标题'))
-    authors = _authors_str(paper.get('authors', []))
-    date = paper.get('date', '未知')
-    doi = paper.get('doi', '')
-    journal = paper.get('journal', '')
-    publisher = paper.get('publisher', '')
-    matched_subdomains = paper.get('matched_subdomains', [])
-    page_url = paper.get('page_url', '')
-    pdf_url = paper.get('pdf_url', '')
-    abstract = _process_text_for_html(paper.get('abstract', ''))
-    one_sentence = _process_text_for_html(paper.get('one_sentence', ''))
-    motivation = _process_text_for_html(paper.get('motivation_and_goal', ''))
-    method = _process_text_for_html(paper.get('key_setup_and_method', ''))
-    results = _process_text_for_html(paper.get('main_results_and_physics', ''))
-    take_home = _process_text_for_html(paper.get('take_home_message', ''))
-
-    html = f"<section>\n  <h2>{title}</h2>\n"
-    html += f"  <p><strong>作者:</strong> {authors}<br>\n"
-    html += f"  <strong>日期:</strong> {date}<br>\n"
-    if journal:
-        html += f"  <strong>期刊:</strong> {journal}<br>\n"
-    if publisher:
-        html += f"  <strong>出版社:</strong> {publisher}<br>\n"
-    if doi:
-        html += f"  <strong>DOI:</strong> <a href=\"https://doi.org/{doi}\">{doi}</a><br>\n"
-    if matched_subdomains:
-        labels = paper.get("_subdomain_labels", {})
-        display = [labels.get(k, k) for k in matched_subdomains]
-        html += f"  <strong>相关方向:</strong> {', '.join(display)}<br>\n"
-    if page_url:
-        html += f"  <strong>页面:</strong> <a href=\"{page_url}\">{page_url}</a><br>\n"
-    if pdf_url:
-        html += f"  <strong>PDF:</strong> <a href=\"{pdf_url}\">{pdf_url}</a></p>\n"
-    if abstract:
-        html += f"  <p><strong>原文摘要:</strong> {abstract}</p>\n"
-    html += f"  <p><strong>一句话:</strong> {one_sentence}</p>\n"
-    html += f"  <h3>研究动机与目标</h3>\n  <p>{motivation}</p>\n"
-    html += f"  <h3>关键方法与设置</h3>\n  <p>{method}</p>\n"
-    html += f"  <h3>主要结果与物理内涵</h3>\n  <p>{results}</p>\n"
-    html += f"  <h3>要点总结</h3>\n  <p>{take_home}</p>\n"
-    html += "</section>\n<hr>\n"
-    return html
-
-
-def generate_html(papers: Union[Dict, List[Dict]], full_document: bool = True) -> str:
-    """
-    生成 HTML 格式的报告。
-
-    生成逻辑：
-    1. 如果 papers 是单篇字典，包装为列表。
-    2. 遍历每篇论文，调用 _make_html_section 生成 <section> 片段并拼接为 body。
-    3. 如果 full_document=True，将 body 嵌入完整的 HTML5 文档模板（含内联 CSS 样式）。
-       否则只返回 body 内容（适合嵌入到已有页面中）。
-
-    内联 CSS 样式说明：
-    - 使用系统字体栈（Segoe UI, system-ui），在 Windows/macOS/Linux 上都有良好的渲染。
-    - 最大宽度 900px，居中显示，适合桌面阅读。
-    - section 卡片风格：白色背景、圆角、浅阴影，视觉上与论文元信息区分。
-    - 配色：标题用深蓝灰色（#2c3e50），链接用浅蓝色（#3498db）。
+    渲染 ``templates/report/html/document.html.j2``：
+    - ``full_document=True`` 时输出完整 HTML5 文档（含 ``<!DOCTYPE>``、``<head>``、
+      内联 ``<style>{{ style_css }}</style>``），CSS 来自
+      ``templates/report/html/style.css``。
+    - ``full_document=False`` 时仅返回 body 内部内容（适合嵌入到已有页面）。
 
     Args:
         papers: 单篇论文字典或列表。
-        full_document: 是否返回完整的 HTML 文档（含 <!DOCTYPE>, <head>, CSS 样式）。
-                       设为 False 时仅返回 body 内部内容，适合嵌入已有页面。
+        full_document: 是否返回完整 HTML 文档。
+                       设为 False 时仅返回 body 内部内容。
+        scope_definition: dict, optional
+            子领域定义字典。
 
     Returns:
-        生成的 HTML 字符串。
+        生成的 HTML 报告字符串。
     """
     if isinstance(papers, dict):
         papers = [papers]
-
-    body = ""
-    for p in papers:
-        body += _make_html_section(p)
-
-    if not full_document:
-        return body
-
-    # 完整 HTML 文档模板，包含响应式设计和面向中文阅读优化的排版
-    html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>文献报告</title>
-  <style>
-    body {{
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      line-height: 1.6;
-      max-width: 900px;
-      margin: 40px auto;
-      padding: 0 20px;
-      color: #333;
-      background: #fafafa;
-    }}
-    h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
-    h2 {{ color: #2c3e50; }}
-    h3 {{ color: #34495e; }}
-    section {{
-      background: white;
-      padding: 20px 25px;
-      margin: 30px 0;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }}
-    hr {{
-      border: none;
-      height: 1px;
-      background: #ddd;
-      margin: 40px 0;
-    }}
-    a {{ color: #3498db; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    p {{ margin: 0.5em 0; }}
-    strong {{ color: #555; }}
-  </style>
-</head>
-<body>
-  <h1>文献报告</h1>
-{body}
-</body>
-</html>"""
-    return html
+    # 统一排序：相关性等级 A 先 → 同级日期倒序（详见 _sort_papers 注释）
+    _sort_papers(papers)
+    payloads = [
+        _make_paper_payload_html(p, scope_definition=scope_definition)
+        for p in papers
+    ]
+    style_css = _load_style_css() if full_document else ""
+    env = _get_template_env()
+    template = env.get_template('html/document.html.j2')
+    return template.render(papers=payloads, full_document=full_document,
+                           style_css=style_css)
 
 
 # ======================================================================
 # 统一报告生成接口
 # ======================================================================
 
+
 def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
                     toc: bool = False, full_html: bool = True,
                     results_heading_base: int = 4,
                     scope_definition: Optional[Dict] = None) -> str:
-    """
-    统一的报告生成接口。
+    """统一的报告生成接口。
 
-    根据 format 参数自动路由到 Markdown 或 HTML 生成函数。
+    根据 ``format`` 参数自动路由到 Markdown 或 HTML 生成函数。
 
     Args:
         papers: 单篇论文字典或列表。字典需包含 title, authors, one_sentence 等字段。
@@ -614,8 +720,7 @@ def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
         results_heading_base: 仅 Markdown 格式生效。main_results_and_physics 内部标题的起始级别，默认为 4。
         scope_definition: dict, optional
             子领域定义字典（来自 keywords.yaml 的 ``scope_definition`` 字段）。
-            传入后用于生成子领域中文短标签（``_subdomain_labels``），
-            平铺显示在每篇论文的元数据行中。
+            传入后用于生成子领域中文短标签。
 
     Returns:
         生成的报告字符串。
@@ -625,16 +730,16 @@ def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
     """
     fmt = format.lower()
     if fmt in ('markdown', 'md'):
-        # 如果提供了 scope_definition，为每篇论文添加子领域中文标签
-        if scope_definition:
-            labels = _build_subdomain_labels(scope_definition)
-            if isinstance(papers, dict):
-                papers = {**papers, "_subdomain_labels": labels}
-            else:
-                papers = [{**p, "_subdomain_labels": labels} for p in papers]
-        return generate_markdown(papers, toc=toc, results_heading_base=results_heading_base)
+        return generate_markdown(
+            papers, toc=toc,
+            results_heading_base=results_heading_base,
+            scope_definition=scope_definition,
+        )
     elif fmt == 'html':
-        return generate_html(papers, full_document=full_html)
+        return generate_html(
+            papers, full_document=full_html,
+            scope_definition=scope_definition,
+        )
     else:
         raise ValueError(f"不支持的格式: {format}，可选 'markdown' 或 'html'")
 
@@ -648,6 +753,11 @@ if __name__ == '__main__':
         "doi": "10.1234/example.2025.001",
         "page_url": "https://journal.example.com/article/001",
         "pdf_url": "https://journal.example.com/article/001/pdf",
+        "journal": "Nature Physics",
+        "publisher": "Nature",
+        "matched_subdomains": ["acceleration"],
+        "relevance_category": "A",
+        "relevance_reason": "使用 \\nabla B 约束输运方法。",
         "one_sentence": "本文采用时间分辨角分辨光电子能谱（trARPES），研究了单层WSe₂中激子凝聚的动力学过程，得到了凝聚体形成时间约为 200\\,fs 的核心结论。",
         "motivation_and_goal": "激子凝聚是否在室温下存在仍存争议。\\citet{ref1} 报道了稳态信号，但缺少超快动力学证据。本文目标：直接观测凝聚形成与退相干的时间尺度。",
         "key_setup_and_method": "使用 800\\,nm 泵浦、极紫外探测的 trARPES 系统，时间分辨率 50\\,fs。样品为 hBN 封装的单层 WSe₂，温度 80\\,K。核心公式：\\Delta n(k,t) \\propto |\\psi(k,t)|^2。",
@@ -655,15 +765,20 @@ if __name__ == '__main__':
         "main_results_and_physics": "# 凝聚形成时间\n泵浦后 180~220\\,fs 建立，指数上升 $\\tau_r = 60\\pm 10$\\,fs。\n\n# 动量分布窄化\nFWHM 从 0.3\\,Å⁻¹ 缩小到 0.1\\,Å⁻¹，符合宏观相干态。\n\n# 退相干机制\n退相干时间约 1.2\\,ps，归因于激子-声子散射。\n\n# 阈值密度\n临界密度 $n_c \\approx 1.2\\times 10^{12}$ cm⁻²，与 BKT 相变一致。",
         "take_home_message": "首次用超快 trARPES 直接观测到激子凝聚的时间动力学，为室温激子器件提供了关键参数。局限在于未能定量分离缺陷对退相干的影响。"
     }
+    scope = {
+        "acceleration": {"description": "本方向研究高功率激光与靶相互作用驱动离子加速。", "topics": []},
+    }
 
     # 生成 Markdown（自动将 # 标题降为 #### 标题）
     # _adjust_headings 检测到内部 min_level=1, base_level=4 → shift=3 → # → ####
-    md = generate_report(paper_example, format='markdown', results_heading_base=4)
+    md = generate_report(paper_example, format='markdown',
+                         results_heading_base=4, scope_definition=scope)
     print("=== Markdown (标题自动降级) ===")
     print(md)
 
     # 也可以改为从 3 级开始
     # _adjust_headings 检测到内部 min_level=1, base_level=3 → shift=2 → # → ###
-    md2 = generate_report(paper_example, format='markdown', results_heading_base=3)
+    md2 = generate_report(paper_example, format='markdown',
+                          results_heading_base=3, scope_definition=scope)
     print("\n=== Markdown (标题从 ### 开始) ===")
     print(md2)

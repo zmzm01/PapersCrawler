@@ -1,0 +1,18 @@
+{# ==========================================================================
+   templates/report/html/legend.html.j2
+   --------------------------------------------------------------------------
+   报告头部的「相关性等级说明」图例（HTML blockquote 形式）。
+
+   视觉样式由 html/style.css 中的 blockquote.relevance-legend 块控制。
+   ========================================================================== #}
+{% macro legend() -%}
+  <blockquote class="relevance-legend">
+    <p><strong>相关性等级说明</strong></p>
+    <ul>
+      <li><strong>A</strong>（直接相关）：直接研究课题组核心方向的理论 / 实验 / 模拟</li>
+      <li><strong>B</strong>（间接相关）：研究相关技术或方法，对课题组有潜在参考价值</li>
+      <li><strong>C</strong>（同领域但距离远）：同领域但距离核心方向较远</li>
+      <li><strong>D</strong>（不相关）：与课题组方向不相关</li>
+    </ul>
+  </blockquote>
+{%- endmacro %}

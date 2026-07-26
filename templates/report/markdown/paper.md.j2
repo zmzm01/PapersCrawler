@@ -1,0 +1,56 @@
+{# ==========================================================================
+   templates/report/markdown/paper.md.j2
+   --------------------------------------------------------------------------
+   单篇论文的 Markdown 片段宏。Python 端已完成所有文本处理
+   （LaTeX 修复、字面量换行、HTML 转义、标题重定级、强制换行转换等），
+   模板仅负责排版输出。
+
+   可用字段（paper dict，键不存在时用 default 过滤器兜底）：
+     - title, authors (str), date, doi, publisher
+     - relevance_category, relevance_reason
+     - page_url
+     - abstract, one_sentence
+     - motivation_and_goal, key_setup_and_method,
+       main_results_and_physics, take_home_message (均已 _process_results_markdown 处理)
+
+   2026-07-25 元数据重排：原顺序 作者/日期/期刊/出版社/相关性等级/判断理由/DOI/相关方向/页面/PDF
+   改为 期刊/作者/日期/DOI/页面/相关性等级/判断理由/原文摘要/一句话。
+   - 删：出版社（与 期刊 信息重叠，保留更具体的期刊名）、相关方向（判定过宽，
+     判断理由 已能说明问题）、PDF（HTML 报告内 Markdown 链接渲染差，
+     邮件中点击率低，保留 页面 + DOI 足够用户回溯）。
+   - 后面 4 个 H3 子节（研究动机/方法/结果/要点）顺序保持不变。
+   ========================================================================== #}
+{% macro paper(p) -%}
+## {{ p.title|default('无标题') }}
+
+{% if p.journal %}**期刊**: {{ p.journal }}  
+{% endif %}{% if p.authors %}**作者**: {{ p.authors|default('') }}  
+{% endif %}{% if p.date %}**日期**: {{ p.date|default('未知') }}  
+{% endif %}{% if p.doi %}**DOI**: [{{ p.doi }}](https://doi.org/{{ p.doi }})  
+{% endif %}{% if p.page_url %}**页面**: [链接]({{ p.page_url }})  
+{% endif %}{% if p.relevance_category %}**相关性等级**: {{ p.relevance_category }}  
+{% endif %}{% if p.relevance_reason %}**判断理由**: {{ p.relevance_reason }}  
+{% endif %}{% if p.abstract %}
+**原文摘要**: {{ p.abstract }}
+
+{% endif %}**一句话**: {{ p.one_sentence|default('') }}
+
+### 研究动机与目标
+
+{{ p.motivation_and_goal|default('') }}
+
+### 关键方法与设置
+
+{{ p.key_setup_and_method|default('') }}
+
+### 主要结果与物理内涵
+
+{{ p.main_results_and_physics|default('') }}
+
+### 要点总结
+
+{{ p.take_home_message|default('') }}
+
+---
+
+{%- endmacro %}

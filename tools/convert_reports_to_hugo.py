@@ -25,6 +25,25 @@ SITE_DIR = PROJECT_ROOT / "site"
 CONTENT_DIR = SITE_DIR / "content" / "posts"
 AUTO_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "auto"
 USER_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "user"
+HUGO_CONFIG = SITE_DIR / "hugo.yaml"
+
+
+def _get_base_url() -> str:
+    """Read baseURL from site/hugo.yaml; fall back to a sensible default.
+
+    Avoids hard-coding the GitHub Pages URL so the script can be reused for
+    other deployments (custom domain, staging, etc.).
+    """
+    try:
+        import yaml  # type: ignore
+        with open(HUGO_CONFIG, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        url = (cfg.get("baseURL") or "").strip().strip('"').strip("'")
+        if url:
+            return url
+    except (ImportError, FileNotFoundError, OSError):
+        pass
+    return "https://zmzm01.github.io/PapersCrawler/"
 
 
 def _ensure_ghp_import():
@@ -215,10 +234,9 @@ def main():
             sources.append(rp)
         else:
             # Try auto/ and user/ with stem matching
+            stem = rp.name if rp.suffix else args.report
             for d in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
-                candidate = d / f"{rp}.md"
-                if not rp.suffix:
-                    candidate = d / f"{args.report}.md"
+                candidate = d / f"{stem}.md"
                 if candidate.exists():
                     sources.append(candidate)
                     break
@@ -293,7 +311,7 @@ def main():
         subprocess.check_call([
             "ghp-import", "-r", "public", "-p", "-f", str(public_dir),
         ])
-        print("Deployed: https://zmzm01.github.io/PapersCrawler/")
+        print(f"Deployed: {_get_base_url()}")
 
 
 if __name__ == "__main__":
