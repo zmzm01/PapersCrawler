@@ -161,7 +161,7 @@ h3 {
 .badge-success { background: #dcfce7; color: #166534; }
 .badge-failed  { background: #fecaca; color: #991b1b; }
 .badge-skipped { background: #fef3c7; color: #92400e; }
-.badge-pending { background: #f1f5f9; color: #475569; }
+
 .badge-warning { background: #dbeafe; color: #1e40af; }
 
 /* Buttons */
@@ -192,71 +192,6 @@ h3 {
 .btn-disabled, .btn:disabled {
   opacity: 0.4; cursor: not-allowed; pointer-events: none;
   background: #94a3b8 !important; color: #e2e8f0 !important;
-}
-
-/* Pipeline */
-.pipeline-control {
-  margin-bottom: 1rem;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.running-indicator {
-  font-size: 0.9rem;
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.phase-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--card-bg);
-  border-radius: 8px;
-  overflow: hidden;
-  margin-bottom: 2rem;
-}
-
-.phase-table th, .phase-table td {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-.phase-table th {
-  background: #f8fafc;
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-
-/* Log viewer */
-.log-viewer {
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-  font-size: 0.8rem;
-  line-height: 1.5;
-  padding: 1rem;
-  border-radius: 8px;
-  overflow: auto;
-  max-height: 600px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.log-controls {
-  margin-bottom: 0.75rem;
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.log-controls select {
-  padding: 0.3rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.85rem;
 }
 
 /* Report form */
@@ -332,43 +267,7 @@ h3 {
   word-break: break-all;
 }
 
-/* Hero / Home page */
-.hero {
-  max-width: 900px;
-}
-.hero h2 {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-}
-.hero-subtitle {
-  color: var(--text-muted);
-  font-size: 1.1rem;
-  margin-bottom: 2rem;
-}
-.hero-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
-}
-.hero-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1.5rem;
-}
-.hero-card h3 {
-  margin: 0 0 0.5rem;
-}
-.hero-card p {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  margin-bottom: 1rem;
-}
-.hero-stats {
-  display: flex;
-  gap: 1rem;
-}
+/* Pipeline charts */
 
 /* Pipeline charts */
 .chart-grid {
@@ -401,6 +300,7 @@ h3 {
 .chart-bar.failed  { background: var(--failed); }
 .chart-bar.skipped { background: var(--skipped); }
 .chart-bar.pending { background: var(--pending); }
+
 .chart-counts {
   width: 10rem;
   font-size: 0.75rem;
@@ -411,6 +311,7 @@ h3 {
 .c-failed  { color: var(--failed); }
 .c-skipped { color: var(--skipped); }
 .c-pending { color: var(--pending); }
+
 .chart-legend {
   margin-top: 0.5rem;
   font-size: 0.8rem;
@@ -419,17 +320,6 @@ h3 {
   color: var(--text-muted);
 }
 
-
-.pipeline-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.phase-actions {
-  display: flex;
-  gap: 0.5rem;
-}
 
 /* Papers table */
 .papers-table {
@@ -684,27 +574,10 @@ h3 {
 
 /* ── Icon helpers ─────────────────────────────────────────────────── */
 .icon-mr { margin-right: 0.8rem; width: 1.2rem; text-align: center; }
-.hero h2 .icon-mr { margin-right: 1.4rem; }
 .icon-left { margin-right: 0.6rem; }
 
 /* Sidebar icons */
 .sidebar-nav li a i { width: 1.5rem; text-align: center; margin-right: 1rem; }
-
-/* ── Home: intro section ─────────────────────────────────────────── */
-.home-section { margin-bottom: 2.5rem; }
-.home-section h3 { font-size: 1.3rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--primary); display: inline-block; }
-.home-section p { font-size: 1.05rem; line-height: 1.8; color: var(--text); margin-bottom: 0.75rem; max-width: 720px; }
-.home-section .intro-highlight { font-size: 1.15rem; color: var(--primary); font-weight: 700; }
-
-.tech-stack { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
-.tech-stack .tag { background: #eef2ff; color: #4338ca; padding: 0.35rem 0.85rem; border-radius: 20px; font-size: 0.9rem; font-weight: 500; }
-
-/* ── Home: quick start ───────────────────────────────────────────── */
-.qs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
-.qs-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
-.qs-card .qs-step { font-size: 0.75rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
-.qs-card .qs-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.5rem; }
-.qs-card code { display: block; background: #f1f5f9; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.8rem; color: var(--text); word-break: break-all; margin-top: 0.5rem; }
 
 /* ── Subscriptions page ──────────────────────────────────────────── */
 .send-report-bar { margin-bottom: 1.25rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
