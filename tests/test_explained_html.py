@@ -2,18 +2,20 @@
 Tests: Explained HTML report generator (report_explainer.py)
 
 Coverage:
-  - _format_weekday() — all 7 weekdays
-  - _collect_dashboard_data() — structure, counts, ordering
+  - _collect_dashboard_data() — structure, counts
   - write_explained_html() — happy path with real DB + template
-  - Template variable contract — phase_status (5 items, correct names),
-    weekly (7 items, ascending dates)
-  - Edge cases: empty DB, no data for a day
+  - Template variable contract — keys used by explained.html.j2
+  - Edge cases: empty DB
+
+History:
+  - 2026-07-25: Removed TestFormatWeekday, phase_status, weekly tests
+    (per user feedback — chart sections removed; the data collectors and
+    their tests are no longer needed).
 """
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -77,199 +79,25 @@ def db_with_data(db):
 
 
 # ======================================================================
-# _format_weekday tests
-# ======================================================================
-
-class TestFormatWeekday:
-    """Cover all 7 days of the week."""
-
-    def test_monday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 20)) == "Mon"
-
-    def test_tuesday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 21)) == "Tue"
-
-    def test_wednesday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 22)) == "Wed"
-
-    def test_thursday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 23)) == "Thu"
-
-    def test_friday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 24)) == "Fri"
-
-    def test_saturday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 25)) == "Sat"
-
-    def test_sunday(self):
-        from processors.report_explainer import _format_weekday
-        assert _format_weekday(date(2026, 7, 26)) == "Sun"
-
-
-# ======================================================================
 # _collect_dashboard_data tests
 # ======================================================================
 
 class TestCollectDashboardData:
-    """Structure, ordering, and count correctness."""
+    """Structure correctness (stats counters removed 2026-07-25)."""
 
     def test_structure_with_data(self, db_with_data):
-        """Returned dict must contain all required keys."""
+        """Returned dict must contain only the post-stats-removal keys."""
         from processors.report_explainer import _collect_dashboard_data
 
         data = _collect_dashboard_data(db_with_data, "2026-07-26")
+        # 2026-07-25 (2nd pass): stats grid removed, only prompts + meta remain.
         expected_keys = {
-            "date_str", "total_papers", "pending_report", "publishers_count",
-            "phases_count", "phase_status", "weekly",
-            "relevance_prompt", "summary_prompt", "generated_at",
+            "date_str", "relevance_prompt", "summary_prompt", "generated_at",
         }
         assert set(data.keys()) == expected_keys, (
+            f"Extra keys: {set(data.keys()) - expected_keys}; "
             f"Missing keys: {expected_keys - set(data.keys())}"
         )
-
-    def test_counts(self, db_with_data):
-        """Verify numeric aggregates match the fixture."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        assert data["total_papers"] == 7
-        # pending_report = summary success + A/B relevance + not reported → p1, p3, p7
-        assert data["pending_report"] == 3
-        # Distinct publishers: pub_a, pub_b, pub_c
-        assert data["publishers_count"] == 3
-        assert data["phases_count"] == 5
-
-    @pytest.mark.parametrize("expected_names", [
-        ["CrossRef", "Publisher", "Relevance", "MinerU", "Summary"],
-    ])
-    def test_phase_status_names(self, db_with_data, expected_names):
-        """Phase names must appear in the required order."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        names = [p["name"] for p in data["phase_status"]]
-        assert names == expected_names
-
-    def test_phase_status_length(self, db_with_data):
-        """Exactly 5 phase entries."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        assert len(data["phase_status"]) == 5
-
-    def test_phase_status_counts(self, db_with_data):
-        """CrossRef: 7 success; Publisher: 5 success, 1 failed, 1 pending."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        phases = {p["name"]: p for p in data["phase_status"]}
-
-        # CrossRef: 6 success (p4 pending), 1 pending
-        assert phases["CrossRef"]["success"] == 6
-        assert phases["CrossRef"]["failed"] == 0
-        assert phases["CrossRef"]["skipped"] == 0
-        assert phases["CrossRef"]["pending"] == 1
-
-        # Publisher: p2 failed, p4 pending, rest success
-        assert phases["Publisher"]["success"] == 5
-        assert phases["Publisher"]["failed"] == 1
-        assert phases["Publisher"]["pending"] == 1
-
-        # Relevance: p2 pending, rest success (but p2's status is 'pending')
-        # success: p1,p3,p5,p6,p7 = 5; pending: p2,p4 = 2
-        assert phases["Relevance"]["success"] == 5
-        assert phases["Relevance"]["pending"] == 2
-
-        # Summary: p1 success, p2 pending, p3 success, p4 pending,
-        #          p5 pending, p6 success, p7 success → 4 success, 3 pending
-        assert phases["Summary"]["success"] == 4
-        assert phases["Summary"]["pending"] == 3
-
-    def test_weekly_length(self, db_with_data):
-        """Exactly 7 entries (7 days)."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        assert len(data["weekly"]) == 7
-
-    def test_weekly_ascending_dates(self, db_with_data):
-        """Weekly dates must be in ascending order (earliest first)."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        dates = [w["date"] for w in data["weekly"]]
-        assert dates == sorted(dates), "Weekly dates not in ascending order"
-        # First date should be 20260720
-        assert dates[0] == "20260720"
-        assert dates[-1] == "20260726"
-
-    def test_weekly_weekdays(self, db_with_data):
-        """Verify weekday abbreviations for the known range."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        weekdays = [w["weekday"] for w in data["weekly"]]
-        expected = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        assert weekdays == expected
-
-    def test_weekly_reportable_counts(self, db_with_data):
-        """Reportable papers (A/B + summary success) per day."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        by_date = {w["date"]: w for w in data["weekly"]}
-
-        # 2026-07-20: paper 1 (A, success) → reportable=1
-        assert by_date["20260720"]["reportable"] == 1
-        # 2026-07-21: paper 2 (failed) → reportable=0
-        assert by_date["20260721"]["reportable"] == 0
-        # 2026-07-22: paper 3 (B, success) → reportable=1
-        assert by_date["20260722"]["reportable"] == 1
-        # 2026-07-23: paper 4 (all pending) → reportable=0
-        assert by_date["20260723"]["reportable"] == 0
-        # 2026-07-24: paper 5 (A, no summary) → reportable=0
-        assert by_date["20260724"]["reportable"] == 0
-        # 2026-07-25: paper 6 (C, success) → reportable=0
-        assert by_date["20260725"]["reportable"] == 0
-        # 2026-07-26: paper 7 (A, success) → reportable=1
-        assert by_date["20260726"]["reportable"] == 1
-
-    def test_weekly_failed_counts(self, db_with_data):
-        """Papers with any phase failed."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        by_date = {w["date"]: w for w in data["weekly"]}
-
-        # Only paper 2 (2026-07-21) has a failed phase
-        assert by_date["20260721"]["total_failed"] == 1
-        assert by_date["20260720"]["total_failed"] == 0
-
-    def test_empty_db(self, db):
-        """Empty database must return zeroes but valid structure."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db, "2026-07-26")
-        assert data["total_papers"] == 0
-        assert data["pending_report"] == 0
-        assert data["publishers_count"] == 0
-        assert len(data["phase_status"]) == 5
-        assert len(data["weekly"]) == 7
-        for p in data["phase_status"]:
-            assert p["success"] == 0
-            assert p["failed"] == 0
-            assert p["skipped"] == 0
-            assert p["pending"] == 0
-        for w in data["weekly"]:
-            assert w["reportable"] == 0
-            assert w["total_failed"] == 0
-            assert w["other"] == 0
 
 
 # ======================================================================
@@ -298,21 +126,32 @@ class TestWriteExplainedHtml:
 
         assert html_path.exists(), "HTML file was not created"
         content = html_path.read_text(encoding="utf-8")
-        assert len(content) > 1024, (
+        assert len(content) > 512, (
             f"HTML too small: {len(content)} bytes"
         )
 
-        # Check for required content
-        assert "报告解释" in content or "report" in content.lower()
-        assert "CrossRef" in content
-        assert "Publisher" in content
-        assert "Relevance" in content
-        assert "MinerU" in content
-        assert "Summary" in content
+        # Core content present
+        assert "报告解释" in content
         assert "RELEVANCE_PROMPT_MARKER" in content
         assert "SUMMARY_PROMPT_MARKER" in content
         assert "2026-07-26" in content
-        assert "Mon" in content or "Tue" in content
+
+        # 2026-07-25: chart sections removed → these markers must NOT appear
+        # 注意：CSS 中含 Menlo/Monaco/monospace，'Mon' 子串会假阳性，改为检查更具体的标记
+        assert "CrossRef" not in content, "phase chart 'CrossRef' leaked"
+        assert "Publisher" not in content, "phase chart 'Publisher' leaked"
+        assert "MinerU" not in content, "phase chart 'MinerU' leaked"
+        # 周历图例/标题（中文标记，比英文 weekday 子串更精确）
+        assert "近 7 天采集" not in content, "weekly chart title leaked"
+        assert "可报告" not in content, "weekly chart legend '可报告' leaked"
+        assert "处理失败" not in content, "weekly chart legend '处理失败' leaked"
+        # 阶段图例
+        assert "阶段状态" not in content, "phase chart title leaked"
+        assert "待处理" not in content, "phase chart legend '待处理' leaked"
+        # 2026-07-25 (2nd pass): stats grid removed → 这些 stat-card 标记不应出现
+        assert "总论文" not in content, "stat-card '总论文' leaked"
+        assert "待报告" not in content, "stat-card '待报告' leaked"
+        assert "出版社" not in content, "stat-card '出版社' leaked"
 
     def test_write_with_empty_db(self, db, tmp_path):
         """Empty database must still produce a valid HTML file."""
@@ -375,7 +214,7 @@ class TestWriteExplainedHtml:
 # ======================================================================
 
 class TestVariableContract:
-    """Validate the full dict returned by _collect_dashboard_data."""
+    """Validate the dict returned by _collect_dashboard_data."""
 
     @patch("processors.report_explainer.render_all_prompts",
            return_value={"relevance": "REL", "summary": "SUM"})
@@ -385,52 +224,15 @@ class TestVariableContract:
 
         data = _collect_dashboard_data(db_with_data, "2026-07-26")
 
-        # These 11 variables are used in explained.html.j2 (verified by grep)
+        # 2026-07-25 (2nd pass): 4 variables after stats grid removal
         required = {
             "date_str",          # {{ date_str }}
-            "total_papers",      # {{ total_papers }}
-            "pending_report",    # {{ pending_report }}
-            "publishers_count",  # {{ publishers_count }}
-            "phases_count",      # {{ phases_count }}
-            "phase_status",      # {% for phase in phase_status %}
-            "weekly",            # {% for day in weekly %}
             "relevance_prompt",  # {{ relevance_prompt | e }}
             "summary_prompt",    # {{ summary_prompt | e }}
             "generated_at",      # {{ generated_at }}
         }
         missing = required - set(data.keys())
         assert not missing, f"Template variables missing: {missing}"
-
-    @patch("processors.report_explainer.render_all_prompts",
-           return_value={"relevance": "REL", "summary": "SUM"})
-    def test_phase_status_dict_keys(self, mock_render, db_with_data):
-        """Each phase_status element must have the correct keys."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        required_keys = {"name", "success", "failed", "skipped", "pending"}
-        for i, phase in enumerate(data["phase_status"]):
-            missing = required_keys - set(phase.keys())
-            assert not missing, (
-                f"phase_status[{i}] ({phase.get('name', '?')}) "
-                f"missing keys: {missing}"
-            )
-
-    @patch("processors.report_explainer.render_all_prompts",
-           return_value={"relevance": "REL", "summary": "SUM"})
-    def test_weekly_dict_keys(self, mock_render, db_with_data):
-        """Each weekly element must have the correct keys."""
-        from processors.report_explainer import _collect_dashboard_data
-
-        data = _collect_dashboard_data(db_with_data, "2026-07-26")
-        required_keys = {"date", "weekday", "reportable",
-                         "total_failed", "other"}
-        for i, day in enumerate(data["weekly"]):
-            missing = required_keys - set(day.keys())
-            assert not missing, (
-                f"weekly[{i}] ({day.get('date', '?')}) "
-                f"missing keys: {missing}"
-            )
 
     @patch("processors.report_explainer.render_all_prompts",
            return_value={"relevance": "REL", "summary": "SUM"})

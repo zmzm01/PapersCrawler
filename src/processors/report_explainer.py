@@ -6,10 +6,16 @@ Explained HTML report generator.
 Produces an HTML page (``report_<date>_explained.html``) that accompanies
 the daily Markdown report, showing:
 
-- Dashboard summary: total papers, pending reports, publisher count
-- Phase status breakdown for all 5 pipeline stages
-- 7-day collection history with reportable / failed / other counts
 - Full Phase E (relevance) and Phase F (summary) prompt snapshots
+
+History
+-------
+- 2026-07-25 (1st pass): Removed phase status chart and 7-day collection chart
+  (per user feedback — no one reads them). Kept stats grid + prompt
+  snapshots as the only "explain why this report looks this way" content.
+- 2026-07-25 (2nd pass): Removed stats grid (total/pending/publishers) per
+  same user feedback. Page now contains only the prompt snapshots, which is
+  what readers actually want when cross-checking the report's judgements.
 
 Dependencies
 ------------
@@ -19,48 +25,14 @@ Dependencies
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from processors.paper_report_generator import _get_template_env
 from processors.prompt_explainer import render_all_prompts
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Phase status column mapping — order must match the template's expectation:
-#   ["CrossRef", "Publisher", "Relevance", "MinerU", "Summary"]
-# ---------------------------------------------------------------------------
-_PHASE_CONFIGS: List[Dict[str, str]] = [
-    {"name": "CrossRef",  "status_col": "cr_metadata_fetched_status"},
-    {"name": "Publisher", "status_col": "publisher_page_fetched_status"},
-    {"name": "Relevance", "status_col": "llm_relevance_status"},
-    {"name": "MinerU",    "status_col": "mineru_parse_status"},
-    {"name": "Summary",   "status_col": "llm_summary_status"},
-]
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _format_weekday(d: date) -> str:
-    """Return a 3-letter English weekday abbreviation.
-
-    Parameters
-    ----------
-    d : date
-        Any ``datetime.date`` instance.
-
-    Returns
-    -------
-    str
-        ``"Mon"``, ``"Tue"``, ``"Wed"``, ``"Thu"``, ``"Fri"``, ``"Sat"``,
-        or ``"Sun"``.
-    """
-    weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    return weekdays[d.weekday()]
 
 
 # ---------------------------------------------------------------------------
@@ -72,19 +44,19 @@ def _collect_dashboard_data(db, date_str: str) -> Dict[str, Any]:
 
     Queries the database for:
 
-    - **total_papers** — all papers in the database.
-    - **pending_report** — papers with successful summary + A/B relevance but not yet reported.
-    - **publishers_count** — distinct non-empty ``publisher`` values.
-    - **phase_status** — success/failed/skipped/pending counts per stage.
-    - **weekly** — 7-day daily aggregates ending on ``date_str``.
     - **relevance_prompt** / **summary_prompt** — rendered via
       :func:`~processors.prompt_explainer.render_all_prompts`.
     - **generated_at** — current wall-clock timestamp.
 
+    2026-07-25: removed all stats counters (total_papers / pending_report /
+    publishers_count) per user feedback — the stats grid was not useful for
+    readers. The function no longer takes meaningful use of ``db``, but the
+    parameter is kept for API stability and future extensibility.
+
     Parameters
     ----------
     db : DatabaseClient
-        Open database client (must have an active ``conn``).
+        Open database client (kept for API stability; no longer queried).
     date_str : str
         Report date in ``YYYY-MM-DD`` format.
 
@@ -92,117 +64,12 @@ def _collect_dashboard_data(db, date_str: str) -> Dict[str, Any]:
     -------
     dict
         Flat dictionary ready to pass to ``template.render(**data)``.
-        See the module docstring for all keys.
     """
-    conn = db.conn
-
-    # ---- Total papers ----
-    total_papers: int = conn.execute(
-        "SELECT COUNT(*) FROM papers"
-    ).fetchone()[0]
-
-    # ---- Pending report: summary success + A/B relevance + not yet reported ----
-    pending_report: int = conn.execute(
-        "SELECT COUNT(*) FROM papers "
-        "WHERE llm_summary_status = 'success' "
-        "  AND report_date IS NULL "
-        "  AND llm_relevance_status = 'success' "
-        "  AND llm_relevance_category IN ('A', 'B')"
-    ).fetchone()[0]
-
-    # ---- Distinct publishers ----
-    publishers_count: int = conn.execute(
-        "SELECT COUNT(DISTINCT publisher) FROM papers "
-        "WHERE publisher IS NOT NULL AND publisher != ''"
-    ).fetchone()[0]
-
-    # ---- Per-phase status counts ----
-    phase_status: List[Dict[str, Any]] = []
-    for cfg in _PHASE_CONFIGS:
-        rows = conn.execute(
-            f"SELECT COALESCE({cfg['status_col']}, 'pending') AS status, "
-            f"       COUNT(*) AS cnt "
-            f"FROM papers GROUP BY status"
-        ).fetchall()
-        counts: Dict[str, int] = {"success": 0, "failed": 0,
-                                  "skipped": 0, "pending": 0}
-        for r in rows:
-            s = r["status"]
-            if s in counts:
-                counts[s] = r["cnt"]
-        phase_status.append({
-            "name": cfg["name"],
-            "success": counts["success"],
-            "failed": counts["failed"],
-            "skipped": counts["skipped"],
-            "pending": counts["pending"],
-        })
-
-    # ---- 7-day weekly stats (ending on the report date) ----
-    try:
-        report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-    except ValueError:
-        report_date = date.today()
-        logger.warning("Invalid date_str %r, falling back to today", date_str)
-
-    weekly: List[Dict[str, Any]] = []
-    for offset in range(6, -1, -1):
-        day = report_date - timedelta(days=offset)
-        day_str = day.strftime("%Y%m%d")
-
-        # Single query with mutually exclusive categories:
-        #   reportable  → A/B relevance + summary success (takes priority)
-        #   total_failed → any phase failed, but NOT reportable
-        #   other       → remainder (always non-negative)
-        row = conn.execute("""
-            SELECT
-                COUNT(*) AS total,
-                COALESCE(SUM(CASE WHEN llm_relevance_category IN ('A', 'B')
-                                   AND llm_relevance_status = 'success'
-                                   AND llm_summary_status = 'success'
-                                 THEN 1 ELSE 0 END), 0) AS reportable,
-                COALESCE(SUM(CASE WHEN llm_relevance_category IS NULL
-                                   OR llm_relevance_category NOT IN ('A', 'B')
-                                   OR llm_relevance_status IS NULL
-                                   OR llm_relevance_status != 'success'
-                                   OR llm_summary_status IS NULL
-                                   OR llm_summary_status != 'success'
-                                 THEN
-                                     CASE WHEN cr_metadata_fetched_status = 'failed'
-                                           OR publisher_page_fetched_status = 'failed'
-                                           OR llm_relevance_status = 'failed'
-                                           OR mineru_parse_status = 'failed'
-                                           OR llm_summary_status = 'failed'
-                                          THEN 1 ELSE 0 END
-                                 ELSE 0 END), 0) AS total_failed
-            FROM papers
-            WHERE created_date = ?
-        """, (day_str,)).fetchone()
-
-        day_total = row["total"]
-        reportable = row["reportable"]
-        total_failed = row["total_failed"]
-        other = day_total - reportable - total_failed
-
-        weekly.append({
-            "date": day_str,
-            "weekday": _format_weekday(day),
-            "reportable": reportable,
-            "total_failed": total_failed,
-            "other": other,
-        })
-
     # ---- Prompts ----
     prompts = render_all_prompts()
 
     return {
         "date_str": date_str,
-        "total_papers": total_papers,
-        "pending_report": pending_report,
-        "publishers_count": publishers_count,
-        "phases_count": 5,
-        "phase_status": phase_status,
-        "weekly": weekly,
         "relevance_prompt": prompts.get("relevance", ""),
         "summary_prompt": prompts.get("summary", ""),
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
