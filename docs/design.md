@@ -391,22 +391,21 @@ Markdown/HTML 报告**当前**显示在每篇论文标题下方的元信息行�
 - 实现技巧：先 `sort(date, reverse=True)` 再 `sort(category)`，利用 Python 排序稳定性
 - 由 `generate_markdown()` / `generate_html()` 在最顶端调用，auto + user 两种模式都受益；`phase_g.py` 的旧 `paper_list.sort(...)` 已删除
 
-### 报告解释页（2026-07-26 新增）
+### 报告解释页（2026-07-26 新增，2026-07-25 大幅简化）
 
 每期 Phase G 生成 Markdown/HTML 报告后，额外生成一份独立 HTML 解释页 `report_YYYYMMDD_explained.html`，帮助读者理解「为什么这篇论文被 LLM 判为 A/B 相关」。
 
 - **模板文件**：`templates/report/html/explained.html.j2`
 - **渲染环境**：复用 `src/processors/paper_report_generator.py:_get_template_env()` 创建的 Jinja2 Environment（`FileSystemLoader` 指向 `templates/report/`），不引入新的 Environment。
 - **输出要求**：单文件自包含 HTML，无外部 `<link>` / `<script>` / CDN / Google Fonts；全部 CSS 内联在 `<style>` 中；字体使用系统栈。
-- **页面结构**：
-  1. Header：标题「报告解释 · {{ date_str }}」+ 副标题。
-  2. 本期数据：4 个统计卡片（总论文 / 待报告 / 出版社 / 阶段）。
-  3. 阶段状态：5 阶段水平堆叠柱状图（CrossRef / Publisher / Relevance / MinerU / Summary；success 绿 / failed 红 / skipped 黄 / pending 蓝）。
-  4. 近 7 天采集：每天一行水平堆叠柱状图（reportable 绿 / failed 红 / other 蓝）。
-  5. 完整 Prompt 快照：两个 `<details>` 折叠区，Phase E 相关性判断默认展开，Phase F 论文总结默认折叠，均用 `<pre>` 保留源码（含 LaTeX）不渲染。
-  6. Footer：生成时间 + 项目名。
-- **模板变量**：`date_str`、`total_papers`、`pending_report`、`publishers_count`、`phases_count`、`phase_status`、`weekly`、`relevance_prompt`、`summary_prompt`、`generated_at`。
-- **图表实现**：纯 CSS flexbox + 百分比宽度，无 chart.js；0 计数分段不渲染，避免最小宽度造成的误导色条。
+- **页面结构（2026-07-25 大幅简化后）**：
+  1. Header：标题「报告解释 · {{ date_str }}」+ 副标题「本期论文推送的判定依据与 Prompt 快照」。
+  2. 完整 Prompt 快照：两个 `<details>` 折叠区，Phase E 相关性判断默认展开，Phase F 论文总结默认折叠，均用 `<pre>` 保留源码（含 LaTeX）不渲染。
+  3. Footer：生成时间 + 项目名。
+- **模板变量**（2026-07-25 简化后）：`date_str`、`relevance_prompt`、`summary_prompt`、`generated_at`（仅 4 个，原 10 个中的 6 个 stats/chart 变量删除）。
+- **2026-07-25 简化历史**：
+  - 1st pass：删阶段状态柱状图 + 近 7 天采集柱状图 + `phase_status` / `weekly` / `phases_count` 数据收集。
+  - 2nd pass：删 stats grid（总论文 / 待报告 / 出版社 3 个 stat-card）+ `total_papers` / `pending_report` / `publishers_count` 数据收集。用户认为「没人关注这些数字」，解释页只保留最有价值的 Prompt 快照。
 - **Prompt 安全渲染**：因 Environment 配置 `autoescape=False`，模板内对 `relevance_prompt` / `summary_prompt` 显式使用 `| e` 过滤，防止 `<` / `>` 等字符破坏 HTML。
 
 ## 10. LLM 总结输出简单化
@@ -624,25 +623,22 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 
 ## 定位
 
-> **Web UI 是只读展示台（Dashboard + Report 阅览 + Pipeline 状态 + Logs），不接受写入操作。** 所有配置修改走配置文件，所有运行控制走 `tools/run_pipeline.py`。
+> **Web UI 是只读展示台（Dashboard + Report 阅览），不接受写入操作。** 所有配置修改走配置文件，所有运行控制走 `tools/run_pipeline.py`。Home / Pipeline / Logs 页面已在 2026-07-26 瘦身中删除。
 
 | CLI 擅长 | Web UI 擅长 |
 |----------|------------|
 | 定时/自动化运行（cron） | 可视化监控：一眼看清各阶段状态分布 |
 | ad-hoc 重置/调试（reset 工具） | 交互式报告：阅览、筛选、下载（marked + KaTeX + DOMPurify） |
-| 深度调试（debug 脚本） | SSE 实时日志推送 + 级别过滤 |
-| 批量全流程 | Pipeline 状态柱状图 + 7 天采集趋势 |
+| 深度调试（debug 脚本） | 3 卡片统计（论文总数/待报告/出版社）+ 阶段柱状图 + 7 天采集趋势 |
+| 批量全流程 | 只读浏览（无控制按钮） |
 
 ## 页面功能
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| Home | `GET /` | 项目介绍、论文/出版社统计、快速入口 |
-| Dashboard | `GET /dashboard` | 状态概览：论文总数 + Pipeline 各阶段状态分布 + **Pending Report 数**（`llm_summary_status='success' AND report_date IS NULL AND llm_relevance_status='success' AND llm_relevance_category IN ('A','B')` — 仅 A/B 类可报告论文）+ 阶段状态柱状图；通过 `/pipeline/status` 端点每 5 秒自动刷新 |
-| Pipeline | `GET /pipeline` | 10 阶段只读状态展示（CSS 柱状图），无 Run/Reset 按钮。SSE 实时日志（支持级别过滤 + `textContent` 安全渲染） |
+| Dashboard | `GET /dashboard`（`/` 302 重定向至此） | 状态概览：3 统计卡片（论文总数 / Pending Report / 出版社数）；Pipeline 各阶段状态柱状图（pending 在 UI 层合并到 skipped 显示，3 段柱状图）；**近 7 天采集趋势图（3 桶：reportable / total_failed / other，与 explained.html 设计一致）**；每 10s 自动刷新。 |
 | Papers | `GET /papers?sort=created\|published\|summary&category=a\|b\|ab\|all&has_summary=0\|1&page=N&per_page=50\|100\|200` | **只读浏览**：三种排序（入库/发表/LLM 总结生成时间）、四类筛选（A/B/AB/All）、`has_summary` 筛选可报告论文；**分页**：底部分页器 `共 M 篇 · 第 N/T 页 · [每页 K ▾] [‹ 上一页] [下一页 ›]`，per_page 白名单 50/100/200。无 checkbox 选取、无生成按钮 |
 | Report | `GET /report?show=<filename>` | **报告档案馆**，仅查看不编辑。顶部下拉选择器按 `mtime DESC` 列出所有报告（每条：日期切片/来源/论文数/相对时间，auto + user 混排），主区渲染选中报告（marked + KaTeX + DOMPurify 反 XSS）；下载链接常驻右侧 |
-| Logs | `GET /logs` | 日志查看（支持级别过滤，`textContent` 安全渲染 + `white-space: pre-wrap`） |
 
 ## WebUI 安全
 

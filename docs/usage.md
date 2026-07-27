@@ -145,21 +145,12 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 
 | 路由 | 页面 | 核心功能 |
 |------|------|---------|
-| `/` | Home | 项目介绍、统计概览、Quick Start 卡片、架构概览图 |
-| `/pipeline` | Pipeline | 8 阶段 Run/Reset 按钮 + 状态柱状图 + SSE 实时日志 + 子进程执行 |
-| `/papers` | Papers | 论文列表（按日期/相关性排序），默认仅显示 A/B 论文，可切 A Only / B Only / A/B / All |
-| `/report` | Report | 勾选已总结论文 → 生成 Markdown 报告 → 浏览器预览 + 下载 |
-| `/datasources` | Data Sources | 期刊启用/禁用表格，RSS 与 CrossRef 独立开关，写入 `data/journal_overrides.json` |
-| `/logs` | Logs | 日志查看（支持级别过滤） |
-| `/subscriptions` | Subscriptions | 邮件订阅者管理（添加/删除/启用停用/测试/从 .env 导入）；"发送日报"按钮 |
-| `/config` | Config | SKIP 开关（影响 Pipeline 页）+ 领域描述编辑 + YAML 编辑器 + 连通性测试 + MinerU Token 色标 |
+| `/` | Dashboard（302 重定向） | 自动跳转到 Dashboard |
+| `/dashboard` | Dashboard | 3 统计卡片（论文总数/待报告/出版社）+ Pipeline 阶段柱状图（pending 合并到 skipped）+ 7 天采集趋势图（3 桶：reportable/total_failed/other） |
+| `/papers` | Papers | 论文列表（按日期排序），默认仅显示 A/B 论文，可切 A Only / B Only / A/B / All |
+| `/report` | Report | 报告查看 + 下载（只读） |
 
-### Pipeline 页
-
-- **按钮状态**：被 Config 页跳过的阶段按钮灰显不可点击，POST 返回 400
-- **状态图**：CSS 柱状图显示各阶段 pending/success/failed/skipped 分布
-- **实时日志**：通过 SSE (`GET /pipeline/logs`) 推送，浏览器内嵌显示
-- **并发控制**：`_phase_lock`（asyncio.Lock）确保同一时间只有一个阶段在运行
+> Home / Pipeline / Logs 页面已在 2026-07-26 瘦身中删除。`/` 根路径 302 重定向到 `/dashboard`。
 
 ### Papers 页
 
