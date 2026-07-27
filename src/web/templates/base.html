@@ -20,12 +20,9 @@
         <button id="lang-toggle" class="lang-toggle" onclick="switchLanguage(currentLang === 'zh' ? 'en' : 'zh')">EN</button>
       </div>
       <ul class="sidebar-nav">
-        <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><i class="fa-solid fa-house"></i><span data-i18n="nav.home">Home</span></a></li>
         <li><a href="/dashboard" class="{% if request.url.path == '/dashboard' %}active{% endif %}"><i class="fa-solid fa-chart-bar"></i><span data-i18n="nav.dashboard">Dashboard</span></a></li>
-        <li><a href="/pipeline" class="{% if request.url.path == '/pipeline' %}active{% endif %}"><i class="fa-solid fa-gears"></i><span data-i18n="nav.pipeline">Pipeline</span></a></li>
         <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><i class="fa-solid fa-file-lines"></i><span data-i18n="nav.papers">Papers</span></a></li>
         <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><i class="fa-solid fa-newspaper"></i><span data-i18n="nav.report">Report</span></a></li>
-        <li><a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}"><i class="fa-solid fa-terminal"></i><span data-i18n="nav.logs">Logs</span></a></li>
       </ul>
     </nav>
     <main class="content">
