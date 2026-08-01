@@ -1232,6 +1232,13 @@ if scraper_class.skip_phase_c_if_crossref_abstract:
 
 ## Phase C — Publisher 页面抓取
 
+> **代码结构（2026-08-01 重构）**：`sources/publisher.py` 中 `BasePublisherScraper` 提供
+> 6 个共享静态 helper——`_extract_meta(sel, name)`、`_extract_meta_all(sel, name)`、
+> `_extract_attr(sel, css_selector)`、`_extract_canonical_url(sel)`、`_join_texts(parts)`、
+> `_clean_abstract_text(text)`。7 个出版社子类的 `parse_page()` 统一用这些 helper 提取
+> `citation_*` meta 与摘要文本，消除重复；各出版社仅保留差异点（date meta 名
+> publish_date/citation_date/citation_online_date、摘要 XPath、类型过滤逻辑）。
+
 使用 cloakbrowser 驱动 headful Chromium 和持久化 browser context：
 - 同一 publisher 共用一个 session（`data/session_cached/<publisher>/`）
 - cloakbrowser 自动处理浏览器指纹伪装，无需手动注入反检测 JS
