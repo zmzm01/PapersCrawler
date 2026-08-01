@@ -1268,8 +1268,9 @@ if scraper_class.skip_phase_c_if_crossref_abstract:
    - `_is_cf_challenge_page()`：只检查挑战页特有结构标记（`cf-chl-widget` / `_cf_chl_opt` / `challenge-error-text` /
      正文「正在进行安全验证」「验证成功」/ 标题「请稍候」「just a moment」「attention required」），
      **不**匹配真实文章页也内嵌的 `cf-turnstile` / `challenge-platform` CDN 脚本，避免误判。
-   - `fetch_page()` 在初始等待后若检测到 challenge，循环 reload（`PUBLISHER_CHALLENGE_MAX_RELOADS`，默认 2 次），
-     每次 reload 后等待 `PUBLISHER_CHALLENGE_RELOAD_WAIT_MS`（默认 45s）再重新取 HTML。
+    - `fetch_page()` 在初始等待后若检测到 challenge，循环 reload（`PUBLISHER_CHALLENGE_MAX_RELOADS`，默认 2 次），
+      每次 reload 后**轮询**等待页面放行（每 10s 检查一次 `_is_cf_challenge_page`，页面提前放行则提前退出，
+      最坏等到 `PUBLISHER_CHALLENGE_RELOAD_WAIT_MS`（默认 45s）截止）再重新取 HTML。
    - `start_browser()` 启用 `humanize=True`（人类鼠标/键盘/滚动行为模拟），提升行为指纹得分，降低 challenge 触发概率。
    - 配置项：`publisher.challenge_max_reloads` / `challenge_reload_wait_ms`（`configs/settings.yaml`）。
    此机制对所有 publisher 生效（reload 仅在检测到 challenge 时触发，正常页面零开销）。

@@ -1,5 +1,24 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-01: 抓取阶段 review 修复批次落地（publisher.py）
+
+- **来源**：2026-07-31 全项目 review + 抓取重构后再 review，用户确认修复范围（#1/2/3 直改，#4-10 解释后，#10 仅记录）。
+- **修复（`src/sources/publisher.py`）**：
+  - #1 Science 多段摘要丢失：`string()` → `//text()` 收集全部段落拼接（XPath `string()` 对节点集只取首个）。
+  - #2 Nature JSON-LD 防御式解析：根节点 list / mainEntity list（取首个）/ author 单个 dict / datePublished null 全部兼容，解析行纳入防御逻辑。
+  - #3 IOP 类 docstring 丢失：`http_fallback_*` 类属性移到 docstring 之后，`IOPScraper.__doc__` 恢复。
+  - #4 Cambridge 伪摘要正则锚定：仅"整段为 URL"才判伪，不再误杀以 `.pdf` 结尾的合法摘要。
+  - #5 `download_pdf` timeout 参数真实透传：三级（requests+ookies / context.request / 浏览器导航）各自使用；文章页 goto 仍保留 120s 固定超时，**15s 预载等待保持不变**。
+  - #6 Nature/Science PDF 拼接 → `urljoin`，兼容绝对/相对 href。
+  - #7 `fetch_page` url 与 html_path 同时为空 → 抛 `ValueError`（原为静默 no-op）。
+  - #8 `save_page` / `_save_error_html` 优先读 `self.html`（离线模式不再 AttributeError）。
+  - #9 primary HTTP 策略下补 bot 页校验：HTTP 返回拦截页时降级走浏览器。
+  - #11 删除失效的 `add_init_script` 反检测 JS（箭头函数表达式永不执行，且与 cloakbrowser 指纹处理重复；依赖核查确认无引用）。
+  - 风险点：challenge reload 固定 45s 等待 → 10s 轮询至截止；`_http_get_with_cookies` 跳过无 domain cookie 并传 path；`_context_request_get` 显式 timeout。
+- **已知问题（仅记录，暂不改行为）**：Science 三级页面类型过滤（altmetric_type / dc.Type / og:type）无白名单，可能误杀带 altmetric_type 或不带 dc.Type 的真研究论文。代码已加注释（`# ─── 页面类型过滤 ───` 处），待后续评估。
+- **验证**：新增/更新回归测试（`test_publisher_parse.py` 多段摘要 / 4 种 JSON-LD 边界 / IOP docstring / Cambridge 正则 / fetch_page 双 None / 离线 save_page；`test_pdf_download.py` cookie domain / timeout 透传 / primary bot 降级）；全套 **260 pytest passed**。
+- **经验**：XPath `string()` 对节点集只取文档序首个节点是隐蔽陷阱，注释声称"递归拼接"时务必实测验证。
+
 ## 2026-08-01: download_pdf 兜底链重构（Optica 修复）
 
 - **背景**：用户质疑 `download_pdf()` 三级兜底链「基本都是历史包袱」，要求逐级核实有效性。
