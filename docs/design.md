@@ -293,9 +293,9 @@ Phase F（LLM 总结）仅处理有 MinerU 全文的论文。无全文字段直�
 
 `BasePublisherScraper.download_pdf()` 负责 PDF 下载（详见「流水线子阶段详解」）：
 - 先 `goto(page_url)` 建立浏览器上下文（cookie/session/referrer）
-- 扫描 DOM 中 `<a>PDF</a>` 提取同域 URL（解决 APS 跨域问题）
+- 仅 APS 扫描 DOM 中 `<a>PDF</a>` 提取同域 URL（解决 APS 跨域问题，2026-08-01 起门控）
 - 先尝试 `requests` + 浏览器 cookies/UA 下载（最快，避免 AIP 等 CSP 拦截）
-- 失败则降级为 `page.evaluate(fetch)` 兜底（完全继承浏览器上下文）
+- 失败则降级为 `context.request.get()`（继承代理/cookie，解决 Optica 内联渲染场景）
 - 下载后**立即保存**到 `data/mineru_output/<safe_doi>/paper.pdf`，再传给 MinerU 解析
 - 保存前校验 `%PDF-` 头部，非 PDF 内容直接报错
 
@@ -969,6 +969,10 @@ profile 目录。清理在每次 Phase C 的 `finally` 块中执行（`pipeline/
 
 ## 14. AIP PDF 下载三级回退链
 
+> **2026-08-01 更新**：本节为历史决策记录。文中所述的 JS fetch 兜底已在 2026-08-01
+> 重构中删除（全日志验证从未触发/触发即失败），当前实现见上文「下载优先级（2026-08-01 重构，
+> 三级兜底链）」。本节保留以供回溯。
+
 **背景**：AIP 的 PDF URL 是直接下载链接（`wget` 可直接下载），但浏览器 JS `fetch()` 被 CSP 拦截。
 此处记录两条最终被弃用的尝试方案。
 
@@ -1339,36 +1343,40 @@ Optica 浏览器访问仍保留以下反爬注意项（仅对 Phase C 未跳过�
    - 提取失败时保留原始 `pdf_url`（跨域链接），后续下载路径仍可用
 3. 下载后**立即保存**到 `data/mineru_output/<safe_doi>/paper.pdf`（不再用 tempfile），保存前校验 `%PDF-` 头部
 
-### 下载优先级（2026-06-20 优化，三级兜底链）
+### 下载优先级（2026-08-01 重构，三级兜底链）
 
 ```
-requests + 浏览器 cookies (第一优先级, 秒级失败)
-  └── 失败 → JS fetch (第二优先级, 浏览器内 fetch)
-         └── 失败 → 浏览器导航下载 (第三优先级, goto + expect_download)
+[on_page_url 同域改写]（仅 APS 启用）
+   └── requests + 浏览器 cookies (第一优先级, 秒级失败)
+         └── 失败 → context.request.get() (第二优先级, 继承代理/cookie)
+                └── 失败 → 浏览器导航下载 (第三优先级, goto + expect_download)
 ```
+
+**前置（仅 APS 启用）：on_page_url 同域改写**
+- APS 的 `citation_pdf_url` 是 `link.aps.org` 跨域重定向链接，需从文章页提取同域
+  `journals.aps.org` 直链后用 requests 下载（2026-06-01 为修复 APS 跨域失败加入）。
+- 通过类属性 `extract_on_page_pdf_link` 门控，**仅 APSScraper 开启**：
+  其他 publisher 关闭，避免误选文章页中的配图下载链接（Optica 曾 2 次误选
+  `viewmedia.cfm?uri=...&figure=...&imagetype=pdf`）。
 
 **第一优先级：requests + 浏览器 cookies**
-从浏览器 context 提取登录态 cookies + User-Agent，用 Python requests 做 HTTP 直连下载。
-比 JS fetch 更快的理由：
-- **不受 CSP 限制** — AIP 的 `connect-src` 策略拦截 JS `fetch()`，但 requests 直接通过
-- **无浏览器 JS 执行开销** — 秒级返回失败状态（vs JS fetch 需等 60s 超时才降级）
-- **User-Agent 降级保护** — `navigator.userAgent` 获取失败时使用硬编码 Chrome 120 UA 兜底
-- **覆盖所有 publisher** — 同域 PDF URL + 浏览器 cookie 认证
+- 从浏览器 context 提取登录态 cookies + User-Agent，用 Python requests 做 HTTP 直连下载。
+- **全日志验证为唯一真正有效路径**：169 次下载尝试中绝大多数成功都靠它，
+  复用浏览器 context 的 `cf_clearance` 等反爬 cookie，对所有 publisher 通用。
+- 不受 CSP 限制（AIP 的 `connect-src` 拦截 JS `fetch()`，但不拦 requests）。
 
-**第二优先级：JS fetch**
-- 当 requests 路径不可用时触发
-- 使用 `page.evaluate(fetch(pdf_url))` 继承完整浏览器上下文
-- 应对 requests 无法复现的浏览器签名校验场景
+**第二优先级：context.request.get()**（2026-08-01 新增）
+- 使用 Playwright `APIRequestContext.get(pdf_url, headers={Referer})`，继承浏览器
+  上下文的代理和 cookies，但**不做真实页面导航**。
+- 专为 Optica 设计：Radware 拦截经代理放行后返回完整 PDF，而 Chrome 内置 PDF viewer
+  **内联渲染** signed `directpdfaccess/*.pdf` URL，不触发 download 事件——
+  `expect_download()` 永远等不到。实测 `context.request.get()` 在代理下对
+  `viewmedia.cfm` 和 signed URL 均直接返回完整 PDF（200, `application/pdf`）。
 
-**第三优先级：浏览器导航下载**（2026-06-20 新增）
-- 当前两条路径均返回非 PDF 内容时触发
-- 使用 `page.goto(pdf_url) + page.expect_download()` 模拟用户点击
-  "Get PDF" 按钮的完整浏览器导航
-- 触发真实的浏览器下载事件，`download.content()` 获取完整二进制内容
-- 专门解决 Optica 等 publisher 仅响应浏览器导航请求的反热链接策略
-  （`Sec-Fetch-Mode: navigate` vs `Sec-Fetch-Mode: cors` 校验差异）
-- 导航到 PDF URL 后页面状态改变，但每次 `download_pdf()` 入口处都会
-  重新 `goto(page_url)` 重建上下文，不影响同 publisher 下篇论文
+**第三优先级：浏览器导航下载**（保留为最后兜底）
+- 使用 `page.goto(pdf_url) + page.expect_download()` 模拟用户点击 "Get PDF" 按钮。
+- 全日志验证从未成功过（Chrome 内联渲染 PDF 无 download 事件），保留仅作理论兜底，
+  **不是 Optica 的解法**。
 
 ### PDF 复用
 
@@ -1420,7 +1428,7 @@ APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的�
 |----|------|--------|
 | 1 | `wait_for_timeout(15000)` 等待充分稳定 | 进入第 2 层 |
 | 2 | `for _attempt in range(2)` + except 重试 | 保留原始 `pdf_url`（跨域） |
-| 3 | 主路径 requests+cookie 全局兜底（第 2 层非必需——即使没提取到同域链接，requests 也可用原始 URL） | JS fetch 兜底 |
+| 3 | 主路径 requests+cookie 全局兜底（第 2 层非必需——即使没提取到同域链接，requests 也可用原始 URL） | context.request / 导航下载兜底 |
 
 ### 已弃用的尝试（记录教训）
 
@@ -1433,6 +1441,29 @@ APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的�
   - 不依赖 `response.body()`（不关心 PDF viewer 行为）
   - 直接导航到 PDF URL 触发浏览器原生下载事件
   - 此方法在 AIP 上可能同样有效，但 AIP 的 requests+cookie 路径已足够快
+
+### Optica PDF 下载实测结论（2026-08-01）
+
+针对 Optica 长期失败（`mineru_parse_status='failed'`，Radware Bot Manager captcha）
+做了 8 组浏览器矩阵（直连/humanize/代理 7890 × 2 篇论文），结论：
+
+| 配置 | 结果 |
+|------|------|
+| 直连（含 humanize） | 被 Radware 拦，跳转 `opg.optica.org/captcha/(S(...))/?guid=...` 标题 Captcha |
+| 代理 7890（含 humanize） | Radware 放行，`viewmedia.cfm` 302 → `directpdfaccess/{uuid}_{id}/...pdf?da=1&id=...&seq=0`（signed URL） |
+
+- **humanize 无法通过 Optica 的 Radware captcha**——根因是 IP 信誉（直连 222.29.111.129），
+  代理出口（116.251.216.10）才放行。
+- **代理下第二三级路径仍会失败**：Optica 用 signed `directpdfaccess/*.pdf` URL，
+  Chrome 内置 PDF viewer **内联渲染**，不触发 download 事件 → `expect_download()` 超时。
+- **关键突破**：`context.request.get(pdf_url)`（Playwright APIRequestContext，继承
+  浏览器代理/cookie）在代理下对 `viewmedia.cfm` 和 signed URL **都能直接返回完整 PDF**（200, `application/pdf`）。
+- **已实施修复（2026-08-01）**：`download_pdf()` 兜底链重构为
+  `on_page_url（仅 APS）→ requests+cookies → context.request.get() → goto+expect_download`，
+  删除了全日志从未触发过的 JS fetch 死代码。E2E 实测 `OpticaScraper.download_pdf()`
+  经代理 7890 成功抓取 oe604196 完整 PDF（7.8MB）。
+- 另注：直连时 `context.request` 也会被 Radware 拦（返回 2320B HTML captcha），
+  故代理配置是前提，不可省略。
 
 ## Phase F — LLM 结构化总结
 

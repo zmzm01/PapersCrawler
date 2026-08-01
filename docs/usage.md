@@ -647,9 +647,14 @@ python tools/convert_md_to_pdf.py <input.md>
 **PDF 下载三级兜底**（`BasePublisherScraper.download_pdf()`）：
 
 ```
-requests + 浏览器 cookies/UA  →  page.evaluate(fetch)  →  page.goto() + expect_download
-   (主路径，最快)                    (CSP 拦截时)              (反热链接策略)
+[on_page_url 同域改写（仅 APS）]  →  requests + 浏览器 cookies/UA  →  context.request.get()  →  page.goto() + expect_download
+                                      (主路径，最快，复用反爬 cookie)   (Optica 等内联渲染场景)      (最后兜底)
 ```
+
+- **requests + cookies**：对所有 publisher 通用，绝大多数下载走此路径。
+- **context.request.get()**（2026-08-01 新增）：继承浏览器代理/cookie 的子资源请求，
+  解决 Optica 经代理放行后 Chrome 内联渲染 PDF 不触发 download 事件的问题。
+- **on_page_url 改写**：仅 APS 启用（跨域 `link.aps.org` → 同域 `journals.aps.org` 直链）。
 
 ### Publisher 抓取错误诊断
 
@@ -871,6 +876,14 @@ vim configs/settings.yaml
 python tools/import_local_pdf.py --doi <DOI> --pdf ~/Downloads/paper.pdf
 # 下次 daily 调度会自动复用，跳过下载直接送 MinerU
 ```
+
+常见失败原因：
+- **Optica（Radware captcha）**：`页面未返回有效 PDF` —— 必须走代理（`configs/settings.yaml`
+  `publisher.proxy.optica`），且 IP 信誉是关键（中国大陆 IP 直连会被 `opg.optica.org/captcha/` 拦截）。
+  2026-08-01 起 `download_pdf()` 已改用 `context.request.get()` 抓取经代理放行的完整 PDF，
+  不再依赖 `expect_download` 事件。若仍失败可尝试更换代理 IP 后重跑。
+- **APS（link.aps.org 跨域）**：自动改写为同域 `journals.aps.org` 直链后下载。
+- **需登录的 PDF**（少数）：`import_local_pdf.py` 手动导入。
 
 ### 邮件没收到
 

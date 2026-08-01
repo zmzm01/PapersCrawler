@@ -1,5 +1,27 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-01: download_pdf 兜底链重构（Optica 修复）
+
+- **背景**：用户质疑 `download_pdf()` 三级兜底链「基本都是历史包袱」，要求逐级核实有效性。
+- **全量日志证据**（169 次下载尝试，成功 129 次）：
+  - **Tier1 requests+cookies** = 唯一真正有效路径（复用浏览器反爬 cookie，所有 publisher 通用）。
+  - **on_page_url 同域改写** = 仅对 APS 必需（41 次 `journals.aps.org` 重写成功，06-01 为修
+    APS 跨域添加）；**对 Optica 误伤**（2 次误选配图链接 `...&figure=...-g001&imagetype=pdf`）。
+  - **Tier2 JS fetch()** = 彻底无效（当前日志从未触发，旧日志触发全 `Failed to fetch`）→ **删除**。
+  - **Tier3 goto+expect_download** = 从未成功（Chrome 内联渲染 PDF 无 download 事件）→ 保留兜底。
+- **改动**：
+  - 新增类属性 `extract_on_page_pdf_link`（默认 False），**仅 APSScraper 开启**，on_page_url 改写门控。
+  - `download_pdf()` 重构为三级：requests+cookies → **新增 `context.request.get(pdf_url,
+    headers={Referer})`**（Optica 主修复，继承代理/cookie 直返完整 PDF）→ goto+expect_download 兜底。
+  - 提取 3 个可测 primitive（`_http_get_with_cookies` / `_context_request_get` / `_browser_nav_download`）
+    + `_is_pdf_bytes` staticmethod。
+  - 删除 JS fetch 死代码（`json` import 保留，Nature parse_page 仍用）。
+- **验证**：`tests/test_pdf_download.py` 新增 13 个测试（tier 编排短路 / 全失败抛错 / on_page_url
+  门控 / `_is_pdf_bytes`）；全套 **246 pytest passed**；E2E `OpticaScraper.download_pdf()` 经代理
+  7890 实测抓取 oe604196 完整 PDF（7.8MB）。
+- **经验**：历史兜底链容易堆积"从未触发"的死路径——用全量日志核对每级的成功计数，
+  用数据而非直觉决定保留/删除。
+
 ## 2026-08-01: publisher.py 重构 + Optica Radware 探测
 
 - **Part A（已落地）**：重构 `src/sources/publisher.py`（1473 → 1434 行）。
