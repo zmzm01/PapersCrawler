@@ -105,6 +105,12 @@ class BasePublisherScraper:
     # Optica (OA) 使用此优化，其他 publisher 默认为 False。
     skip_phase_c_if_crossref_abstract: bool = False
 
+    # ── PDF 下载时是否从文章页提取同域 PDF 链接 ──
+    # 仅 APS 需要：其 citation_pdf_url 是 link.aps.org 跨域重定向链接，
+    # 需改写为同域 journals.aps.org 直链后才能用 requests 下载。
+    # 其他 publisher 关闭，避免误选文章页中的配图下载链接（如 Optica）。
+    extract_on_page_pdf_link: bool = False
+
     def __init__(self, user_data_dir):
         """初始化基础爬虫。
 
@@ -520,18 +526,115 @@ class BasePublisherScraper:
             logger.warning(f"Failed to save error HTML: {save_err}")
             return False
 
+    @staticmethod
+    def _is_pdf_bytes(data: bytes | None) -> bool:
+        """判断字节流是否为有效的 PDF 文件头。
+
+        Args:
+            data: 待检测的字节流。
+
+        Returns:
+            bool: 是 PDF 返回 True。
+        """
+        return bool(data and data[:5] == b"%PDF-")
+
+    def _http_get_with_cookies(self, pdf_url: str, page_url: str | None,
+                               ua: str) -> bytes | None:
+        """一级：requests + 浏览器 cookies 直接下载。
+
+        复用浏览器 context 中已写入的反爬 cookie（如 Cloudflare
+        cf_clearance），最快且能绕过 CSP/JS 检测。这是绝大多数
+        publisher（AIP/APS/Nature/Cambridge/IOP/Science）的主力路径。
+
+        Args:
+            pdf_url:  PDF 下载链接。
+            page_url: 论文页面 URL，作为 Referer。
+            ua:       浏览器 User-Agent。
+
+        Returns:
+            bytes: PDF 字节流，失败返回 None。
+        """
+        logger = logging.getLogger(__name__)
+        try:
+            cookies = self.context.cookies()
+            session = py_requests.Session()
+            for c in cookies:
+                session.cookies.set(
+                    c["name"], c["value"],
+                    domain=c.get("domain", ""),
+                )
+            session.headers.update({
+                "User-Agent": ua,
+                "Referer": page_url or "",
+            })
+            resp = session.get(pdf_url, timeout=120)
+            resp.raise_for_status()
+            return resp.content
+        except Exception as err:
+            logger.debug(f"HTTP download failed ({err})")
+            return None
+
+    def _context_request_get(self, pdf_url: str, page_url: str | None) -> bytes | None:
+        """二级：Playwright APIRequestContext 下载。
+
+        继承浏览器上下文的代理和 cookies，但不用真实页面导航，因此能拿到
+        Optica 等仅响应导航请求的服务器的 PDF（Radware 拦截后通过代理放行，
+        Chrome 内联渲染 PDF 不会触发 download 事件，需用此路径直接抓取）。
+
+        Args:
+            pdf_url:  PDF 下载链接。
+            page_url: 论文页面 URL，作为 Referer。
+
+        Returns:
+            bytes: PDF 字节流，失败返回 None。
+        """
+        logger = logging.getLogger(__name__)
+        try:
+            headers = {"Referer": page_url or ""}
+            resp = self.context.request.get(pdf_url, headers=headers)
+            return resp.body()
+        except Exception as err:
+            logger.debug(f"Context request download failed ({err})")
+            return None
+
+    def _browser_nav_download(self, pdf_url: str) -> bytes | None:
+        """三级：浏览器直接导航下载（goto + expect_download）。
+
+        模拟用户点击 "Get PDF" 按钮的完整浏览器导航，是最后的兜底路径。
+
+        Args:
+            pdf_url:  PDF 下载链接。
+
+        Returns:
+            bytes: PDF 字节流，失败返回 None。
+        """
+        logger = logging.getLogger(__name__)
+        try:
+            with self.page.expect_download(timeout=120000) as download_info:
+                self.page.goto(
+                    pdf_url, wait_until="domcontentloaded", timeout=120000,
+                )
+            download = download_info.value
+            pdf_body = download.content()
+            logger.info(
+                f"Browser navigation download succeeded: {len(pdf_body)} bytes"
+            )
+            return pdf_body
+        except Exception as err:
+            logger.debug(f"Browser navigation download failed: {err}")
+            return None
+
     def download_pdf(self, pdf_url: str, page_url: str | None = None,
                      timeout: int = 60000) -> bytes:
         """利用已有浏览器上下文下载 PDF。
 
         三级兜底链，依次尝试，直到成功获取有效 PDF：
-        1. **requests + 浏览器 cookies**：最快速，绕过 CSP/JS 检测，
-           适用于 AIP 等 JS fetch 被 CSP 拦截的场景。
-        2. **JS fetch()**：完全继承浏览器上下文，应对 requests 无法
-           处理的场景（如 cookie 签名校验）。
+        1. **requests + 浏览器 cookies**：最快，复用浏览器反爬 cookie。
+           适用于 AIP/APS/Nature/Cambridge/IOP/Science 等绝大多数 publisher。
+        2. **context.request.get()**：继承浏览器代理和 cookies 的子资源请求，
+           适用于 Optica 等经代理放行后返回完整 PDF 的场景。
         3. **浏览器导航下载**（goto + expect_download）：模拟用户点击
-           "Get PDF" 按钮的完整浏览器导航，适用于 Optica 等仅响应
-           导航请求的服务器。
+           "Get PDF" 按钮的完整导航，最后兜底。
 
         先访问文章页面（page_url）建立正确的 referrer/session 上下文，
         再依次尝试上述三种下载方式。
@@ -556,103 +659,53 @@ class BasePublisherScraper:
                            timeout=max(timeout, 120000))
             self.page.wait_for_timeout(15000)
 
-            # 从页面提取同域 PDF 链接（解决 APS link.aps.org 跨域问题）
-            on_page_url = None
-            for _attempt in range(2):
-                try:
-                    on_page_url = self.page.evaluate("""
-                        () => {
-                            for (const a of document.querySelectorAll('a')) {
-                                if (a.textContent.trim() === 'PDF') {
-                                    return new URL(a.getAttribute('href'),
-                                                   location.origin).href;
+            # 仅 APS 需要：从文章页提取同域 PDF 直链，改写 link.aps.org
+            # 跨域重定向链接（其他 publisher 关闭，避免误选配图链接）。
+            if self.extract_on_page_pdf_link:
+                on_page_url = None
+                for _attempt in range(2):
+                    try:
+                        on_page_url = self.page.evaluate("""
+                            () => {
+                                for (const a of document.querySelectorAll('a')) {
+                                    if (a.textContent.trim() === 'PDF') {
+                                        return new URL(a.getAttribute('href'),
+                                                       location.origin).href;
+                                    }
                                 }
+                                return null;
                             }
-                            return null;
-                        }
-                    """)
-                    break
-                except Exception:
-                    if _attempt == 0:
-                        logger.debug("上下文可能因导航被销毁，3s 后重试...")
-                        self.page.wait_for_timeout(3000)
-            if on_page_url:
-                logger.debug(f"页面中找到同域 PDF 链接: {on_page_url}")
-                pdf_url = on_page_url
+                        """)
+                        break
+                    except Exception:
+                        if _attempt == 0:
+                            logger.debug("上下文可能因导航被销毁，3s 后重试...")
+                            self.page.wait_for_timeout(3000)
+                if on_page_url:
+                    logger.debug(f"页面中找到同域 PDF 链接: {on_page_url}")
+                    pdf_url = on_page_url
 
-        # 先尝试 requests + 浏览器 cookies（最快，避免 AIP 等 publisher 的
-        # JS fetch 因 CSP 长时间等待超时）。失败则降级为 JS fetch 兜底。
         logger.debug(f"下载 PDF: {pdf_url}")
         try:
-            cookies = self.context.cookies()
-            session = py_requests.Session()
-            for c in cookies:
-                session.cookies.set(
-                    c["name"], c["value"],
-                    domain=c.get("domain", ""),
-                )
-            try:
-                ua = self.page.evaluate("navigator.userAgent")
-            except Exception:
-                ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            session.headers.update({
-                "User-Agent": ua,
-                "Referer": page_url or "",
-            })
-            resp = session.get(pdf_url, timeout=120)
-            resp.raise_for_status()
-            pdf_body = resp.content
-        except Exception as http_err:
-            # 兜底：JS fetch（完全继承浏览器上下文，应对 requests 无法处理的场景）
-            logger.debug(f"HTTP download failed ({http_err}), trying JS fetch...")
-            url_escaped = json.dumps(pdf_url)
-            try:
-                raw = self.page.evaluate(f"""
-                    async () => {{
-                        const resp = await fetch({url_escaped});
-                        const buf = await resp.arrayBuffer();
-                        return Array.from(new Uint8Array(buf));
-                    }}
-                """)
-                pdf_body = bytes(raw) if raw else None
-            except Exception as fetch_err:
-                logger.debug(f"JS fetch also failed ({fetch_err})")
-                pdf_body = None
+            ua = self.page.evaluate("navigator.userAgent")
+        except Exception:
+            ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        # 第三级兜底：浏览器直接导航下载
-        #
-        # 部分出版商（如 Optica）的 PDF 链接仅响应浏览器级别的完整导航请求，
-        # fetch() / requests 等子资源请求会被服务器拒绝。此路径模拟用户点击
-        # "Get PDF" 按钮的行为，通过 page.goto() + expect_download() 触发
-        # 浏览器下载事件，绕过服务端的非导航请求检测。
-        #
-        # 注意：使用此路径后，浏览器页面会导航到 PDF 链接（而非原文章页面），
-        # 但每次 download_pdf() 调用在开始时都会 goto(page_url) 重建上下文，
-        # 因此不会影响同 publisher 下一篇文章的下载。
-        if pdf_body is None or pdf_body[:5] != b'%PDF-':
+        pdf_body = self._http_get_with_cookies(pdf_url, page_url, ua)
+
+        if not self._is_pdf_bytes(pdf_body):
+            logger.debug("HTTP download returned non-PDF, trying context request...")
+            pdf_body = self._context_request_get(pdf_url, page_url)
+
+        if not self._is_pdf_bytes(pdf_body):
             logger.debug(
                 "Previous paths returned non-PDF, "
                 "trying browser navigation download..."
             )
-            try:
-                with self.page.expect_download(timeout=120000) as download_info:
-                    self.page.goto(
-                        pdf_url, wait_until="domcontentloaded", timeout=120000,
-                    )
-                download = download_info.value
-                pdf_body = download.content()
-                logger.info(
-                    f"Browser navigation download succeeded: "
-                    f"{len(pdf_body)} bytes"
-                )
-            except Exception as nav_err:
-                logger.debug(
-                    f"Browser navigation download also failed: {nav_err}"
-                )
-                pdf_body = None
+            pdf_body = self._browser_nav_download(pdf_url)
 
-        if pdf_body is None or pdf_body[:5] != b'%PDF-':
+        if not self._is_pdf_bytes(pdf_body):
             raise RuntimeError(
                 "页面未返回有效 PDF（可能需登录或链接不可用）"
             )
@@ -741,6 +794,10 @@ class APSScraper(BasePublisherScraper):
     已知限制：APS 页面中的数学公式通过 MathJAX 渲染，HTML 源码中不包含
     原始 LaTeX 源码，因此无法直接从页面提取全文中的公式内容。
     """
+
+    # APS 的 citation_pdf_url 是 link.aps.org 跨域重定向链接，下载 PDF 前
+    # 需从文章页提取同域 journals.aps.org 直链（见基类 extract_on_page_pdf_link）。
+    extract_on_page_pdf_link: bool = True
 
     def parse_page(self):
         """解析 APS 论文页面。
