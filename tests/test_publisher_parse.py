@@ -4,8 +4,9 @@
 覆盖范围:
   - 各出版社 HTML 解析逻辑
   - Paper 数据类
-  - Cloudflare 防检测 JS 注入
   - 异常处理 (NonResearchPageError, PageParseError)
+  - Science 多段摘要拼接、Nature JSON-LD 边界、IOP docstring、
+    Cambridge 伪摘要正则等回归项
 
 使用保存的 HTML 示例文件进行解析测试，不需要启动浏览器。
 """
@@ -357,3 +358,209 @@ def test_optica_scraper_parse():
 
         assert paper.title == "Optica Paper"
         assert "Optica abstract" in paper.abstract
+
+
+# ---------------------------------------------------------------------------
+# 回归测试（2026-07-31 review 修复项）
+# ---------------------------------------------------------------------------
+
+def test_science_scraper_multiple_abstract_paragraphs():
+    """Science 多段摘要应全部拼接（回归 #1）。
+
+    此前用 XPath string() 作用于节点集，只取第一个 div[role="paragraph"]，
+    导致多段摘要丢失；改用 //text() 后应保留所有段落。
+    """
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="dc.Type" content="research-article"/>
+    <meta name="dc.Title" content="Multi-paragraph Science Paper"/>
+    <meta name="dc.Identifier" scheme="doi" content="10.1126/science.adx0001"/>
+    </head><body>
+    <section id="abstract">
+    <div role="paragraph"><p>First paragraph of the abstract.</p></div>
+    <div role="paragraph"><p>Second paragraph of the abstract.</p></div>
+    </section>
+    </body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "science_multi.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = ScienceScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert "First paragraph" in paper.abstract
+        assert "Second paragraph" in paper.abstract
+
+
+def test_nature_jsonld_author_single_dict_and_null_date():
+    """Nature JSON-LD: author 为单个 dict 且 datePublished 为 null 时不崩溃（回归 #2）。"""
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="dc.type" content="OriginalPaper"/>
+    <script type="application/ld+json">
+    {"mainEntity": {"headline": "JSON-LD Title", "author": {"name": "Single Author"}, "datePublished": null}}
+    </script>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "nature_jsonld_single.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = NatureScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert paper.title == "JSON-LD Title"
+        assert paper.authors == ["Single Author"]
+
+
+def test_nature_jsonld_mainentity_list():
+    """Nature JSON-LD: mainEntity 为列表时取首个且不崩溃（回归 #2）。"""
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="dc.type" content="OriginalPaper"/>
+    <script type="application/ld+json">
+    {"mainEntity": [{"headline": "First Entity", "author": [{"name": "A"}], "datePublished": "2026-05-19T00:00:00Z"}, {"headline": "Second Entity"}], "@graph": []}
+    </script>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "nature_jsonld_list.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = NatureScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert paper.title == "First Entity"
+        assert paper.authors == ["A"]
+
+
+def test_nature_jsonld_root_list():
+    """Nature JSON-LD: 根节点为列表时不崩溃（回归 #2）。"""
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="dc.type" content="OriginalPaper"/>
+    <script type="application/ld+json">
+    [{"mainEntity": {"headline": "Entity in Root List"}}]
+    </script>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "nature_jsonld_root.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = NatureScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert paper.title == ""
+
+
+def test_nature_jsonld_invalid_json():
+    """Nature JSON-LD: 非法 JSON 时不崩溃（回归 #2）。"""
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="dc.type" content="OriginalPaper"/>
+    <script type="application/ld+json">
+    { not valid json
+    </script>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "nature_jsonld_bad.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = NatureScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert paper.title == ""
+
+
+def test_iop_scraper_docstring_present():
+    """IOP 类 docstring 应存在（回归 #3）。
+
+    此前 http_fallback_* 类属性写在 docstring 之前，导致 __doc__ 为 None。
+    """
+    from sources.publisher import IOPScraper as _IOP
+    assert _IOP.__doc__ is not None
+    assert "IOP" in _IOP.__doc__
+
+
+def test_cambridge_abstract_ending_with_pdf_kept():
+    """Cambridge 摘要正文以 .pdf 结尾时应保留（回归 #4）。
+
+    此前扩展名正则未锚定开头，合法摘要会被误判为伪摘要置空。
+    """
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="citation_title" content="Cambridge Paper"/>
+    <meta name="citation_doi" content="10.1017/hpl.2026.10181"/>
+    <meta name="citation_abstract" content="We analyze the setup, full details are in supplementary file S1.pdf"/>
+    <meta name="citation_author" content="Author One"/>
+    <meta name="citation_online_date" content="2026-07-01"/>
+    <meta name="citation_journal_title" content="HPL"/>
+    </head><body></body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "cambridge_pdf_end.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = CambridgeScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+        assert "supplementary file S1.pdf" in paper.abstract
+
+
+def test_cambridge_abstract_pure_url_still_rejected():
+    """Cambridge 整段为图片 URL 的伪摘要仍应被置空（回归 #4 保持原有行为）。"""
+    assert CambridgeScraper._ABSTRACT_URL_PATTERN.search(
+        "//static.cambridge.org/content/id/x/firstPage-pdf-001.jpg"
+    )
+    assert not CambridgeScraper._ABSTRACT_URL_PATTERN.search(
+        "We study the plasma wakefield in detail."
+    )
+
+
+def test_fetch_page_both_none_raises():
+    """fetch_page url 与 html_path 均为 None 时应抛出 ValueError（回归 #7）。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        scraper = BasePublisherScraper(tmpdir)
+        with pytest.raises(ValueError, match="不能同时为空"):
+            scraper.fetch_page()
+
+
+def test_save_page_offline_uses_self_html():
+    """离线模式下 save_page 应读取 self.html，而不是 self.page.content()（回归 #8）。"""
+    import tempfile
+    html = "<html><head><title>Offline</title></head><body>Hello</body></html>"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "src.html")
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        scraper = BasePublisherScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        assert scraper.page is None  # 离线模式未启动浏览器
+
+        out_path = os.path.join(tmpdir, "out.html")
+        scraper.save_page(out_path)
+        with open(out_path, "r", encoding="utf-8") as f:
+            assert f.read() == html

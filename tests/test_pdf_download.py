@@ -198,7 +198,7 @@ class TestOnPagePdfLinkGating:
 
         captured = {}
 
-        def fake_http_get(pdf_url, page_url, ua):
+        def fake_http_get(pdf_url, page_url, ua, **kwargs):
             captured["pdf_url"] = pdf_url
             return PDF_BYTES
 
@@ -210,3 +210,115 @@ class TestOnPagePdfLinkGating:
         )
 
         assert captured["pdf_url"] == link_url
+
+
+class TestHttpGetWithCookies:
+    def test_skips_cookie_without_domain(self, tmp_path, monkeypatch):
+        """domain 为空的 cookie 应被跳过，避免 requests 收到无效 domain（风险点 3）。"""
+        scraper = _make_scraper(BasePublisherScraper, tmp_path)
+        scraper.context = MagicMock()
+        scraper.context.cookies.return_value = [
+            {"name": "cf_clearance", "value": "abc", "domain": "example.com",
+             "path": "/"},
+            {"name": "no_domain", "value": "x"},
+        ]
+
+        set_call = MagicMock()
+
+        class FakeSession:
+            headers = {}
+
+            def __init__(self):
+                self.cookies = MagicMock()
+                self.cookies.set = set_call
+
+            def get(self, *a, **k):
+                resp = MagicMock()
+                resp.raise_for_status.return_value = None
+                resp.content = b"%PDF-1.4"
+                return resp
+
+        monkeypatch.setattr(
+            "sources.publisher.py_requests.Session", FakeSession
+        )
+
+        body = scraper._http_get_with_cookies(
+            "https://example.com/paper.pdf", None, "test-ua"
+        )
+
+        assert body == b"%PDF-1.4"
+        # 只设置有 domain 的 cookie，且带 path
+        set_call.assert_called_once()
+        args, kwargs = set_call.call_args
+        assert args[0] == "cf_clearance"
+        assert args[1] == "abc"
+        assert kwargs.get("domain") == "example.com"
+        assert kwargs.get("path") == "/"
+
+    def test_timeout_threaded_to_context_request(self, tmp_path, monkeypatch):
+        """download_pdf 的 timeout 应透传给 _context_request_get（回归 #5 / 风险点 4）。"""
+        scraper = _make_scraper(BasePublisherScraper, tmp_path)
+        scraper.page = _mock_page()
+        scraper.context = MagicMock()
+
+        monkeypatch.setattr(scraper, "_http_get_with_cookies", lambda *a, **k: None)
+        captured = {}
+
+        def fake_context_get(pdf_url, page_url=None, timeout=None):
+            captured["timeout"] = timeout
+            return b"<html>captcha</html>"
+
+        monkeypatch.setattr(scraper, "_context_request_get", fake_context_get)
+        monkeypatch.setattr(scraper, "_browser_nav_download", lambda *a, **k: PDF_BYTES)
+
+        scraper.download_pdf("https://example.com/paper.pdf", timeout=99999)
+
+        assert captured["timeout"] == 99999
+
+
+class TestFetchPagePrimaryBotCheck:
+    def _bot_page_html(self):
+        return "<html><head><title>Just a moment...</title></head><body></body></html>"
+
+    def test_primary_bot_page_falls_through_to_browser(self, tmp_path, monkeypatch):
+        """primary 策略下 HTTP 返回 bot 页时应降级走浏览器（回归 #9）。"""
+        scraper = _make_scraper(BasePublisherScraper, tmp_path)
+        scraper.http_fallback_mode = "requests"
+        scraper.http_fallback_strategy = "primary"
+        scraper.context = MagicMock()
+        scraper.page = MagicMock()
+        scraper.page.content.return_value = (
+            "<html><head><title>Real Paper Page</title></head><body>ok</body></html>"
+        )
+        scraper.page.title.return_value = "Real Paper Page"
+
+        def fake_http_fetch(url, timeout_sec=30):
+            scraper.html = self._bot_page_html()
+            return True
+
+        monkeypatch.setattr(scraper, "_http_fetch", fake_http_fetch)
+        monkeypatch.setattr(scraper, "_is_bot_page", lambda html, title="": True)
+
+        scraper.fetch_page("https://example.com/paper")
+
+        # 未被 bot 页短路，浏览器 goto 被执行
+        scraper.page.goto.assert_called()
+        assert "Real Paper Page" in scraper.html
+
+    def test_primary_clean_page_short_circuits(self, tmp_path, monkeypatch):
+        """primary 策略下 HTTP 返回正常页面时应短路返回，不启动浏览器（回归 #9）。"""
+        scraper = _make_scraper(BasePublisherScraper, tmp_path)
+        scraper.http_fallback_mode = "requests"
+        scraper.http_fallback_strategy = "primary"
+        scraper.context = MagicMock()
+        scraper.page = MagicMock()
+
+        def fake_http_fetch(url, timeout_sec=30):
+            scraper.html = "<html><head><title>Real</title></head><body>ok</body></html>"
+            return True
+
+        monkeypatch.setattr(scraper, "_http_fetch", fake_http_fetch)
+
+        scraper.fetch_page("https://example.com/paper")
+
+        scraper.page.goto.assert_not_called()

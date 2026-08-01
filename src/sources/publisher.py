@@ -42,10 +42,12 @@ Cloudflare 反爬对抗策略：
 
 import re
 import json
+import time
 import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests as py_requests
 from parsel import Selector
@@ -133,8 +135,6 @@ class BasePublisherScraper:
 
         使用 cloakbrowser.launch_persistent_context 创建持久化浏览器上下文，
         自动处理浏览器指纹伪装和 Cloudflare 绕过。
-        浏览器启动后额外注入反检测 JS 掩盖自动化特征（如 navigator.webdriver），
-        进一步提升隐身效果。
 
         Args:
             proxy: 可选代理配置字典，格式如 {"server": "http://127.0.0.1:10808"}，
@@ -147,23 +147,6 @@ class BasePublisherScraper:
             humanize=True,
         )
         self.page = self.context.new_page()
-
-        # ─── 反检测 JS 注入 ───
-        # 覆盖浏览器自动化特征，使指纹更接近真实用户。
-        # 使用 add_init_script 而非 evaluate，确保脚本在每次页面导航前注入，
-        # 而非仅注入到当前（about:blank）页面上下文。
-        # 尤其针对 Nature 的 Fastly Client Challenge 检测。
-        self.page.context.add_init_script("""
-        () => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            window.navigator.chrome = { runtime: {} };
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-        }
-        """)
 
     # ──────────────────────────────────────────────────────────
     # HTTP Fallback 机制
@@ -398,8 +381,14 @@ class BasePublisherScraper:
             # ── 策略 "primary": 先 HTTP，失败再走浏览器 ──
             if self.http_fallback_mode and self.http_fallback_strategy == "primary":
                 if self._http_fetch(url, timeout_sec=max(timeout // 1000, 30)):
-                    return
-                # HTTP 失败，降级到浏览器
+                    if not self._is_bot_page(self.html):
+                        return
+                    # HTTP 返回的是 bot/拦截页，继续降级走浏览器
+                    logging.getLogger(__name__).info(
+                        "HTTP primary fetch returned a bot page, "
+                        "falling back to browser..."
+                    )
+                # HTTP 失败或拿到拦截页，降级到浏览器
 
             # ── 浏览器导航（原有逻辑） ──
             try:
@@ -442,8 +431,18 @@ class BasePublisherScraper:
                 except Exception as e3:
                     logger.warning("Reload failed: %s", e3)
                     break
-                self.page.wait_for_timeout(CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS)
-                self.html = self.page.content()
+                # reload 后轮询等待页面放行（而非固定空睡 RELOAD_WAIT_MS）：
+                # 每 10s 检查一次 challenge 是否已清除，页面提前放行则提前退出，
+                # 最坏等到截止时间（默认 45s）。
+                deadline = (
+                    time.monotonic()
+                    + CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS / 1000
+                )
+                while time.monotonic() < deadline:
+                    self.page.wait_for_timeout(10000)
+                    self.html = self.page.content()
+                    if not self._is_cf_challenge_page(self.html, self.page.title()):
+                        break
                 reload_remaining -= 1
 
             # ── 策略 "fallback": 浏览器拿到拦截页 → 回退 HTTP ──
@@ -466,6 +465,10 @@ class BasePublisherScraper:
                 raise PageParseError(f"HTML file {html_path} does not exist.")
             with open(html_path, "r", encoding="utf-8") as f:
                 self.html = f.read()
+        else:
+            raise ValueError(
+                "fetch_page: url 与 html_path 不能同时为空，必须提供至少一个。"
+            )
 
     def parse_page(self):
         """解析页面 HTML，提取论文元数据。
@@ -489,7 +492,11 @@ class BasePublisherScraper:
         Args:
             path: 保存路径（字符串）。
         """
-        html = self.page.content()
+        # 优先使用 self.html（fetch_page 设置的、与 parse_page 解析的同一份），
+        # 保证在线/离线模式下保存的内容一致；浏览器存在时兜底读取 page.content()。
+        html = self.html or (
+            self.page.content() if self.page is not None else ""
+        )
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
 
@@ -516,7 +523,9 @@ class BasePublisherScraper:
         error_dir.mkdir(parents=True, exist_ok=True)
         save_path = error_dir / filename
         try:
-            html = self.page.content()
+            html = self.html or (
+                self.page.content() if self.page is not None else ""
+            )
             save_path.write_text(html, encoding="utf-8")
             logger = logging.getLogger(__name__)
             logger.warning(f"Error HTML saved to {save_path}")
@@ -539,7 +548,7 @@ class BasePublisherScraper:
         return bool(data and data[:5] == b"%PDF-")
 
     def _http_get_with_cookies(self, pdf_url: str, page_url: str | None,
-                               ua: str) -> bytes | None:
+                               ua: str, timeout_sec: int = 120) -> bytes | None:
         """一级：requests + 浏览器 cookies 直接下载。
 
         复用浏览器 context 中已写入的反爬 cookie（如 Cloudflare
@@ -550,6 +559,7 @@ class BasePublisherScraper:
             pdf_url:  PDF 下载链接。
             page_url: 论文页面 URL，作为 Referer。
             ua:       浏览器 User-Agent。
+            timeout_sec: requests 下载超时时间（秒），默认 120。
 
         Returns:
             bytes: PDF 字节流，失败返回 None。
@@ -559,22 +569,26 @@ class BasePublisherScraper:
             cookies = self.context.cookies()
             session = py_requests.Session()
             for c in cookies:
+                # requests 的 cookie 需要 domain 与目标主机匹配才会发送；
+                # domain 为空的 cookie 设置后也不会生效，直接跳过。
+                if not c.get("domain"):
+                    continue
                 session.cookies.set(
                     c["name"], c["value"],
-                    domain=c.get("domain", ""),
+                    domain=c["domain"], path=c.get("path") or "/",
                 )
             session.headers.update({
                 "User-Agent": ua,
                 "Referer": page_url or "",
             })
-            resp = session.get(pdf_url, timeout=120)
+            resp = session.get(pdf_url, timeout=timeout_sec)
             resp.raise_for_status()
             return resp.content
         except Exception as err:
             logger.debug(f"HTTP download failed ({err})")
             return None
-
-    def _context_request_get(self, pdf_url: str, page_url: str | None) -> bytes | None:
+    def _context_request_get(self, pdf_url: str, page_url: str | None,
+                             timeout: int = 60000) -> bytes | None:
         """二级：Playwright APIRequestContext 下载。
 
         继承浏览器上下文的代理和 cookies，但不用真实页面导航，因此能拿到
@@ -584,6 +598,7 @@ class BasePublisherScraper:
         Args:
             pdf_url:  PDF 下载链接。
             page_url: 论文页面 URL，作为 Referer。
+            timeout:  请求超时时间（毫秒），默认 60000。
 
         Returns:
             bytes: PDF 字节流，失败返回 None。
@@ -591,28 +606,31 @@ class BasePublisherScraper:
         logger = logging.getLogger(__name__)
         try:
             headers = {"Referer": page_url or ""}
-            resp = self.context.request.get(pdf_url, headers=headers)
+            resp = self.context.request.get(
+                pdf_url, headers=headers, timeout=timeout,
+            )
             return resp.body()
         except Exception as err:
             logger.debug(f"Context request download failed ({err})")
             return None
 
-    def _browser_nav_download(self, pdf_url: str) -> bytes | None:
+    def _browser_nav_download(self, pdf_url: str, timeout: int = 120000) -> bytes | None:
         """三级：浏览器直接导航下载（goto + expect_download）。
 
         模拟用户点击 "Get PDF" 按钮的完整浏览器导航，是最后的兜底路径。
 
         Args:
             pdf_url:  PDF 下载链接。
+            timeout:  导航与下载事件超时时间（毫秒），默认 120000。
 
         Returns:
             bytes: PDF 字节流，失败返回 None。
         """
         logger = logging.getLogger(__name__)
         try:
-            with self.page.expect_download(timeout=120000) as download_info:
+            with self.page.expect_download(timeout=timeout) as download_info:
                 self.page.goto(
-                    pdf_url, wait_until="domcontentloaded", timeout=120000,
+                    pdf_url, wait_until="domcontentloaded", timeout=timeout,
                 )
             download = download_info.value
             pdf_body = download.content()
@@ -642,7 +660,9 @@ class BasePublisherScraper:
         Args:
             pdf_url:  PDF 下载链接。
             page_url: 论文页面 URL，提供后先访问此页面建立上下文。
-            timeout:  goto 超时时间（毫秒），默认 60000。
+            timeout:  三级下载各自请求的超时时间（毫秒），默认 60000。
+                      注意：先访问文章页的 goto 保留固定的 120s 导航超时，
+                      不随此参数变化。
 
         Returns:
             bytes: PDF 文件的原始字节。
@@ -692,18 +712,20 @@ class BasePublisherScraper:
             ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        pdf_body = self._http_get_with_cookies(pdf_url, page_url, ua)
+        pdf_body = self._http_get_with_cookies(
+            pdf_url, page_url, ua, timeout_sec=max(timeout // 1000, 30),
+        )
 
         if not self._is_pdf_bytes(pdf_body):
             logger.debug("HTTP download returned non-PDF, trying context request...")
-            pdf_body = self._context_request_get(pdf_url, page_url)
+            pdf_body = self._context_request_get(pdf_url, page_url, timeout=timeout)
 
         if not self._is_pdf_bytes(pdf_body):
             logger.debug(
                 "Previous paths returned non-PDF, "
                 "trying browser navigation download..."
             )
-            pdf_body = self._browser_nav_download(pdf_url)
+            pdf_body = self._browser_nav_download(pdf_url, timeout=timeout)
 
         if not self._is_pdf_bytes(pdf_body):
             raise RuntimeError(
@@ -937,8 +959,8 @@ class NatureScraper(BasePublisherScraper):
         # 通过 data-test="download-pdf" 属性的 a 标签定位
         pdf_url_part = sel.css('a[data-test="download-pdf"]::attr(href)').get() or ""
         if pdf_url_part:
-            # 拼接完整 URL
-            pdf_url = "https://www.nature.com" + pdf_url_part
+            # 用 urljoin 拼接，兼容相对/绝对两种 href 形式
+            pdf_url = urljoin("https://www.nature.com/", pdf_url_part)
         else:
             pdf_url = None
 
@@ -964,16 +986,31 @@ class NatureScraper(BasePublisherScraper):
         #       因此优先使用正文区域的摘要文本，JSON-LD 数据作为备用。
         json_ld_text = sel.css('script[type="application/ld+json"]::text').get()
         if json_ld_text:
+            # JSON-LD 结构在不同页面间有差异，需防御式解析：
+            # 根节点可能是 dict 或 list；mainEntity 可能是 dict 或 list；
+            # author 可能是单个 dict 或 dict 列表；datePublished 可能为 null。
             try:
-                data = json.loads(json_ld_text).get("mainEntity")
-            except (json.JSONDecodeError, KeyError):
+                raw = json.loads(json_ld_text)
+                data = raw.get("mainEntity") if isinstance(raw, dict) else None
+                if isinstance(data, list):
+                    data = data[0] if data else None
+                if not isinstance(data, dict):
+                    data = None
+            except (json.JSONDecodeError, AttributeError, KeyError):
                 data = None
-            if data:
+            if isinstance(data, dict):
                 title = data.get("headline", "")
                 # abstract_jsonld = data.get("description", "")  # 备用摘要（当前未使用，保留供后续参考）
                 # keywords = data.get("keywords", [])  # 备用关键词（当前未使用，保留供后续参考）
-                authors = [a["name"] for a in data.get("author", [])]
-                date = data.get("datePublished", "")
+                raw_authors = data.get("author") or []
+                if isinstance(raw_authors, dict):
+                    raw_authors = [raw_authors]
+                authors = [
+                    a.get("name", "")
+                    for a in raw_authors
+                    if isinstance(a, dict) and a.get("name")
+                ]
+                date = data.get("datePublished") or ""
                 # 标准化日期格式: "2026-05-19T00:00:00Z" → "2026-05-19"
                 if "T" in date:
                     date = date.split("T")[0]
@@ -1045,6 +1082,10 @@ class ScienceScraper(BasePublisherScraper):
         sel = Selector(text=self.html)
 
         # ─── 页面类型过滤 ───
+        # 已知问题（见 docs/tasks.md「已知问题」）：三级启发式过滤
+        # （altmetric_type / dc.Type / og:type）无白名单，可能误杀个别
+        # 带 altmetric_type 或不带 dc.Type 的真研究论文。暂按当前行为保留，
+        # 后续再评估是否需要收紧。
         # 一级：altmetric_type 检测（覆盖 CrossRef 发现的非研究文章，如 news/blog）
         # 这类页面通常没有 dc.Type meta，但仍可被识别为非研究文章
         altmetric_type = sel.css(
@@ -1090,17 +1131,22 @@ class ScienceScraper(BasePublisherScraper):
         # PDF 链接格式如 "/doi/pdf/10.1126/science.adx9954?download=true"
         pdf_url_part = sel.css('a[href*="download=true"]::attr(href)').get()
         if pdf_url_part:
-            pdf_url = "https://www.science.org" + pdf_url_part
+            # 用 urljoin 拼接，兼容相对/绝对两种 href 形式
+            pdf_url = urljoin("https://www.science.org/", pdf_url_part)
         else:
             pdf_url = None
 
         # ─── 从正文区域提取摘要 ───
-        # 使用 XPath 的 string() 函数获取 section#abstract 下
-        # 所有 div[role="paragraph"] 的完整文本内容（含嵌套元素文本）。
-        # string() 函数会递归获取所有后代文本节点并拼接。
+        # section#abstract 下可能有多个 div[role="paragraph"]，用 //text()
+        # 收集所有段落的全部后代文本节点再拼接。
+        # 注意：XPath 的 string() 作用于节点集时只返回第一个节点的文本，
+        # 会导致多段摘要丢失，因此这里不能用 string()。
         abstract = self._clean_abstract_text(
-            sel.xpath('string(//section[@id="abstract"]//div[@role="paragraph"])').get()
-            or ""
+            " ".join(
+                sel.xpath(
+                    '//section[@id="abstract"]//div[@role="paragraph"]//text()'
+                ).getall()
+            )
         )
 
         # Science 的正文 HTML 结构相对规整，可直接提取全文内容。
@@ -1129,10 +1175,10 @@ class CambridgeScraper(BasePublisherScraper):
     # 已知缺陷：部分 Cambridge 文章的 citation_abstract 标签内容并非摘要文本，
     # 而是指向首页 PDF 图片的 URL（如 //static.cambridge.org/content/id/.../
     # firstPage-pdf-xxx.jpg）。下列正则用于识别这类"伪摘要"。
+    # 仅当"整段摘要就是一个指向图片/PDF 的 URL"时才判定为伪摘要（^...$ 锚定），
+    # 避免误杀以 ".pdf" / "fig.png" 等扩展名结尾的正常摘要正文。
     _ABSTRACT_URL_PATTERN = re.compile(
-        r"^(?:\s*(?:https?:)?//|\s*https?://)"  # 以 // 或 http(s):// 开头
-        r"|"
-        r"\.(?:jpe?g|png|gif|webp|pdf|tiff?|bmp)(?:\?|$)",  # 或以图片/PDF扩展名结尾
+        r"^\s*(?:(?:https?:)?//\S+\.(?:jpe?g|png|gif|webp|pdf|tiff?|bmp)(?:\?\S*)?)\s*$",
         re.IGNORECASE,
     )
 
@@ -1144,8 +1190,9 @@ class CambridgeScraper(BasePublisherScraper):
         链接（如 ``//static.cambridge.org/content/id/.../firstPage-pdf-xxx.jpg``），
         而非摘要文本。直接采用会导致报告里出现一串 URL。
 
-        判定规则：若内容以 ``//``、``http://``、``https://`` 开头，或以常见
-        图片/PDF 扩展名结尾，则视为无效链接，返回空字符串；否则原样返回。
+        判定规则：仅当整段内容就是一个指向图片/PDF 的 URL（以 ``//`` 或
+        ``http(s)://`` 开头且以常见图片/PDF 扩展名结尾）时，视为无效链接，
+        返回空字符串；否则原样返回。
 
         Parameters
         ----------
@@ -1307,11 +1354,6 @@ class AIPScraper(BasePublisherScraper):
 
 
 class IOPScraper(BasePublisherScraper):
-    # IOP 对部分文章有 TLS 指纹检测（wget 无法获取），
-    # 浏览器失败时用 curl_cffi（带 TLS 指纹伪造）回退。
-    http_fallback_mode = "curl_cffi"
-    http_fallback_strategy = "fallback"
-
     """IOP (Institute of Physics) 期刊爬虫。
 
     支持 IOP Science 平台上的期刊，如 Journal of Physics 系列、
@@ -1322,6 +1364,11 @@ class IOPScraper(BasePublisherScraper):
         - 摘要通过 XPath 定位 div.article-abstract 下
           div.article-text（含 class 匹配）区域提取。
     """
+
+    # IOP 对部分文章有 TLS 指纹检测（wget 无法获取），
+    # 浏览器失败时用 curl_cffi（带 TLS 指纹伪造）回退。
+    http_fallback_mode = "curl_cffi"
+    http_fallback_strategy = "fallback"
 
     def parse_page(self):
         """解析 IOP 论文页面。
