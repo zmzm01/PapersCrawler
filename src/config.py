@@ -241,6 +241,11 @@ CFG.NON_RESEARCH_KEYWORDS = [
 CFG.PUBLISHER_PAGE_DELAY_MIN = 3
 CFG.PUBLISHER_PAGE_DELAY_MAX = 5
 CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES = 3
+# Cloudflare challenge 页处理：检测到「请稍候…」等挑战页后，reload 的次数上限
+# （reload 时持久化 context 中已写入 cf_clearance cookie，可直接放行）。
+CFG.PUBLISHER_CHALLENGE_MAX_RELOADS = 2
+# reload 后等待时长（毫秒），用于等 Cloudflare 完成验证并返回真实页面。
+CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS = 45000
 CFG.PUBLISHER_PROXY = {
     "optica": {"server": "http://127.0.0.1:10808"},
 }
@@ -319,6 +324,8 @@ def _apply_settings(settings):
     CFG.PUBLISHER_PAGE_DELAY_MIN = ps.get("page_delay_min", CFG.PUBLISHER_PAGE_DELAY_MIN)
     CFG.PUBLISHER_PAGE_DELAY_MAX = ps.get("page_delay_max", CFG.PUBLISHER_PAGE_DELAY_MAX)
     CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES = ps.get("max_consecutive_failures", CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES)
+    CFG.PUBLISHER_CHALLENGE_MAX_RELOADS = ps.get("challenge_max_reloads", CFG.PUBLISHER_CHALLENGE_MAX_RELOADS)
+    CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS = ps.get("challenge_reload_wait_ms", CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS)
     cfg_proxy = ps.get("proxy", {})
     if cfg_proxy:
         CFG.PUBLISHER_PROXY = cfg_proxy

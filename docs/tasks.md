@@ -1,5 +1,18 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-01: Phase C Cloudflare challenge reload 恢复
+
+- **背景**：08-01 daily run 中 AIP 前 3 篇连续被 Cloudflare Turnstile **managed challenge** 拦截（标题「请稍候…」），触发 `max_consecutive_failures=3` 熔断 abort，剩余 4 篇 AIP 论文当天搁置。全库 failed×4（3 AIP + 1 APS）。
+- **实测结论（浏览器 A/B）**：block 是**速率触发**的（单次请求无碍，快速连续请求 3 次即触发限流）；challenge 页加载时 `cf_clearance` cookie 已写入持久化 context，但页面卡在「验证成功。正在等待响应」→ **`page.reload()` 用该 cookie 直接放行**拿到真实文章页。旧代码每次 retry 只重新 `goto` 同一 URL，故一直卡死。
+- **改动**：
+  - `src/sources/publisher.py`：新增 `_is_cf_challenge_page()`（只认挑战页特有标记 `cf-chl-widget`/`_cf_chl_opt`/`challenge-error-text`/「正在进行安全验证」「验证成功」/标题「请稍候」等，不匹配正常文章页也内嵌的 turnstile/challenge-platform 脚本）；`fetch_page()` 初始等待后检测到 challenge 循环 reload（上限 `PUBLISHER_CHALLENGE_MAX_RELOADS`）；`start_browser()` 启用 `humanize=True`。
+  - `src/config.py` + `configs/settings.yaml`：新增 `publisher.challenge_max_reloads: 2` / `challenge_reload_wait_ms: 45000`。
+  - `tests/test_phase_c_bot.py`：新增 11 个 `_is_cf_challenge_page` 测试（含真实 AIP/APS 文章页不误判）。
+  - `docs/design.md` / `docs/usage.md`：补充机制说明与配置文档。
+- **验证**：233 pytest 通过；真实 AIP URL 快速连发 9 次，首次触发 challenge 后自动 reload 恢复，9/9 拿到真实文章页。cloakbrowser 升级 0.5.2 → 0.5.3。
+- **经验**：Cloudflare managed challenge 不一定要"解"，reload 复用已落盘 cookie 是最低成本的恢复手段；判断 challenge 要用挑战页结构标记而非 turnstile/challenge-platform 等也会出现在正常页面的 CDN 脚本。
+
+
 ## 2026-07-27 P8: 删除 GitHub 链接
 
 - **删除 GitHub 链接**：用户反馈侧栏下方的 `github` 文字链接「不好看」，决定整个删除。涉及 `base.html` 删 `<a class="sidebar-github-link">`、style.css 删 `.sidebar-github-link` / `.sidebar-github-link:hover` 规则、docs/design.md 与 usage.md Dashboard 行去掉相关描述。

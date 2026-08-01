@@ -840,6 +840,21 @@ python src/main.py
 
 HTML 快照保存在 `data/raw/page/error/`，可用浏览器打开分析拦截类型。
 
+自 2026-08-01 起，Phase C 已内置 **Cloudflare challenge 自动恢复**：
+当页面返回「请稍候…」等 Turnstile challenge 页时，`fetch_page()` 会自动 reload
+（利用 challenge 页加载时写入持久化 context 的 `cf_clearance` cookie）拿到真实文章页，
+无需人工干预。可通过 `configs/settings.yaml` 的 `publisher` 段调整：
+
+```yaml
+publisher:
+  # challenge 页 reload 恢复次数
+  challenge_max_reloads: 2
+  # reload 后等待时长（毫秒）
+  challenge_reload_wait_ms: 45000
+```
+
+若仍频繁失败，再考虑调大 `page_delay_min/max` 或走代理（`publisher.proxy`）。
+
 ### Phase E/F 429 限流
 
 ```bash

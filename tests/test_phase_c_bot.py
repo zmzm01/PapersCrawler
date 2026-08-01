@@ -13,6 +13,87 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 from pipeline.phase_c import _has_bot_markers, _extract_page_title
+from sources.publisher import BasePublisherScraper
+
+
+# ---- _is_cf_challenge_page (fetch_page reload-recovery helper) ----
+
+class TestIsCfChallengePage:
+    """测试 fetch_page 的 Cloudflare challenge 页检测（区别于正常文章页）。
+
+    真实文章页也会内嵌 cf-turnstile / challenge-platform 脚本，因此该检测
+    只认挑战页特有的结构标记，避免把正常页面误判为 challenge。
+    """
+
+    def _call(self, html, title=""):
+        return BasePublisherScraper._is_cf_challenge_page(None, html, title)
+
+    def test_title_qing_shaohou(self):
+        """AIP 08-01 实际拦截页：标题「请稍候…」."""
+        assert self._call("<html></html>", title="请稍候…")
+
+    def test_title_just_a_moment(self):
+        """Cloudflare 英文标题 'Just a moment...'."""
+        assert self._call("<html></html>", title="Just a moment...")
+
+    def test_title_attention_required(self):
+        """Cloudflare 英文标题 'Attention Required! | Cloudflare'."""
+        assert self._call("<html></html>", title="Attention Required! | Cloudflare")
+
+    def test_cf_chl_widget_html(self):
+        """挑战页内嵌 cf-chl-widget（Turnstile widget 容器）."""
+        html = '<html><div class="cf-chl-widget"></div></html>'
+        assert self._call(html)
+
+    def test_cf_chl_opt_html(self):
+        """挑战页内嵌 _cf_chl_opt 脚本."""
+        html = "<html><script>var _cf_chl_opt={cType:'managed'}</script></html>"
+        assert self._call(html)
+
+    def test_challenge_error_text(self):
+        """挑战页内嵌 challenge-error-text 元素."""
+        html = '<html><div id="challenge-error-text">...</div></html>'
+        assert self._call(html)
+
+    def test_chinese_verification_text(self):
+        """挑战页正文「正在进行安全验证」."""
+        html = "<html><div>pubs.aip.org 正在进行安全验证</div></html>"
+        assert self._call(html)
+
+    def test_chinese_verification_success(self):
+        """挑战页正文「验证成功。正在等待 pubs.aip.org 响应」."""
+        html = "<html><div>验证成功。正在等待 pubs.aip.org 响应</div></html>"
+        assert self._call(html)
+
+    def test_normal_article_with_turnstile_not_blocked(self):
+        """真实 AIP 文章页：含 cf-turnstile 脚本但无挑战结构 → 不误判。"""
+        html = """
+        <html><head>
+        <script src="https://challenges.cloudflare.com/turnstile/api.js?onload=init"></script>
+        <meta name="citation_title" content="Real AIP Paper"/>
+        <meta name="dc.creator" content="Author"/>
+        </head><body>
+        <div id="abstract">Valid abstract content here.</div>
+        </body></html>
+        """
+        assert not self._call(html, title="Real AIP Paper Title")
+
+    def test_normal_article_with_challenge_platform_not_blocked(self):
+        """真实 APS 文章页：含 challenge-platform CDN 脚本 → 不误判。"""
+        html = """
+        <html><head>
+        <script src="/cdn-cgi/challenge-platform/scripts/jsd.js"></script>
+        <meta name="citation_title" content="APS Test Paper"/>
+        </head><body>
+        <div id="abstract-section-content"><p>Valid abstract.</p></div>
+        </body></html>
+        """
+        assert not self._call(html, title="APS Test Paper")
+
+    def test_empty_html(self):
+        """空 HTML 不应判为 challenge。"""
+        assert not self._call("")
+        assert not self._call("", title="")
 
 
 # ---- _extract_page_title ----

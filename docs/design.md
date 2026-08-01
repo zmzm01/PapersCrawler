@@ -1243,13 +1243,25 @@ if scraper_class.skip_phase_c_if_crossref_abstract:
   Phase C 在浏览器启动前检查 DB 中已有 CrossRef 摘要的论文，直接标记 `skipped` 跳过浏览器访问。
   此优化节省反爬额度并加速 Pipeline（详见「关键设计决策 #15」）
 - **Pre-fetch 非研究论文检测**（`configs/settings.yaml` 配置）：在浏览器启动之前根据 DB 中的论文标题进行前缀匹配（`startswith`），匹配到 `erratum`、`author correction:`、`publisher correction:`、`comment on`、`response to`、`publisher's note` 等关键词时直接 `delete_paper()` + `insert_skipped_doi()`，避免浏览器启动和重试消耗。pre-fetch（`prefetch_non_research`）和 post-fetch（`postfetch_non_research`）有独立开关，关键词列表（`non_research_keywords`）由用户配置
-- **Bot 拦截检测**（parse_page 之后）：仅当 `parse_page()` 返回空结果（title+doi+abstract 全空）时才检查 bot 标记；
-  检测范围包括：
-  - Cloudflare: `challenge-platform`、`_cf_chl_opt`、`cf-browser-verification`、`cf-ray` + 短 HTML、`turnstile` + `challenge`
-  - Radware Bot Manager: `radware`、`bot manager`（HTML 和页面标题）
-  - Captcha 页面标题: `captcha`
-  - Nature Client Challenge (JS 验证): `javascript is disabled`（HTML 内容）、`client challenge`（页面标题）
-  - 异常处理中也增加 bot 检测（含页面标题提取），bot 拦截导致的异常走完整重试而非 attempt 0 终止
+ - **Bot 拦截检测**（parse_page 之后）：仅当 `parse_page()` 返回空结果（title+doi+abstract 全空）时才检查 bot 标记；
+   检测范围包括：
+   - Cloudflare: `challenge-platform`、`_cf_chl_opt`、`cf-browser-verification`、`cf-ray` + 短 HTML、`turnstile` + `challenge`
+   - Radware Bot Manager: `radware`、`bot manager`（HTML 和页面标题）
+   - Captcha 页面标题: `captcha`
+   - Nature Client Challenge (JS 验证): `javascript is disabled`（HTML 内容）、`client challenge`（页面标题）
+   - 异常处理中也增加 bot 检测（含页面标题提取），bot 拦截导致的异常走完整重试而非 attempt 0 终止
+ - **Cloudflare challenge reload 恢复**（`fetch_page` 内，2026-08-01）：AIP/APS 在快速连续请求下会触发 Cloudflare
+   Turnstile **managed challenge**（页面标题「请稍候…」，正文「验证成功。正在等待响应」）。实测确认 challenge 页加载时
+   `cf_clearance` cookie 已写入持久化 context，但页面本身卡在验证结果等待中——此时 `page.reload()` 用该 cookie
+   直接放行拿到真实文章页。旧逻辑每次 retry 只重新 `goto` 同一 URL，会一直卡在 challenge。新增：
+   - `_is_cf_challenge_page()`：只检查挑战页特有结构标记（`cf-chl-widget` / `_cf_chl_opt` / `challenge-error-text` /
+     正文「正在进行安全验证」「验证成功」/ 标题「请稍候」「just a moment」「attention required」），
+     **不**匹配真实文章页也内嵌的 `cf-turnstile` / `challenge-platform` CDN 脚本，避免误判。
+   - `fetch_page()` 在初始等待后若检测到 challenge，循环 reload（`PUBLISHER_CHALLENGE_MAX_RELOADS`，默认 2 次），
+     每次 reload 后等待 `PUBLISHER_CHALLENGE_RELOAD_WAIT_MS`（默认 45s）再重新取 HTML。
+   - `start_browser()` 启用 `humanize=True`（人类鼠标/键盘/滚动行为模拟），提升行为指纹得分，降低 challenge 触发概率。
+   - 配置项：`publisher.challenge_max_reloads` / `challenge_reload_wait_ms`（`configs/settings.yaml`）。
+   此机制对所有 publisher 生效（reload 仅在检测到 challenge 时触发，正常页面零开销）。
 - 按 publisher 分组处理，同一组复用浏览器实例（`SCRAPER_MAP` 管理 7 个 publisher）
 - Session 缓存自动清理：`BasePublisherScraper.close()` 在每次 publisher 组处理完毕后
   执行 `shutil.rmtree()` 清理 Chromium profile 目录（详见「韧性策略 #9」）
