@@ -138,6 +138,7 @@ class BasePublisherScraper:
             user_data_dir=str(self.user_data_dir),
             headless=False,
             proxy=proxy,
+            humanize=True,
         )
         self.page = self.context.new_page()
 
@@ -249,6 +250,33 @@ class BasePublisherScraper:
             return True
         return False
 
+    def _is_cf_challenge_page(self, html: str, title: str = "") -> bool:
+        """检测页面是否为 Cloudflare Challenge 拦截页（区别于正常文章页）。
+
+        真实文章页也会内嵌 cf-turnstile / challenge-platform 脚本，因此这里只检查
+        挑战页特有的结构标记（cf-chl-widget / _cf_chl_opt / challenge-error-text /
+        验证文案），避免误判。用于 fetch_page 的 reload 恢复流程。
+
+        Args:
+            html:  页面 HTML 源码。
+            title: 页面标题（可选，用于标题级别检测）。
+
+        Returns:
+            bool: 是 Cloudflare challenge 页返回 True，否则返回 False。
+        """
+        title_lower = title.lower() if title else ""
+        html_lower = html.lower() if html else ""
+        if any(kw in title_lower for kw in [
+            "请稍候", "just a moment", "attention required",
+        ]):
+            return True
+        if any(kw in html_lower for kw in [
+            "cf-chl-widget", "_cf_chl_opt", "challenge-error-text",
+            "正在进行安全验证", "验证成功",
+        ]):
+            return True
+        return False
+
     def fetch_page(self, url=None, html_path=None, timeout=8000):
         """获取论文页面 HTML 源码。
 
@@ -302,6 +330,29 @@ class BasePublisherScraper:
             # 等待 timeout ms，给 Cloudflare Challenge 足够时间自动通过
             self.page.wait_for_timeout(timeout)
             self.html = self.page.content()
+
+            # ── Cloudflare Challenge reload 恢复 ──
+            # challenge 页加载时 cf_clearance cookie 已写入持久化 context，
+            # 但页面可能卡在「请稍候…」等验证结果。此时 reload 会用该 cookie
+            # 直接放行拿到真实页面。若只重复 goto 同一 URL 会一直卡在 challenge。
+            logger = logging.getLogger(__name__)
+            reload_remaining = CFG.PUBLISHER_CHALLENGE_MAX_RELOADS
+            while reload_remaining > 0 and self._is_cf_challenge_page(
+                self.html, self.page.title()
+            ):
+                logger.info(
+                    "Cloudflare challenge page detected, reloading "
+                    "(%d remaining, title=%s)...",
+                    reload_remaining, self.page.title()[:60],
+                )
+                try:
+                    self.page.reload(wait_until="domcontentloaded", timeout=120000)
+                except Exception as e3:
+                    logger.warning("Reload failed: %s", e3)
+                    break
+                self.page.wait_for_timeout(CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS)
+                self.html = self.page.content()
+                reload_remaining -= 1
 
             # ── 策略 "fallback": 浏览器拿到拦截页 → 回退 HTTP ──
             if self.http_fallback_mode and self.http_fallback_strategy == "fallback":
