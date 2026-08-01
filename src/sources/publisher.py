@@ -52,7 +52,7 @@ from parsel import Selector
 from cloakbrowser import launch_persistent_context
 
 from common import Paper
-from config import RAW_PAGE_DIR, DATA_DIR
+from config import RAW_PAGE_DIR, CFG
 
 
 # ──────────────────────────────────────────────────────────
@@ -276,6 +276,92 @@ class BasePublisherScraper:
         ]):
             return True
         return False
+
+    # ──────────────────────────────────────────────────────────
+    # 通用元数据提取 Helper（各 parse_page 复用）
+    # ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_meta(sel, name: str) -> str:
+        """从 ``<meta name="...">`` 标签提取 content 属性值。
+
+        Args:
+            sel:  parsel Selector。
+            name: meta 标签的 name 属性值。
+
+        Returns:
+            str: content 内容；标签缺失时返回空字符串。
+        """
+        return sel.css(f'meta[name="{name}"]::attr(content)').get() or ""
+
+    @staticmethod
+    def _extract_meta_all(sel, name: str) -> list:
+        """从 ``<meta name="...">`` 标签提取全部 content 属性值。
+
+        用于多值字段（如 citation_author 的多个作者）。
+
+        Args:
+            sel:  parsel Selector。
+            name: meta 标签的 name 属性值。
+
+        Returns:
+            list[str]: 全部 content 值。
+        """
+        return sel.css(f'meta[name="{name}"]::attr(content)').getall()
+
+    @staticmethod
+    def _extract_attr(sel, css_selector: str) -> str:
+        """从自定义 CSS 选择器提取单个属性值。
+
+        用于带附加属性过滤的 meta 提取（如 Science 的
+        ``meta[name="dc.Identifier"][scheme="doi"]``）。
+
+        Args:
+            sel:          parsel Selector。
+            css_selector: 完整 CSS 选择器（含 ``::attr(...)``）。
+
+        Returns:
+            str: 提取值；缺失时返回空字符串。
+        """
+        return sel.css(css_selector).get() or ""
+
+    @staticmethod
+    def _extract_canonical_url(sel) -> str:
+        """从 ``<link rel="canonical">`` 提取标准 URL。
+
+        Args:
+            sel: parsel Selector。
+
+        Returns:
+            str: canonical URL；缺失时返回空字符串。
+        """
+        return sel.css('link[rel="canonical"]::attr(href)').get() or ""
+
+    @staticmethod
+    def _join_texts(parts) -> str:
+        """拼接多个文本片段为单个字符串。
+
+        去除每个片段的首尾空白、过滤空片段后，用单个空格连接。
+
+        Args:
+            parts: 文本片段列表。
+
+        Returns:
+            str: 拼接后的文本。
+        """
+        return " ".join(p.strip() for p in parts if p.strip())
+
+    @staticmethod
+    def _clean_abstract_text(text: str) -> str:
+        """清理摘要文本：压缩多个空白字符为单个空格。
+
+        Args:
+            text: 原始摘要文本。
+
+        Returns:
+            str: 清理后的摘要文本；空文本返回空字符串。
+        """
+        return re.sub(r"\s+", " ", text).strip() if text else ""
 
     def fetch_page(self, url=None, html_path=None, timeout=8000):
         """获取论文页面 HTML 源码。
@@ -692,31 +778,23 @@ class APSScraper(BasePublisherScraper):
             )
 
         # ─── 从 <meta> 标签提取元数据 ───
-        title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""
-        date = sel.css('meta[name="citation_date"]::attr(content)').get() or ""
-        doi = sel.css('meta[name="citation_doi"]::attr(content)').get() or ""
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
-        authors = sel.css('meta[name="citation_author"]::attr(content)').getall()
+        title = self._extract_meta(sel, "citation_title")
+        date = self._extract_meta(sel, "citation_date")
+        doi = self._extract_meta(sel, "citation_doi")
+        journal = self._extract_meta(sel, "citation_journal_title")
+        authors = self._extract_meta_all(sel, "citation_author")
         # 注意：citation_pdf_url 链接会产生重定向，且下载 PDF 通常需要认证
-        pdf_url = (
-            sel.css('meta[name="citation_pdf_url"]::attr(content)').get() or ""
-        )
+        pdf_url = self._extract_meta(sel, "citation_pdf_url")
 
         # 从 meta description 获取简短描述（备用摘要信息）
-        description = (
-            sel.css('meta[name="description"]::attr(content)').get() or ""
-        )
+        description = self._extract_meta(sel, "description")
 
         # ─── 从正文区域提取摘要 ───
         # CSS 选择器：#abstract-section-content 是 APS 页面的摘要容器，
         # 内部可能包含多个 <p> 标签（理论上物理期刊摘要单段，但做兼容处理）
-        paragraphs = sel.css("#abstract-section-content p::text").getall()
-        paragraphs = [
-            p.strip() for p in paragraphs if p.strip()
-        ]
-        abstract = " ".join(paragraphs)
+        abstract = self._join_texts(
+            sel.css("#abstract-section-content p::text").getall()
+        )
 
         # 注意：APS 正文中的数学公式由 MathJAX 渲染，HTML 源码中不含原始 TeX，
         #       因此无法直接从 HTML 页面抓取全文公式内容。
@@ -816,10 +894,10 @@ class NatureScraper(BasePublisherScraper):
 
         # ─── 从 <meta> 标签提取 DOI 和 URL ───
         # dc.Identifier 带有 scheme="doi" 属性，精确匹配 DOI (注意 nature page 拿到的是 doi: 开头的 DOI)
-        doi_raw = sel.css('meta[name="dc.Identifier"]::attr(content)').get() or ""
+        doi_raw = self._extract_meta(sel, "dc.Identifier")
         doi = doi_raw.removeprefix("doi:") if doi_raw else ""
         # 从 canonical link 获取标准 URL
-        url = sel.css('link[rel="canonical"]::attr(href)').get() or ""
+        url = self._extract_canonical_url(sel)
 
         # ─── 从 JSON-LD 结构化数据中提取元数据 ───
         # Nature 页面在 <script type="application/ld+json"> 中提供了丰富的
@@ -845,21 +923,17 @@ class NatureScraper(BasePublisherScraper):
 
         # ─── 从 <meta> 标签提取期刊名称 ───
         # 优先使用 citation_journal_title（标准引用格式）
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
+        journal = self._extract_meta(sel, "citation_journal_title")
         # 备用方案：使用 dc.Publisher（如 "Nature Publishing Group"）
         if not journal:
-            journal = sel.css('meta[name="dc.Publisher"]::attr(content)').get() or ""
+            journal = self._extract_meta(sel, "dc.Publisher")
 
         # ─── 从正文区域提取摘要（优先于 JSON-LD） ───
         # #Abs1-content 是 Nature 文章页面的摘要正文区域，
         # 其文本比 JSON-LD 中的 description 更纯净，后者可能混入非摘要内容。
-        paragraphs = sel.css("#Abs1-content *::text").getall()
-        paragraphs = [
-            p.strip() for p in paragraphs if p.strip()
-        ]
-        abstract_article = " ".join(paragraphs)
+        abstract_article = self._join_texts(
+            sel.css("#Abs1-content *::text").getall()
+        )
         if abstract_article:
             abstract = abstract_article
 
@@ -947,15 +1021,12 @@ class ScienceScraper(BasePublisherScraper):
             raise NonResearchPageError("This Science page is not research-article.")
 
         # ─── 从 <meta> 标签提取元数据 ───
-        title = sel.css('meta[name="dc.Title"]::attr(content)').get() or ""
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
-        authors = sel.css('meta[name="dc.Creator"]::attr(content)').getall()  # Science 用 dc.Creator 存作者
-        date = sel.css('meta[name="dc.Date"]::attr(content)').get() or ""
-        doi = (
-            sel.css('meta[name="dc.Identifier"][scheme="doi"]::attr(content)').get()
-            or ""
+        title = self._extract_meta(sel, "dc.Title")
+        journal = self._extract_meta(sel, "citation_journal_title")
+        authors = self._extract_meta_all(sel, "dc.Creator")  # Science 用 dc.Creator 存作者
+        date = self._extract_meta(sel, "dc.Date")
+        doi = self._extract_attr(
+            sel, 'meta[name="dc.Identifier"][scheme="doi"]::attr(content)'
         )
 
         # ─── 获取 PDF 下载链接 ───
@@ -970,13 +1041,9 @@ class ScienceScraper(BasePublisherScraper):
         # 使用 XPath 的 string() 函数获取 section#abstract 下
         # 所有 div[role="paragraph"] 的完整文本内容（含嵌套元素文本）。
         # string() 函数会递归获取所有后代文本节点并拼接。
-        abstract = (
+        abstract = self._clean_abstract_text(
             sel.xpath('string(//section[@id="abstract"]//div[@role="paragraph"])').get()
             or ""
-        )
-        # 清理不可见字符（多个空白字符压缩为单个空格）
-        abstract = (
-            re.sub(r"\s+", " ", abstract).strip() if abstract else ""
         )
 
         # Science 的正文 HTML 结构相对规整，可直接提取全文内容。
@@ -1066,13 +1133,11 @@ class CambridgeScraper(BasePublisherScraper):
         sel = Selector(text=self.html)
 
         # ─── 从 <meta> 标签提取元数据 ───
-        title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""
-        canonical_url = sel.css('link[rel="canonical"]::attr(href)').get() or ""
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
-        authors = sel.css('meta[name="citation_author"]::attr(content)').getall()
-        date = sel.css('meta[name="citation_online_date"]::attr(content)').get() or ""
+        title = self._extract_meta(sel, "citation_title")
+        canonical_url = self._extract_canonical_url(sel)
+        journal = self._extract_meta(sel, "citation_journal_title")
+        authors = self._extract_meta_all(sel, "citation_author")
+        date = self._extract_meta(sel, "citation_online_date")
 
         # 解析关键词（分号分隔的字符串）
         keywords_str = sel.css('meta[name="citation_keywords"]::attr(content)').get()
@@ -1082,9 +1147,9 @@ class CambridgeScraper(BasePublisherScraper):
                 item.strip() for item in keywords_str.split(";") if item.strip()
             ]
 
-        pdf_url = sel.css('meta[name="citation_pdf_url"]::attr(content)').get() or ""
+        pdf_url = self._extract_meta(sel, "citation_pdf_url")
 
-        doi = sel.css('meta[name="citation_doi"]::attr(content)').get() or ""
+        doi = self._extract_meta(sel, "citation_doi")
 
         # ─── 从 <meta> 标签提取摘要 ───
         # 剑桥大学出版社在 citation_abstract 中直接提供了摘要文本，
@@ -1095,8 +1160,9 @@ class CambridgeScraper(BasePublisherScraper):
         # firstPage-pdf-xxx.jpg）。若不加校验直接采用，报告里会出现一串链接而非
         # 摘要。此处对提取结果做内容校验：看起来像 URL/图片链接则视为无效，置空
         # abstract，交由后续流程回退到正文解析或留空。
-        abstract = sel.css('meta[name="citation_abstract"]::attr(content)').get() or ""
-        abstract = self._validate_cambridge_abstract(abstract)
+        abstract = self._validate_cambridge_abstract(
+            self._extract_meta(sel, "citation_abstract")
+        )
 
         return Paper(
             doi=doi,
@@ -1149,32 +1215,26 @@ class AIPScraper(BasePublisherScraper):
         sel = Selector(text=self.html)
 
         # ─── 从 <meta> 标签提取元数据 ───
-        title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""
-        canonical_url = sel.css('link[rel="canonical"]::attr(href)').get() or ""
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
-        authors = sel.css('meta[name="citation_author"]::attr(content)').getall()
+        title = self._extract_meta(sel, "citation_title")
+        canonical_url = self._extract_canonical_url(sel)
+        journal = self._extract_meta(sel, "citation_journal_title")
+        authors = self._extract_meta_all(sel, "citation_author")
         # AIP 的日期存放在 publish_date 而非 citation_date 标签中
-        date = sel.css('meta[name="publish_date"]::attr(content)').get() or ""
+        date = self._extract_meta(sel, "publish_date")
 
-        pdf_url = sel.css('meta[name="citation_pdf_url"]::attr(content)').get() or ""
+        pdf_url = self._extract_meta(sel, "citation_pdf_url")
 
-        doi = sel.css('meta[name="citation_doi"]::attr(content)').get() or ""
+        doi = self._extract_meta(sel, "citation_doi")
 
         # ─── 从正文区域提取摘要 ───
         # 通过 XPath 定位：具有 class="abstract" 且 aria-label="Main abstract"
         # 的 section 元素，使用 string() 获取其全部文本内容。
         # aria-label="Main abstract" 用于区分页面可能存在的其他摘要区域。
-        abstract = (
+        abstract = self._clean_abstract_text(
             sel.xpath(
                 'string(//section[@class="abstract"][@aria-label="Main abstract"])'
             ).get()
             or ""
-        )
-        # 清理不可见字符，压缩多个空白为单个空格
-        abstract = (
-            re.sub(r"\s+", " ", abstract).strip() if abstract else ""
         )
 
         return Paper(
@@ -1231,31 +1291,26 @@ class IOPScraper(BasePublisherScraper):
         sel = Selector(text=self.html)
 
         # ─── 从 <meta> 标签提取元数据 ───
-        title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""
-        canonical_url = sel.css('link[rel="canonical"]::attr(href)').get() or ""
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
-        authors = sel.css('meta[name="citation_author"]::attr(content)').getall()
-        date = sel.css('meta[name="citation_online_date"]::attr(content)').get() or ""
+        title = self._extract_meta(sel, "citation_title")
+        canonical_url = self._extract_canonical_url(sel)
+        journal = self._extract_meta(sel, "citation_journal_title")
+        authors = self._extract_meta_all(sel, "citation_author")
+        date = self._extract_meta(sel, "citation_online_date")
 
-        pdf_url = sel.css('meta[name="citation_pdf_url"]::attr(content)').get() or ""
+        pdf_url = self._extract_meta(sel, "citation_pdf_url")
 
-        doi = sel.css('meta[name="citation_doi"]::attr(content)').get() or ""
+        doi = self._extract_meta(sel, "citation_doi")
 
         # ─── 从正文区域提取摘要 ───
         # 通过 XPath 定位：class 为 article-abstract 的 div 下，
         # 带有 article-text class（可能含多个 class）的 div 元素，
         # 使用 string() 获取其全部文本内容。
-        abstract = (
+        # contains(@class, "article-text") 做模糊匹配。
+        abstract = self._clean_abstract_text(
             sel.xpath(
                 'string(//div[@class="article-abstract"]//div[contains(@class, "article-text")])'
             ).get()
             or ""
-        )
-        # 清理不可见字符，压缩多个空白为单个空格
-        abstract = (
-            re.sub(r"\s+", " ", abstract).strip() if abstract else ""
         )
 
         return Paper(
@@ -1340,29 +1395,23 @@ class OpticaScraper(BasePublisherScraper):
             )
 
         # ─── 从 <meta> 标签提取元数据 ───
-        title = sel.css('meta[name="citation_title"]::attr(content)').get() or ""
-        journal = (
-            sel.css('meta[name="citation_journal_title"]::attr(content)').get() or ""
-        )
-        authors = sel.css('meta[name="citation_author"]::attr(content)').getall()
-        date = sel.css('meta[name="citation_online_date"]::attr(content)').get() or ""
+        title = self._extract_meta(sel, "citation_title")
+        journal = self._extract_meta(sel, "citation_journal_title")
+        authors = self._extract_meta_all(sel, "citation_author")
+        date = self._extract_meta(sel, "citation_online_date")
 
-        pdf_url = sel.css('meta[name="citation_pdf_url"]::attr(content)').get() or ""
+        pdf_url = self._extract_meta(sel, "citation_pdf_url")
 
-        doi = sel.css('meta[name="citation_doi"]::attr(content)').get() or ""
+        doi = self._extract_meta(sel, "citation_doi")
 
         # ─── 从正文区域提取摘要 ───
         # 通过 XPath 定位：#articleBody 容器内，id="Abstract" 的 h2 标题后的
         # 第一个 div 兄弟元素（following-sibling::div[1]），即摘要内容区域。
-        abstract = (
+        abstract = self._clean_abstract_text(
             sel.xpath(
                 'string(//div[@id="articleBody"]/h2[@id="Abstract"]/following-sibling::div[1])'
             ).get()
             or ""
-        )
-        # 清理不可见字符，压缩多个空白为单个空格
-        abstract = (
-            re.sub(r"\s+", " ", abstract).strip() if abstract else ""
         )
 
         # 检测反爬拦截：title 有值但 abstract 为空，
@@ -1383,91 +1432,3 @@ class OpticaScraper(BasePublisherScraper):
             pdf_url=pdf_url,
         )
 
-
-# ──────────────────────────────────────────────────────────
-# 测试入口（各出版商的测试代码已注释，按需取消注释使用）
-# ──────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    from pprint import pprint
-
-    # Nature 测试
-    # url = "https://www.nature.com/articles/s41567-026-03184-9" # OriginalPaper
-    # url = "https://www.nature.com/articles/d41586-026-01575-9" # podcast
-    # url = "https://www.nature.com/articles/d41586-026-01504-w" # highlight
-    # url = "https://www.nature.com/articles/d41586-026-01558-w" # news
-    # nScraper = NatureScraper("./TEST/publisher_test/chrome_cache/nature")
-    # nScraper.start_browser()
-    # nScraper.fetch_page(url)
-    # paper = nScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/nature_news.html")
-    # nScraper.save_page(html_path)
-    # nScraper.close()
-
-    # Science 测试
-    # url = "https://www.science.org/doi/abs/10.1126/science.adx9954?af=R"
-    # sScraper = ScienceScraper("./TEST/publisher_test/chrome_cache/science")
-    # sScraper.start_browser()
-    # sScraper.fetch_page(url)
-    # paper = sScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/science.html")
-    # sScraper.save_page(html_path)
-    # sScraper.close()
-
-    # APS 测试
-    # url = "https://journals.aps.org/prl/abstract/10.1103/yq7c-8bsv"
-    # apsScraper = APSScraper("./TEST/publisher_test/chrome_cache/aps")
-    # apsScraper.start_browser()
-    # apsScraper.fetch_page(url)
-    # paper = apsScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/aps.html")
-    # apsScraper.save_page(html_path)
-    # apsScraper.close()
-
-    # Cambridge 测试
-    # url = "https://dx.doi.org/10.1017/hpl.2025.10090?rft_dat=source%3Ddrss"
-    # cScraper = CambridgeScraper("./TEST/publisher_test/chrome_cache/cambridge")
-    # cScraper.start_browser()
-    # cScraper.fetch_page(url)
-    # paper = cScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/cambridge.html")
-    # cScraper.save_page(html_path)
-    # cScraper.close()
-
-    # AIP 测试
-    # url = "https://pubs.aip.org/aip/apl/article/128/19/194001/3391238/A-cavity-mediated-reconfigurable-coupling-scheme"
-    # aipScraper = AIPScraper("./TEST/publisher_test/chrome_cache/AIP")
-    # aipScraper.start_browser()
-    # aipScraper.fetch_page(url)
-    # paper = aipScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/aip.html")
-    # aipScraper.save_page(html_path)
-    # aipScraper.close()
-
-    # IOP 测试
-    # url = "https://iopscience.iop.org/article/10.1088/1361-6587/ae5adb"
-    # iopScraper = IOPScraper("./TEST/publisher_test/chrome_cache/IOP")
-    # iopScraper.start_browser()
-    # iopScraper.fetch_page(url)
-    # paper = iopScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/iop.html")
-    # iopScraper.save_page(html_path)
-    # iopScraper.close()
-
-    # Optica 测试
-    # url = "https://opg.optica.org/abstract.cfm?URI=optica-13-5-951"
-    # url = "https://opg.optica.org/optica/fulltext.cfm?uri=optica-13-5-867"
-    # optScraper = OpticaScraper("./TEST/publisher_test/chrome_cache/Optica")
-    # optScraper.start_browser(proxy={"server": "http://127.0.0.1:10808"}) # Optica 可能需要美国代理才不触发检测
-    # optScraper.fetch_page(url, 5000)
-    # paper = optScraper.parse_page()
-    # pprint(paper)
-    # html_path = Path("./TEST/publisher_test/html_example/optica.html")
-    # optScraper.save_page(html_path)
-    # optScraper.close()

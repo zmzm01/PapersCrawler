@@ -1,5 +1,26 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-01: publisher.py 重构 + Optica Radware 探测
+
+- **Part A（已落地）**：重构 `src/sources/publisher.py`（1473 → 1434 行）。
+  - 新增 6 个共享 helper 到 `BasePublisherScraper`：`_extract_meta` / `_extract_meta_all` /
+    `_extract_attr` / `_extract_canonical_url` / `_join_texts` / `_clean_abstract_text`。
+  - 7 个 `parse_page()`（APS/Nature/Science/Cambridge/AIP/IOP/Optica）改用 helpers，
+    消除 citation_* meta 提取 + 摘要 whitespace 清理的重复代码，行为完全一致。
+  - 删除 87 行注释掉的 `__main__` 调试块；修复未使用的 `DATA_DIR` import。
+  - 验证：233 pytest passed。
+- **Part 0（探测）**：Optica PDF 失败根因 = Radware Bot Manager captcha。
+  - 直连（含 humanize）一律被拦；**代理 7890 放行**，`viewmedia.cfm` 302 →
+    signed `directpdfaccess/*.pdf` URL。
+  - 但 `expect_download()` 拿不到——Chrome 内联渲染 PDF viewer，无 download 事件。
+  - **突破**：`context.request.get()` 在代理下对 viewmedia/signed URL 直接返回完整 PDF。
+  - 修复方向记录于 design.md「Optica PDF 下载实测结论」。
+- **Part B（已落地，见上方「download_pdf 兜底链重构」）**：download_pdf 重构为
+  `on_page_url（仅 APS）→ requests+cookies → context.request.get() → goto+expect_download`，
+  删除 JS fetch 死代码。
+- **Part C（取消）**：MinerU `blocked` 状态不自动重置——用户决定暂不添加，保留 failed
+  自动重置赌 Radware 间歇性放行（block 可能今天有明天无）。
+
 ## 2026-08-01: Phase C Cloudflare challenge reload 恢复
 
 - **背景**：08-01 daily run 中 AIP 前 3 篇连续被 Cloudflare Turnstile **managed challenge** 拦截（标题「请稍候…」），触发 `max_consecutive_failures=3` 熔断 abort，剩余 4 篇 AIP 论文当天搁置。全库 failed×4（3 AIP + 1 APS）。
