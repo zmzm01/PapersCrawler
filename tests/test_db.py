@@ -49,6 +49,45 @@ def test_doi_not_exists(db):
     assert db.paper_doi_exists("10.0000/nonexist") is False
 
 
+def test_doi_exists_case_insensitive(db):
+    """DOI 大小写不敏感：RSS 大写与 CrossRef 小写应命中同一记录。"""
+    db.insert_rss_basicinfo("10.1364/OE.605615", "Case Paper", "http://x",
+                            "Optics Express", "optica", "2026-08-07")
+    assert db.paper_doi_exists("10.1364/OE.605615") is True
+    assert db.paper_doi_exists("10.1364/oe.605615") is True
+    papers = db.get_all_papers()
+    assert papers[0]["doi"] == "10.1364/oe.605615"
+
+
+def test_insert_lowercases_doi(db):
+    """insert_rss_basicinfo / insert_paper_basicinfo 自动把 DOI 转小写。"""
+    db.insert_rss_basicinfo("10.1000/B001", "T", "http://a", "J", "pub", "2025")
+    db.insert_paper_basicinfo(doi="10.1000/C002", title="U", link="http://b",
+                              journal="J", publisher="pub", date="2025",
+                              source="crossref")
+    dois = {p["doi"] for p in db.get_all_papers()}
+    assert dois == {"10.1000/b001", "10.1000/c002"}
+
+
+def test_is_doi_skipped_case_insensitive(db):
+    """skipped_dois 判定大小写不敏感，且写入时规范为小写。"""
+    db.insert_skipped_doi("10.1364/OPEX.123456", "NonResearchPageError")
+    assert db.is_doi_skipped("10.1364/OPEX.123456") is True
+    assert db.is_doi_skipped("10.1364/opex.123456") is True
+    # 写入应已小写
+    cur = db.conn.execute("SELECT doi FROM skipped_dois")
+    assert cur.fetchone()["doi"] == "10.1364/opex.123456"
+
+
+def test_insert_paper_created_date_case_insensitive(db):
+    """insert_paper_created_date 对大小写不敏感地匹配论文。"""
+    db.insert_rss_basicinfo("10.1364/OE.605615", "T", "http://x",
+                            "J", "pub", "2026")
+    db.insert_paper_created_date("10.1364/oe.605615", "2026-08-09")
+    papers = db.get_all_papers()
+    assert papers[0]["created_date"] == "2026-08-09"
+
+
 def test_insert_rss_basicinfo(db):
     """验证 RSS 基本写入后数据正确。"""
     db.insert_rss_basicinfo("10.1000/a001", "Paper A", "http://a.com",
