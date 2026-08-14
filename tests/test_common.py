@@ -13,7 +13,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from common import fix_json_invalid_escapes
+from common import (
+    LLMCircuitBreaker, LLMServiceUnavailableError, call_llm_api_with_retry,
+    fix_json_invalid_escapes,
+)
 
 
 # ---- fix_json_invalid_escapes ----
@@ -66,6 +69,28 @@ def test_fix_escapes_mixed():
     parsed = json.loads(fixed)
     assert "alpha" in parsed["text"]
     assert "beta" in parsed["text"]
+
+
+def test_llm_missing_choices_is_transient_and_opens_circuit():
+    """A 200 error payload without choices is a retriable service failure."""
+    class Response:
+        headers = {}
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"error": {"message": "service degraded"}}
+
+    class Session:
+        def post(self, url, **kwargs):
+            return Response()
+
+    circuit = LLMCircuitBreaker(failure_threshold=1)
+    with pytest.raises(LLMServiceUnavailableError, match="service unavailable"):
+        call_llm_api_with_retry(
+            {"api_url": "https://example.invalid", "retry_max_attempts": 1},
+            {}, {}, session=Session(), circuit_breaker=circuit,
+        )
+    assert circuit.is_open
 
 
 # ---- DatabaseClient._validate_column ----

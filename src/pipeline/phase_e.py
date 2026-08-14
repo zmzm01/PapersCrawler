@@ -9,6 +9,7 @@ from datetime import datetime
 
 from config import CFG, load_keywords
 from db.database import DatabaseClient, FetchStatus
+from common import LLMCircuitBreaker, LLMServiceUnavailableError
 from processors.paper_relevance import (
     PaperRelevanceChecker,
     LLMAPICallError, LLMResponseParseError,
@@ -51,6 +52,13 @@ def phase_e_llm_relevance(db):
         doi = paper["doi"]
         abstract = (paper["abstract"] or "").strip()
         if not abstract:
+            page_status = paper["publisher_page_fetched_status"]
+            if page_status in (FetchStatus.PENDING.value, FetchStatus.FAILED.value):
+                logger.info(
+                    "No abstract yet; retaining pending relevance until publisher retry: %s",
+                    doi,
+                )
+                continue
             logger.info(f"No abstract, skipping LLM: {doi}")
             db.update_process_status(
                 doi, "llm_relevance_status",
@@ -74,6 +82,7 @@ def phase_e_llm_relevance(db):
     max_workers = min(len(tasks), CFG.LLM_CONCURRENT_MAX)
     logger.info(f"Phase E: {max_workers} concurrent workers")
     success_count = 0
+    circuit_breaker = LLMCircuitBreaker(CFG.LLM_CIRCUIT_BREAKER_THRESHOLD)
 
     # 线程安全契约：worker 内只允许 LLM HTTP 调用（call_llm_api_with_retry），
     # DB 写入必须只在主线程执行（通过 as_completed 主循环）。
@@ -82,7 +91,10 @@ def phase_e_llm_relevance(db):
     # 如未来需 worker 写 DB，请改用 per-thread 连接或 queue。
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(checker.call_deepseek_api, prompt, CFG.LLM_API_CONFIG_DICT_RELE): (paper, prompt)
+            executor.submit(
+                checker.call_deepseek_api, prompt, CFG.LLM_API_CONFIG_DICT_RELE,
+                circuit_breaker,
+            ): (paper, prompt)
             for paper, prompt in tasks
         }
         for future in as_completed(futures):
@@ -131,6 +143,9 @@ def phase_e_llm_relevance(db):
                 success_count += 1
 
             except (LLMAPICallError, LLMResponseParseError) as e:
+                if isinstance(e, LLMServiceUnavailableError) and circuit_breaker.is_open:
+                    logger.warning("LLM circuit open; retaining pending relevance: %s", doi)
+                    continue
                 logger.warning(f"LLM relevance API error [{doi}]: {e}")
                 db.update_llm_relevance_error(
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
@@ -148,4 +163,6 @@ def phase_e_llm_relevance(db):
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                 )
 
+    if circuit_breaker.is_open:
+        logger.warning("Phase E circuit breaker opened; remaining papers will retry next run")
     logger.info(f"Phase E done: {success_count} succeeded")

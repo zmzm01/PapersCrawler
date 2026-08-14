@@ -29,7 +29,8 @@ system_prompt: |
      - C: Same field but distant from core interests
      - D: Irrelevant
   3. Provide a confidence level: high / medium / low
-  4. Add notes explaining your judgment.
+  4. Add notes explaining your judgment. The Notes field MUST be written
+     in Chinese academic language (中文学术语言).
 
   Output strictly in JSON with NO additional text. Example:
   {json_example}
