@@ -3,6 +3,8 @@ slides
 __pycache__
 .env
 *.swp
+graphify-out
+
 # 运行时 SQLite 数据库（schema 在 src/db/database.py，data/papers.db 已在 data/ 下被忽略；
 # 根目录 *.db 多为脚本意外产物，统一忽略）
 *.db
