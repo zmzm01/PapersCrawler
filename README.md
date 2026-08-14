@@ -30,17 +30,16 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → LLM 判相关
 - **LLM 四级相关性分类**（A/B/C/D），仅 A/B 进入下游
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
 - **Publisher 爬虫**：cloakbrowser 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断
-- **CLI + WebUI 双模式**：CLI 适合 cron 调度，WebUI 适合日常监控与交互式报告生成
-- **报告双输出**：自动日报（邮件）+ 用户自选报告（WebUI 预览下载）
-- **报告解释页**：`report_<date>_explained.html` 展示 prompt 快照与统计仪表盘
-- **配置隔离**：CLI 与 WebUI 阶段跳过互不干扰
+- **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供只读监控与报告阅览
+- **报告双输出**：自动日报（邮件）+ 可由 CLI 工具生成的预览报告
+- **报告解释页**：`report_<date>_explained.html` 展示 LLM prompt 快照
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
 
 ## 快速开始
 
 ```bash
-# 1) 安装
-pip install -r requirements.txt
+# 1) 安装（使用你的 Python 环境）
+python -m pip install -r requirements.txt
 
 # 2) 配置密钥
 cp .env.example .env
@@ -50,19 +49,18 @@ cp .env.example .env
 vim configs/keywords.yaml
 
 # 4) 全流程跑一次
-python src/main.py                  # 桌面环境
-xvfb-run -a python src/main.py      # 无头服务器（Phase C 需要 Xvfb）
+python tools/run_pipeline.py --all                  # 桌面环境
+xvfb-run -a python tools/run_pipeline.py --all      # 无头服务器（Phase C 需要 Xvfb）
 ```
 
 启动 Web UI（推荐日常使用）：
 
 ```bash
-pip install fastapi uvicorn jinja2
 PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
 # 无头服务器：xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080'
 ```
 
-打开 http://localhost:8080 查看 Pipeline 状态、Papers 列表、生成报告、配置覆写等。
+打开 http://localhost:8080 查看 Pipeline 状态、Papers 列表和已生成报告。
 
 ## 文档
 
@@ -91,8 +89,8 @@ PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
 # 每日 Phase A→F（发现 → LLM 总结）
 0 10 * * * /path/to/PapersCrawler/run_daily.sh
 
-# 每周 Phase G→H + Hugo 部署
-0 8 * * 1 /path/to/PapersCrawler/run_weekly.sh
+# 每周日 20:00（Asia/Shanghai）Phase G→H + Hugo 部署
+0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh
 ```
 
 详见 [`docs/usage.md`](docs/usage.md#典型工作流)。

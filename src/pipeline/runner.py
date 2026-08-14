@@ -133,8 +133,8 @@ def run_weekly():
 
     典型 cron 用法:
 
-        # 每周一 9:00
-        0 9 * * 1 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
+        # 每周日 20:00（Asia/Shanghai）
+        0 20 * * 7 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
     """
     run_phases(phase_list=WEEKLY_PHASES)
 
