@@ -82,13 +82,11 @@ PapersCrawler/
 │       └── runner.py            # 编排器 (全跑/选择性跑)
 │   └── web/                     # Web UI (FastAPI)
 │       ├── app.py               # FastAPI 应用 + 路由
-│       ├── templates/           # Jinja2 模板 (5 页面)
+│       ├── templates/           # Jinja2 模板（只读 3 页面）
 │       │   ├── base.html        #   布局模板
 │       │   ├── dashboard.html   #   状态概览
-│       │   ├── pipeline.html    #   流水线控制 + SSE 日志
-│       │   ├── report.html      #   报告生成
-│       │   ├── logs.html        #   日志查看
-│       │   └── config.html      #   配置展示
+│       │   ├── papers.html      #   论文浏览
+│       │   └── report.html      #   报告阅览与下载
 │       └── static/
 │           ├── css/style.css
 │           └── js/app.js
@@ -331,7 +329,7 @@ Phase F（LLM 总结）仅处理有 MinerU 全文的论文。无全文字段直�
 | 邮件推送 | 是（Phase H 读取 `auto/`） | 否 |
 
 Phase H 检测逻辑：
-1. 若有 `report_path` 参数（WebUI 发送日报）→ 直接发送指定报告，无更新通知模式禁用
+1. 若有 `report_path` 参数（CLI 指定报告）→ 直接发送指定报告，无更新通知模式禁用
 2. 否则检查 `auto/report_YYYYMMDD.md` 是否存在
 3. 存在 → 作为附件发送，正文使用 HTML 模板渲染
 4. 不存在 → 发送无更新通知（同样使用 HTML 模板）
@@ -342,9 +340,8 @@ Phase H 检测逻辑：
 - 使用 `str.format()` 渲染，不引入新依赖
 - 模板变量：`{report_title}`（邮件标题）、`{paper_msg}`（论文数量或无新增提示）、`{attachment_section}`（附件标记 HTML，无论文时为空）、`{journal_list}`（追踪期刊列表 HTML）、`{keyword_list}`（关键词标签云 HTML）、`{domain_block}`（完整领域定义 HTML）、`{publisher_stats}`（Publisher 抓取状态表 HTML）
 - 报告作为附件，正文无论文列表
-- 模板名可在 `configs/settings.yaml` 的 `email.template` 配置，WebUI Config 页面可通过 `<select>` 下拉框覆盖
+- 模板名可在 `configs/settings.yaml` 的 `email.template` 配置；若存在 `DATA_DIR/email_template_override.txt`，则使用其中的模板名覆盖
 - `{paper_list}`（详细版模板专属）— 逐论文 Markdown 渲染，按期刊+日期排序，含元信息行（作者、期刊、DOI、匹配子领域等）
-- 当 `email_template_override.txt`（`DATA_DIR/` 下）存在时，WebUI 优先使用其内容作为模板选择
 
 **Publisher 抓取状态**（`detailed.html` 特有）：显示过去 7 天各 publisher 的爬取健康状况。
 - 仅展示 `publishers.yaml` 中至少有一个期刊 `enabled: true` 的 publisher（禁用 publisher 如 Optica 不显示）
@@ -424,6 +421,15 @@ Phase A 从单一路径（RSS）拆为双路径并行，解决 RSS 完整性不�
 | CrossRef 查询 | A-CR | `fetch_by_journal()` 按 ISSN+日期 | CrossRef 索引全量论文 | `SKIP_PHASE_A_CR` |
 
 两路独立运行，按 DOI 去重合并，互不阻塞。
+
+**DOI 归一化**（2026-08-09）：DOI 规范本身大小写不敏感，但 RSS 源（如 Optica 给大写 `10.1364/OE.605615`）
+与 CrossRef API（统一小写）大小写不一致，若去重键未归一化会双插同论文副本。现已：
+- 所有插入路径（`insert_rss_basicinfo` / `insert_paper_basicinfo` / `insert_skipped_doi`）入参 `doi.lower()`
+- 所有 DOI 匹配（`paper_doi_exists` / `is_doi_skipped` / `append_discovery_source` / `insert_paper_created_date`）
+  使用 `LOWER(doi)=LOWER(?)` 大小写不敏感
+- 存量数据迁移工具 `tools/dedup_doi_case.py`：按 `lower(doi)` 分组，成对行按进度保留更完整者并合并
+  `discovery_source`，单例行统一小写（`--dry-run` 预览 + 交互确认）。2026-08-09 迁移：560 组去重、
+  154 单例小写化、8815 → 8255 行。
 
 ### 来源标注列 `discovery_source`
 
@@ -646,9 +652,8 @@ WebUI 已降级为纯只读前端（无 POST 端点），并实施以下安全�
 
 | 编号 | 措施 | 说明 |
 |------|------|------|
-| R1 | 路径遍历防护 | `/report/data/{filename}` 和 `/report/download/{filename}` 使用 `Path.resolve()` + `startswith` 检查，防止 `../../etc/passwd` 逃逸 |
+| R1 | 路径遍历防护 | `/report/data/{filename}` 和 `/report/download/{filename}` 使用 `Path.resolve()` + `relative_to()` 确认目标仍在报告目录内，防止 `../../etc/passwd` 与同前缀兄弟目录逃逸 |
 | R2 | DOMPurify XSS 过滤 | `report.html` 中 `marked.parse()` 输出经 `DOMPurify.sanitize()` 净化，仅保留 `target` 属性（链接 `_blank` 必须），CDN 同源（cdnjs） |
-| R3 | textContent 替代 innerHTML | `logs.html` SSE 更新和级别过滤均使用 `textContent` 而非 `innerHTML`，避免日志内容注入脚本。CSS 已有 `white-space: pre-wrap` 保障换行渲染 |
 | R4 | 安全响应头 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy: geolocation=(), microphone=(), camera=()` |
 
 **Remaining risks（建议在生产部署前处理）**：
@@ -724,7 +729,9 @@ SKIP_PHASE_B = False
 
 ## 3. LLM API 重试
 
-`call_llm_api_with_retry()` (`src/common.py`) 共用封装，提供 2 次重试 + 1s 退避。所有 LLM 调用（Phase E 相关性、Phase F 总结、FormulaFixer）统一使用。
+`call_llm_api_with_retry()` (`src/common.py`) 是共用封装。对 429/5xx、网络错误与 HTTP 200 但缺少 `choices` 的服务端错误载荷，采用可配置的指数退避（默认最多 3 次）并计入每阶段熔断器；连续 5 次瞬态失败后不再发起新的外部请求，未执行任务保留 `pending` 等待下一日自动重试。401/402、请求格式和内容 JSON 错误不计入熔断。所有 LLM 调用（Phase E 相关性、Phase F 总结、FormulaFixer）统一使用。
+
+RSS 与 Nature 的 requests HTTP 回退使用 `trust_env=False` 的专用 Session，避免桌面代理环境变量导致代理出口返回 406；需要代理的出版商必须通过 `publisher.proxy` 显式配置。
 
 ## 3b. CrossRef journal 查询重试
 
@@ -764,7 +771,8 @@ abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
 ```
 防止 Phase C 的空摘要字符串覆盖 Phase B 已写入的有效摘要。
 
-配套工具 `tools/reset_empty_abstract.py` 可将已入库空摘要论文的 Phase E/G 重置为 pending，触发重新评估。
+历史空摘要记录可通过 `tools/reset_pipeline.py reset-crossref --empty-abstract` 或
+`reset-publisher --empty-abstract` 重置对应的上游阶段后重新处理。
 
 ## 6. SMTP 重试与连接加固
 
@@ -1106,15 +1114,6 @@ APS Accepted Paper 是正式发表前的预发布版本，URL 含 `/accepted/`�
 | **Erratum / Comment 等** | **删除** | 永远不会变成研究论文（下次 RSS/CrossRef 发现时重新检查，此时若已附带原文链接则正常入库） |
 | **正常空摘要论文** | **正常处理**（标注 success） | 有标题+DOI，无特殊标记 |
 
-### 工具支持
-
-`tools/delete_accepted_papers.py` 用于清理存量数据：
-```bash
-python tools/delete_accepted_papers.py --dry-run   # 预览
-python tools/delete_accepted_papers.py              # 交互确认
-python tools/delete_accepted_papers.py --force       # 直接执行
-```
-
 ## 17. Logging 配置三入口模型
 
 Logger 配置从 `pipeline/base.py` 移到各入口点（entry point），每个入口点独立拥有自己的
@@ -1144,10 +1143,14 @@ LOG_LEVEL=INFO python src/main.py
 
 ### 自动重置（schedule_daily.py 入口）
 
-`tools/schedule_daily.py` 在调用 `run_daily()` 前自动重置
-`publisher_page_fetched_status = 'failed'` 为 `pending`，
-使因 Cloudflare 瞬态拦截等偶发原因失败的论文在每次每日运行时自动获得重试机会。
-仅重置 `failed` 状态，不触碰 `skipped`。
+`tools/schedule_daily.py` 在调用 `run_daily()` 前自动重置失败状态为 `pending`：
+- `publisher_page_fetched_status = 'failed'`（Cloudflare 瞬态拦截等偶发失败）
+- `mineru_parse_status IN ('failed', 'skipped')`
+- `llm_relevance_status = 'failed'`（如 LLM API 临时降级导致的判断失败）
+
+使偶发失败的论文在每次每日运行时自动获得重试机会。
+仅重置 `failed` 状态，不触碰 `skipped`（`skipped` 通常表示合法的非论文/无摘要条目）。
+`tools/run_pipeline.py` 使用同一逻辑，可通过 `--no-reset-*` 逐项关闭。
 
 ## 18. 配置持有对象（CFG）
 
@@ -1250,6 +1253,13 @@ if scraper_class.skip_phase_c_if_crossref_abstract:
 - 失败熔断：连续失败 `PUBLISHER_MAX_CONSECUTIVE_FAILURES`（默认 3）篇后自动中止，避免 IP 封禁
 - **Publisher 启停检查**：运行前从 `publishers.yaml` 构建 `enabled_publishers` 集合，
   禁用 publisher 的 pending 论文直接标记 `skipped`，不浪费浏览器启动时间（详见「韧性策略 #12」）
+- **Prewarm 预热**（`BasePublisherScraper.prewarm_url`，2026-08-09）：某些站点（如 AIP 的 Osano 同意墙）在
+  浏览器冷启动后首次访问论文页只返回 head-only 空壳（无 body / 无 `citation_*` meta），需先访问域名根建立
+  同意/Cookie 态。Phase C 在抓取每个 publisher 前调用 `scraper.prewarm()`（无 `prewarm_url` 则 no-op）：
+  先 `goto` 域名根（domcontentloaded）→ 等 15s → 若仍是 CF challenge 再等 15s；异常仅记 warning，不影响主流程。
+  目前仅 `AIPScraper` 设置 `prewarm_url = "https://pubs.aip.org"`。背景：AIP 唯一每日失败的论文
+  `10.1063/5.0339025` 因 `get_pending_publisher_papers` 无 ORDER BY（最早 rowid 恒为该组第一篇）且
+  `retry_attempts=[2]` 只给单次 45s 尝试，冷启动首次访问恒拿到同意墙空壳页（详见 tasks.md 2026-08-09）
 - **CrossRef 摘要驱动跳过**：对于设置了 `skip_phase_c_if_crossref_abstract=True` 的 Scraper 类（如 Optica），
   Phase C 在浏览器启动前检查 DB 中已有 CrossRef 摘要的论文，直接标记 `skipped` 跳过浏览器访问。
   此优化节省反爬额度并加速 Pipeline（详见「关键设计决策 #15」）
@@ -1518,14 +1528,6 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 - `reset-mineru` / `reset-summary` 重新解析/总结后，下游状态为 pending 的被自动拾取（无需显式级联）
 - 所有命令执行前打印影响行数，交互确认后才执行
 
-# 调试工具
-
-| 工具 | 用途 |
-|------|------|
-| `tools/debug_llm_summary.py <doi>` | 调试 LLM Summary JSON 解析失败，打印错误上下文 |
-| `tools/debug_publisher_urls.py` | 用 headful 浏览器诊断 Publisher URL 抓取问题 |
-| `tools/reset_empty_abstract.py` | 重置空摘要论文的 Phase E/G 状态 |
-
 # Hugo 报告部署
 
 ## 工作流
@@ -1726,23 +1728,8 @@ Phase E2 不再向数据库 `mineru_fulltext` 列写入全文文本（文本已�
 `runner.py` 的 `run_phases(force=True)` 表示忽略 SKIP_PHASE_* 配置运行全部阶段。
 `use_overrides` 参数已移除（配套的 `skip_overrides.json` 已删除）。`run_pipeline(run_all=True)` 等效于 `run_phases(force=True)`，`force` 保留兼容。
 
-# WebUI 改进 (2026-06-10)
+# WebUI 历史演进（已移除功能）
 
-## SSE 首尾日志推送
-
-`_log_event_stream()` 首次连接时发送日志文件尾部 ~200KB 已有内容，让用户立即看到历史日志而非等待新日志产生。之后按增量方式推送新追加的行。
-
-## 子进程日志修复
-
-`_run_phase_subprocess()` 中：
-1. **子进程 logging 配置**：子进程启动时调用 `logging.basicConfig()` 配置 `FileHandler` + `StreamHandler(sys.stderr)`，确保子进程的日志写入共享日志文件
-2. **移除 `capture_output=True`**：子进程 stderr 直接输出到终端，与父进程共享日志流
-3. **状态日志**：父进程记录子进程的启动、完成码、超时、异常等生命周期事件
-
-## WebUI 缺失 logger 补全
-
-`src/web/app.py` 中在 `logging.basicConfig()` 后添加 `logger = logging.getLogger(__name__)`，消除后端 6 处 `NameError: name 'logger' is not defined` 崩溃风险。
-
-## Email Template 下拉选择器
-
-Config 页面将文本输入框替换为 `<select>` 下拉框，自动从 `templates/email/*.html` 扫描可用模板。空选项 = 使用 `settings.yaml` 默认配置。选择保存在 `DATA_DIR/email_template_override.txt`，与 `settings.yaml` 的 `email.template` 叠加生效。
+2026-07-26 起 WebUI 收敛为只读 Dashboard、Papers 与 Report 页面；此前的 SSE 日志流、子进程运行控制和
+Config 页面均已删除。运行、配置修改和邮件模板选择应通过 CLI、YAML 配置文件及
+`DATA_DIR/email_template_override.txt` 完成。历史实施过程保留在 `docs/tasks.md`。

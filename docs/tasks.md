@@ -1,5 +1,47 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-11: Nature 406 根因与 LLM 服务降级治理
+
+- **Nature 406 根因**：当日 Nature/Nature Physics RSS 与 Nature 页面存档均为 `406 Not Acceptable`；失败页面标题不是解析结构变化而是 HTTP 拒绝页。绕过环境 `HTTP(S)_PROXY` 后，RSS 返回有效 `200` XML，文章页经公开重定向后返回 `200` 和 `dc.type=OriginalPaper`。因此将 RSS 和 Nature requests 回退改为 `trust_env=False`，保留显式 publisher 代理。
+- **状态流转修复**：页面仍为 `pending`/`failed` 而没有摘要时，Phase E 不再把相关性判定标为 `skipped`，而是保留 `pending` 等待 Publisher 重试补齐；仅页面已完成仍无摘要时才跳过，避免 Nature 故障导致论文永久漏判。
+- **DeepSeek 治理**：将 429/5xx、网络错误与缺少 `choices` 的成功 HTTP 错误载荷分类为可恢复服务异常；默认并发由 100 降至 20，支持指数退避和连续 5 次瞬态异常熔断。熔断后未处理任务保留 pending，下一日既有自动重置机制恢复已失败任务。
+- **调度文档**：确认服务器时区为 CST+0800（Asia/Shanghai），实际 crontab 为每日 10:00 和周日 20:00；README/usage 中的周一示例统一改为 `0 20 * * 7`。
+
+## 2026-08-10: 可交付性与 WebUI 安全审查修复
+
+- **背景**：全项目审查确认核心 8 阶段流水线已有实现且离线测试通过，但新用户无法照 README 安装（缺少 `requirements.txt`），文档仍混入已删除 WebUI 页面与历史工具；报告下载路径的 `startswith()` 边界判断也会接受同前缀兄弟目录。
+- **改动**：新增根目录 `requirements.txt`，覆盖运行时依赖与 pytest；README 的 Quick Start 改用该清单和推荐入口 `tools/run_pipeline.py`，并明确 WebUI 为只读阅览。`docs/usage.md` 删除 Config 写入/不存在工具，修正 Papers 排序参数、重置子命令与 weekly cron 的 Xvfb 说明。`docs/design.md` 的 R1 改为 `relative_to()` 目录包含关系校验，移除已删除 `logs.html` 的 R3 描述。
+- **安全修复**：`src/web/app.py` 新增 `_is_report_path_in_directory()`，以 `Path.relative_to()` 验证 `/report/data` 与 `/report/download` 的解析后路径确实位于 `auto/` 或 `user/` 目录；不再使用字符串前缀比较。
+- **测试**：新增 `tests/test_web_security.py`，覆盖合法文件、`..` 逃逸及 `auto`/`auto-backup` 同前缀兄弟目录三种情况。
+
+## 2026-08-09: DOI 大小写去重 + AIP 预热（prewarm）
+
+- **背景**：运行状态排查中发现 560 组同一论文双插（RSS 源给大写 `10.1364/OE.605615`，CrossRef 给小写 `10.1364/oe.605615`；`paper_doi_exists` 大小写敏感 → 各插一条）。560 组全部在 Optica 系期刊（Optics Express 514 / Optica 46），占 8815 行约 13%。08-09 报告里同一篇论文出现两次（`oe.605615` + `OE.605615`）。
+- **根因**：DOI 规范本身大小写不敏感，但各上游来源大小写不一致；去重键未归一化。
+- **决策（用户方案 1）**：插入即归一化 + 已有数据一次性去重 + 重置并重新生成本周报告。
+- **改动（`src/db/database.py`）**：
+  - `insert_rss_basicinfo` / `insert_paper_basicinfo` / `insert_skipped_doi`：入参 `doi.lower()` 归一化。
+  - `paper_doi_exists` / `is_doi_skipped` / `append_discovery_source` / `insert_paper_created_date`：改为 `LOWER(doi)=LOWER(?)` 大小写不敏感匹配。
+- **新工具 `tools/dedup_doi_case.py`**：按 `lower(doi)` 分组扫描；成对行按进度元组（report > summary > relevance > publisher_page，reported>success>skipped>failed>pending）保留更完整者，平局优先 RSS 行（有真实 page_url 供 Phase C）；合并 `discovery_source`；单例行统一小写。`--dry-run` 预览 + 交互确认。
+- **迁移结果**：560 组去重（删副本+合并来源）、154 单例小写化、8815 → 8255 行；残留非小写 DOI = 0；迁移前备份 `/tmp/papers.db.bak_dedup`。
+- **报告重置**：`reset_pipeline.py reset-report --today`（重置 4 篇）→ `run_pipeline.py --phases G` 重新生成 `report_20260809.md`（4 篇唯一，无重复标题）。
+- **AIP 预热（Plan A）**：唯一每日失败的 AIP 论文 `10.1063/5.0339025` 根因 = Osano 同意墙空壳页（508 字节 head-only，无 body/citation meta），且因始终是 AIP 组"第一篇"（`get_pending_publisher_papers` 无 ORDER BY → 最早 rowid 恒排第一）→ 恒走 `retry_attempts=[2]` 单次 45s 尝试，浏览器冷启动首次访问 AIP 未建立同意态。其他 1133 篇 AIP 论文同会话成功（约 12s/篇）。
+  - 改动：`BasePublisherScraper` 增加 `prewarm_url` 类属性（默认 None）+ `prewarm()` 方法（访问域名根建立同意/Cookie，15s 等待，CF challenge 再等 15s，异常降级为 warning 返回 False）；`AIPScraper.prewarm_url = "https://pubs.aip.org"`；`phase_c.py` 在 `for paper in papers` 前调用 `scraper.prewarm()`（异常不影响主流程）。
+- **验证**：test_db.py + test_phase_c_bot.py 新增 9 个用例（大小写不敏感、prewarm 导航/异常/无 URL noop），71 passed。
+- **经验**：① 全局去重键必须归一化，否则多来源汇聚必然产生大小写副本；② "某组第一篇总是失败"可能是自增强循环（最早 rowid 恒第一 + 单次尝试 + 冷启动），不能只看单日日志；③ 浏览器会话无 Cookie 持久化（close() 主动删 user_data_dir）时，冷启动首次访问有同意墙的站点需要预热。
+
+## 2026-08-04: 自动重置扩展至 LLM 相关性（llm_relevance_status）
+
+- **背景**：08-04 当日 DeepSeek API 降级（Phase E 出现 68 次 `API 返回结构异常: 'choices'` + 35 次 HTTP 503，103 篇论文 `llm_relevance_status='failed'`）。排查确认非代码 bug、非 prompt 改动导致（`'choices'` 缺失发生在内容解析之前，属 API 侧错误载荷）。用户核对 DeepSeek Status 页确认当日 API 性能下降。
+- **问题**：`schedule_daily.py` 的自动重置只覆盖 publisher_page 与 mineru，不重置 relevance → 失败的判断永久滞留，每日运行不会自动重试。
+- **决策**：用户确认重置范围**只取 `failed`**（`skipped` 是合法的无摘要条目，不碰），且**两个入口都加保持一致**（`schedule_daily.py` + `run_pipeline.py`）。
+- **改动**：
+  - `tools/schedule_daily.py`：新增 `--no-reset-relevance` 开关；`_run_auto_reset()` 增加 `llm_relevance_status='failed' → 'pending'` 重置块。
+  - `tools/run_pipeline.py`：新增 `--reset-relevance` / `--no-reset-relevance` 参数对（默认开启）；`_run_auto_reset` / `_dry_run_summary` / `main()` 调用点全部透传；dry-run 输出增加 relevance。
+  - `tests/test_run_pipeline.py`：+2 用例（默认开启 / `--no-reset-relevance` 关闭），10 passed。
+- **验证**：全套 pytest 260 passed。
+- **经验**：API 瞬时降级会导致批量 failed；failed 状态无自动恢复机制时，需在入口自动重置或人工 reset_pipeline。重置只取 failed、跳过 skipped 可避免无意义重试。
+
 ## 2026-08-01: 抓取阶段 review 修复批次落地（publisher.py）
 
 - **来源**：2026-07-31 全项目 review + 抓取重构后再 review，用户确认修复范围（#1/2/3 直改，#4-10 解释后，#10 仅记录）。
@@ -2292,5 +2334,3 @@ tools/schedule_weekly.py                 |  28 +++---
 - **模块级副作用 = 隐藏 bug**：`schedule_weekly.py` (#7) 与早期 `config.py` 的 `_check_mineru_token()` 同根——**任何 `tools/*.py` 入口脚本**都应在 `if __name__ == "__main__":` 块内执行 I/O / logging
 - **线程安全是契约问题，不是类型问题**：`phase_e.py` (#11) 的注释是给未来维护者的提示，比加锁更实际
 - **copy-on-write 优于 in-place mutation**：`generate_report()` (#12) 修了一个易被忽视的接口污染，调用方再无需担心传入 list 被改写
-
-

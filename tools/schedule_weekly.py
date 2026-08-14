@@ -8,8 +8,8 @@ Phase H 将 auto/ 目录下的今日报告作为附件发送；无新增论文�
 
 典型 cron 配置:
 
-    # 每周一 9:00
-    0 9 * * 1 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
+    # 每周日 20:00（Asia/Shanghai）
+    0 20 * * 7 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
 """
 
 import logging

@@ -26,12 +26,12 @@
 
 | 维度 | CLI 模式 | Web UI 模式 |
 |------|---------|------------|
-| **定位** | 自动化、定时任务、深度调试 | 监控仪表盘、报告工作站、交互式配置 |
+| **定位** | 自动化、定时任务、深度调试 | 只读监控仪表盘与报告档案馆 |
 | **入口** | `python tools/run_pipeline.py` **（推荐，替代旧 `src/main.py`）** | `uvicorn src.web.app:app` |
-| **典型用户** | cron 调度、批量全流程 | 日常用户检查、手动生成报告 |
+| **典型用户** | cron 调度、批量全流程 | 日常用户检查、阅览已有报告 |
 | **配置来源** | `src/config.py` 的 `SKIP_PHASE_*` 开关 | `src/config.py` 的 `SKIP_PHASE_*` 开关（WebUI 不覆写） |
 | **典型环境** | 无头服务器（需 Xvfb 跑 Phase C） | 桌面或局域网（推荐） |
-| **并发** | 单进程 | FastAPI 后台线程 + 浏览器 SSE 实时日志 |
+| **并发** | 单进程 | FastAPI 只读请求 |
 
 **注意**：阶段开关（`SKIP_PHASE_*`）在 CLI 和 WebUI 间保持一致，均读取 `src/config.py` > `settings.yaml` 的配置。不再存在独立的运行时覆写层（P2 合并配置层后 `skip_overrides.json` 已移除）。
 
@@ -79,19 +79,21 @@ python tools/run_pipeline.py --phases A-RSS,B,C,F
 | `--dry-run` | 关闭 | 只打印执行计划，不实际运行 |
 | `--reset-publisher` / `--no-reset-publisher` | reset | 运行前重置失败 Publisher 抓取 |
 | `--reset-mineru` / `--no-reset-mineru` | reset | 运行前重置失败 MinerU 解析 |
+| `--reset-relevance` / `--no-reset-relevance` | reset | 运行前重置失败 LLM 相关性判断 |
 | `--log-level DEBUG\|INFO\|WARNING\|ERROR` | `LOG_LEVEL` env | 日志级别 |
 
 自动重置逻辑与 `schedule_daily.py` 一致：
 - `publisher_page_fetched_status = 'failed'` → `pending`
 - `mineru_parse_status IN ('failed', 'skipped')` → `pending`
+- `llm_relevance_status = 'failed'` → `pending`
 
 **典型 cron**：
 ```bash
 # 每天 2:00
 0 2 * * * cd /path/to/PapersCrawler && python tools/run_pipeline.py --daily
 
-# 每周一 9:00（配合 xvfb-run）
-0 9 * * 1 cd /path/to/PapersCrawler && xvfb-run -a python tools/run_pipeline.py --weekly
+# 每周日 20:00（Asia/Shanghai；Phase G/H 无需浏览器）
+0 20 * * 7 cd /path/to/PapersCrawler && python tools/run_pipeline.py --weekly
 ```
 
 > **⚠️ `src/main.py` / `schedule_daily.py` / `schedule_weekly.py` 已弃用** —— 请迁移到 `tools/run_pipeline.py`。旧入口保留向后兼容，不再主动维护。
@@ -157,10 +159,10 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 默认查询：`llm_relevance_status='success' AND llm_relevance_category IN ('A','B')`。
 
 参数：
-- `?sort=created|published|relevance` — 排序键（默认 created）
+- `?sort=created|published|summary` — 排序键（默认 created）
   - `created`：按 `created_date`（入库时间）
   - `published`：按 `paperdate_rss/crossref/page`（发表日期，精度受 RSS Feed 限制）
-  - `relevance`：按 `llm_relevance_date DESC`（最近被 LLM 判定的）
+  - `summary`：按 `llm_summary_date DESC`（最近生成总结的论文）
 - `?category=a|b|ab|all` — LLM 相关性筛选（默认 `ab`）
   - `a`：仅 A 级
   - `b`：仅 B 级
@@ -170,15 +172,6 @@ xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --por
 ### Email 收件人配置
 
 收件人列表通过 `data/email.yaml` 管理（详见 [data/email.yaml](#-dataemail.yaml--邮件收件人配置)），`enabled: true` 的收件人会被 Phase H 使用。文件不存在或为空时回退到 `.env SMTP_TO_ADDRS`。
-
-### Config 页
-
-**配置来源**：运行时配置（`configs/*.yaml`）：通过 WebUI 直接编辑，有 YAML 语法校验 + 二次确认。
-
-**连通性测试**（一键测）：
-- DeepSeek API（验证 `DEEPSEEK_API_KEY`）
-- CrossRef API（验证 `CROSSREF_MAILTO`）
-- MinerU API（验证 `MINERU_TOKEN`，含过期色标）
 
 ---
 
@@ -209,10 +202,10 @@ ls data/reports/auto/        # 自动日报 Markdown
 ```cron
 # crontab
 0 10 * * * /path/to/PapersCrawler/run_daily.sh   >> /path/to/crawler_daily.log  2>&1
-0 8 * * 1 /path/to/PapersCrawler/run_weekly.sh  >> /path/to/crawler_weekly.log 2>&1
+0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh  >> /path/to/crawler_weekly.log 2>&1
 ```
 
-每天早上检查邮件，每周一查汇总报告。
+每天早上检查邮件，周日晚上查汇总报告；服务器时区应为 `Asia/Shanghai`。
 
 ### 3. 修改领域定义后重新筛选
 
@@ -521,17 +514,16 @@ python tools/send_report.py --report report_20260726.md --dry-run
 | 工具 | 说明 | 典型用法 |
 |------|------|---------|
 | `reset_pipeline.py` | 6 子命令重置各阶段状态 | `python tools/reset_pipeline.py reset-relevance --all` |
-| `reset_empty_abstract.py` | 重置空摘要论文的 Phase E/G | `python tools/reset_empty_abstract.py` |
 
 **`reset_pipeline.py` 子命令**：
 
 | 子命令 | 重置列 | 级联 | 条件 |
 |--------|--------|------|------|
-| `reset-semantic` | `semantic_filter_*` | — | 所有非 pending |
-| `reset-publisher` | `publisher_page_fetched` | — | 非 pending 且非 NonResearchPageError |
-| `reset-mineru` | `mineru_parse` | — | 所有非 pending |
-| `reset-summary` | `llm_summary` | report | 所有非 pending |
-| `reset-relevance` | `llm_relevance` | — | 所有非 pending |
+| `reset-crossref` | `cr_metadata_fetched_*` | — | failed/skipped；`--all` 可含 success |
+| `reset-publisher` | `publisher_page_fetched_*` | — | failed/skipped，排除 NonResearchPageError |
+| `reset-mineru` | `mineru_parse_*` | — | failed/skipped |
+| `reset-summary` | `llm_summary_*` | — | failed/skipped；`--all` 可含 success |
+| `reset-relevance` | `llm_relevance_*` | — | failed/skipped；`--all` 可含 success |
 | `reset-report` | `report_status` / `report_date` | — | reported |
 
 所有子命令支持 `--publisher` 过滤（如 `reset-publisher --publisher aps`），执行前交互确认。
@@ -543,7 +535,7 @@ python tools/send_report.py --report report_20260726.md --dry-run
 |------|------|---------|
 | `preview_report.py` | 生成报告**不**标记数据库 | `python tools/preview_report.py --output /tmp/p.md` |
 | `convert_reports_to_hugo.py` | 报告转 Hugo 站点 + 部署 | `python tools/convert_reports_to_hugo.py --all --hugo --deploy` |
-| `convert_md_to_pdf.py` | Markdown → PDF（pandoc + cloakbrowser 备用） | `python tools/convert_md_to_pdf.py <input.md>` |
+| `md_to_pdf_katex.py` | Markdown → PDF（KaTeX + cloakbrowser） | `python src/processors/md_to_pdf_katex.py <input.md>` |
 
 #### 报告预览
 
@@ -595,23 +587,23 @@ python tools/import_local_pdf.py --doi <DOI> --pdf <PATH_TO_PDF>
 - 重置 DB 该 DOI 的 `mineru_parse_status='pending'`，下次 daily 调度自动处理
 - 退出码：1=文件不存在/异常，2=非 PDF 头部，3=DB 无该 DOI 记录
 
-### 诊断
+### 数据库维护
 
 | 工具 | 用途 |
 |------|------|
-| `debug_llm_summary.py` | LLM Summary JSON 解析失败诊断 |
-| `debug_publisher_urls.py` | headful 浏览器 Publisher 抓取诊断 |
-| `debug_nature_challenge.py` | Nature Client Challenge 拦截诊断 |
-| `compare_browsers.py` | 浏览器/HTTP 回退对比 |
-| `test_http_fallback.py` | HTTP fallback 连通性测试 |
-| `delete_accepted_papers.py` | 清理 Accepted Paper 残留（支持 `--dry-run` / `--force`） |
+| `dedup_doi_case.py` | DOI 大小写去重（存量副本清理，见下） |
 
-### 数据库迁移
+**`dedup_doi_case.py`**：按 `lower(doi)` 分组扫描，将 RSS/CrossRef 大小写不一致造成的重复论文合并为一条。
+成对行保留进度更完整者（report > summary > relevance > publisher_page，同进度优先 RSS 行），合并
+`discovery_source`；单例行统一为小写。`--dry-run` 默认只预览，无 `--dry-run` 时交互确认后写库。
 
-| 工具 | 用途 |
-|------|------|
-| `migrate_db_v2.py` | 新增 `skipped_dois` 表 |
-| `migrate_db_v3.py` | 删除语义相关列（Phase D 移除同步） |
+```bash
+python tools/dedup_doi_case.py            # 预览去重计划
+python tools/dedup_doi_case.py --dry-run  # 等价（默认预览）
+```
+
+> 2026-08-09 起插入路径已在 `database.py` 归一化 DOI 为小写并启用大小写不敏感匹配，此工具仅用于清理
+> 存量数据。
 
 ### PDF 转换
 
@@ -619,8 +611,6 @@ python tools/import_local_pdf.py --doi <DOI> --pdf <PATH_TO_PDF>
 # KaTeX + cloakbrowser（实验性，支持 \(\)/\[\] 公式）
 python src/processors/md_to_pdf_katex.py <input.md> [output.pdf]
 
-# pandoc + cloakbrowser（备用）
-python tools/convert_md_to_pdf.py <input.md>
 ```
 
 ---
@@ -771,7 +761,7 @@ Phase H (SMTP) ──────────── 邮件推送（email.yaml �
 
 ## 测试
 
-### T1/T2 — pytest 自动化（18 个测试文件）
+### T1/T2 — pytest 自动化（21 个测试文件）
 
 ```bash
 # 全部离线测试
@@ -802,6 +792,7 @@ pytest tests/test_relevance.py::test_decision_tree -v
 - `test_database_client_context.py` — DatabaseClient context manager
 - `test_mineru_parser.py` — MinerU 解析
 - `test_common.py` — 共享数据模型 + 异常
+- `test_web_security.py` — WebUI 报告文件路径边界校验
 
 ### T3 — 真实 API 集成测试（需 .env）
 
