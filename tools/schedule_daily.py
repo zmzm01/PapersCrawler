@@ -9,6 +9,7 @@
 可选参数:
     --no-reset-publisher    不重置失败 Publisher 抓取（默认重置）
     --no-reset-mineru       不重置失败 MinerU 解析（默认重置）
+    --no-reset-relevance    不重置失败 LLM 相关性判断（默认重置）
 
 典型 cron 配置:
 
@@ -42,7 +43,7 @@ from pipeline.runner import run_daily
 def _run_auto_reset(args):
     """运行自动重置，将失败的论文重新放入待处理队列。
 
-    默认重置失败 Publisher 抓取和失败 MinerU 解析。
+    默认重置失败 Publisher 抓取、失败 MinerU 解析和失败 LLM 相关性判断。
     可通过 CLI 参数关闭任一重置。
     """
     logger = logging.getLogger(__name__)
@@ -69,6 +70,16 @@ def _run_auto_reset(args):
     else:
         logger.info("Auto-reset mineru: disabled")
 
+    if not args.no_reset_relevance:
+        count = reset_db.batch_reset_status(
+            [("llm_relevance_status", "pending")],
+            "llm_relevance_status = 'failed'",
+        )
+        if count:
+            logger.info(f"Auto-reset {count} failed relevance judgments for retry")
+    else:
+        logger.info("Auto-reset relevance: disabled")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -83,6 +94,11 @@ if __name__ == "__main__":
         "--no-reset-mineru",
         action="store_true",
         help="不重置失败 MinerU 解析（默认重置）",
+    )
+    parser.add_argument(
+        "--no-reset-relevance",
+        action="store_true",
+        help="不重置失败 LLM 相关性判断（默认重置）",
     )
     args = parser.parse_args()
 

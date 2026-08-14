@@ -29,15 +29,15 @@
     # 每天 2:00 每日运行
     0 2 * * * cd /path/to/PapersCrawler && python tools/run_pipeline.py --daily
 
-    # 每周一 9:00 报告生成 + 邮件
-    0 9 * * 1 cd /path/to/PapersCrawler && python tools/run_pipeline.py --weekly
+    # 每周日 20:00（Asia/Shanghai）报告生成 + 邮件
+    0 20 * * 7 cd /path/to/PapersCrawler && python tools/run_pipeline.py --weekly
 
 无图形界面服务器需配合 xvfb-run（Phase C 需要虚拟显示器）::
 
     0 2 * * * cd /path/to/PapersCrawler && xvfb-run -a python tools/run_pipeline.py --daily
 
-参数 ``--reset-publisher`` / ``--reset-mineru`` 控制是否在运行前自动重置
-失败的 Publisher 抓取和 MinerU 解析（默认均开启）。
+参数 ``--reset-publisher`` / ``--reset-mineru`` / ``--reset-relevance`` 控制是否在运行前
+自动重置失败的 Publisher 抓取、MinerU 解析和 LLM 相关性判断（默认均开启）。
 """
 
 import argparse
@@ -141,6 +141,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="不重置失败的 MinerU 解析",
     )
     parser.add_argument(
+        "--reset-relevance",
+        action="store_true",
+        default=True,
+        dest="reset_relevance",
+        help="运行前重置失败的 LLM 相关性判断（默认开启）",
+    )
+    parser.add_argument(
+        "--no-reset-relevance",
+        action="store_false",
+        dest="reset_relevance",
+        help="不重置失败的 LLM 相关性判断",
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default=os.getenv("LOG_LEVEL", "DEBUG"),
@@ -173,7 +186,7 @@ def _setup_logging(log_level: str) -> None:
     )
 
 
-def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, dry_run: bool) -> None:
+def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: bool, dry_run: bool) -> None:
     """自动重置失败的论文状态，使其重新进入待处理队列。
 
     Parameters
@@ -182,13 +195,15 @@ def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, dry_run: bool) ->
         是否重置失败的 Publisher 抓取。
     reset_mineru : bool
         是否重置失败的 MinerU 解析。
+    reset_relevance : bool
+        是否重置失败的 LLM 相关性判断。
     dry_run : bool
         干跑模式不实际执行。
     """
     if dry_run:
         logger.info(
-            "Would reset: publisher=%s, mineru=%s",
-            reset_publisher, reset_mineru,
+            "Would reset: publisher=%s, mineru=%s, relevance=%s",
+            reset_publisher, reset_mineru, reset_relevance,
         )
         return
 
@@ -215,8 +230,18 @@ def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, dry_run: bool) ->
     else:
         logger.info("Auto-reset mineru: disabled")
 
+    if reset_relevance:
+        count = reset_db.batch_reset_status(
+            [("llm_relevance_status", "pending")],
+            "llm_relevance_status = 'failed'",
+        )
+        if count:
+            logger.info("Auto-reset %d failed relevance judgments for retry", count)
+    else:
+        logger.info("Auto-reset relevance: disabled")
 
-def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru):
+
+def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru, reset_relevance):
     """打印干跑模式摘要。
 
     Parameters
@@ -227,6 +252,7 @@ def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru):
         是否强制执行全部阶段。
     reset_publisher : bool
     reset_mineru : bool
+    reset_relevance : bool
     """
     logger.info("Would run phases: %s", phase_list)
 
@@ -237,8 +263,8 @@ def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru):
     logger.info("Force mode: %s", force)
 
     logger.info(
-        "Would reset: publisher=%s, mineru=%s",
-        reset_publisher, reset_mineru,
+        "Would reset: publisher=%s, mineru=%s, relevance=%s",
+        reset_publisher, reset_mineru, reset_relevance,
     )
 
 
@@ -284,24 +310,24 @@ def main(argv=None) -> None:
     # 执行
     if args.dry_run:
         if args.phases is not None:
-            _dry_run_summary(phase_list, force, args.reset_publisher, args.reset_mineru)
+            _dry_run_summary(phase_list, force, args.reset_publisher, args.reset_mineru, args.reset_relevance)
         elif args.all or (not args.daily and not args.weekly and args.phases is None):
             # --all 或默认模式下使用 run_pipeline(force=True)
             logger.info("Would run: run_pipeline(force=True) — all phases")
             _dry_run_summary(
                 list(_PHASE_KEY_MAP.keys()), True,
-                args.reset_publisher, args.reset_mineru,
+                args.reset_publisher, args.reset_mineru, args.reset_relevance,
             )
         elif args.daily:
-            _dry_run_summary(DAILY_PHASES, False, args.reset_publisher, args.reset_mineru)
+            _dry_run_summary(DAILY_PHASES, False, args.reset_publisher, args.reset_mineru, args.reset_relevance)
         elif args.weekly:
-            _dry_run_summary(WEEKLY_PHASES, False, args.reset_publisher, args.reset_mineru)
+            _dry_run_summary(WEEKLY_PHASES, False, args.reset_publisher, args.reset_mineru, args.reset_relevance)
         # 不调用 auto-reset
         logger.info("Dry-run mode — no changes were made")
         return
 
     # 自动重置
-    _run_auto_reset(args.reset_publisher, args.reset_mineru, dry_run=False)
+    _run_auto_reset(args.reset_publisher, args.reset_mineru, args.reset_relevance, dry_run=False)
 
     # 实际运行
     if args.daily:
