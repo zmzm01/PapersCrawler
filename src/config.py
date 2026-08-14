@@ -157,6 +157,8 @@ CFG.LLM_API_CONFIG_DICT_RELE = {
     "model": "deepseek-v4-flash",
     "thinking": "disabled",
     "timeout": 300,
+    "retry_max_attempts": 3,
+    "retry_backoff_max_seconds": 30,
 }
 CFG.LLM_API_CONFIG_DICT_SUMM = {
     "api_url": "https://api.deepseek.com/chat/completions",
@@ -164,6 +166,8 @@ CFG.LLM_API_CONFIG_DICT_SUMM = {
     "model": "deepseek-v4-pro",
     "thinking": "enabled",
     "timeout": 300,
+    "retry_max_attempts": 3,
+    "retry_backoff_max_seconds": 30,
 }
 
 # ---------- LLM 总结提示词 ----------
@@ -213,6 +217,8 @@ CFG.SKIP_PHASE_E2 = False
 CFG.SKIP_PHASE_F = False
 CFG.SKIP_PHASE_G = False
 CFG.SKIP_PHASE_H = True
+CFG.LLM_CONCURRENT_MAX = 20
+CFG.LLM_CIRCUIT_BREAKER_THRESHOLD = 5
 
 # ---------- 流水线参数 ----------
 # 日常回溯天数（默认 1 天，与「每日增量」语义一致）
@@ -254,9 +260,6 @@ CFG.PUBLISHER_PROXY = {
 CFG.SKIP_FORMULA_FIX = False
 CFG.FORCE_FORMULA_FIX = False
 
-# ---------- LLM 并发 ----------
-CFG.LLM_CONCURRENT_MAX = 100
-
 # ---------- 邮件模板 ----------
 CFG.EMAIL_TEMPLATE_DEFAULT = "default"
 CFG.EMAIL_TEMPLATE_NAME = "default"
@@ -290,6 +293,17 @@ def _apply_settings(settings):
     CFG.LLM_API_CONFIG_DICT_SUMM["thinking"] = summ.get("thinking", CFG.LLM_API_CONFIG_DICT_SUMM["thinking"])
     CFG.LLM_API_CONFIG_DICT_SUMM["timeout"] = summ.get("timeout", CFG.LLM_API_CONFIG_DICT_SUMM["timeout"])
     CFG.LLM_CONCURRENT_MAX = llm_cfg.get("concurrent_max", CFG.LLM_CONCURRENT_MAX)
+    retry_cfg = llm_cfg.get("retry", {})
+    for config_dict in (CFG.LLM_API_CONFIG_DICT_RELE, CFG.LLM_API_CONFIG_DICT_SUMM):
+        config_dict["retry_max_attempts"] = retry_cfg.get(
+            "max_attempts", config_dict["retry_max_attempts"],
+        )
+        config_dict["retry_backoff_max_seconds"] = retry_cfg.get(
+            "backoff_max_seconds", config_dict["retry_backoff_max_seconds"],
+        )
+    CFG.LLM_CIRCUIT_BREAKER_THRESHOLD = llm_cfg.get(
+        "circuit_breaker_threshold", CFG.LLM_CIRCUIT_BREAKER_THRESHOLD,
+    )
 
     # 总结提示词
     _loaded = load_prompt("summary")

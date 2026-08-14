@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import CFG, DATA_DIR, load_keywords
+from common import LLMCircuitBreaker, LLMServiceUnavailableError
 from db.database import DatabaseClient, FetchStatus
 from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
@@ -92,10 +93,14 @@ def phase_f_llm_summary(db):
     max_workers = min(len(tasks), CFG.LLM_CONCURRENT_MAX)
     logger.info(f"Phase F: {max_workers} concurrent workers")
     success_count = 0
+    circuit_breaker = LLMCircuitBreaker(CFG.LLM_CIRCUIT_BREAKER_THRESHOLD)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(summarizer.call_deepseek_api, article_text, CFG.SUMMARIES_PROMPT): paper
+            executor.submit(
+                summarizer.call_deepseek_api, article_text, CFG.SUMMARIES_PROMPT,
+                circuit_breaker,
+            ): paper
             for paper, article_text in tasks
         }
         for future in as_completed(futures):
@@ -129,6 +134,9 @@ def phase_f_llm_summary(db):
                 success_count += 1
 
             except (LLMAPICallError, LLMResponseParseError) as e:
+                if isinstance(e, LLMServiceUnavailableError) and circuit_breaker.is_open:
+                    logger.warning("LLM circuit open; retaining pending summary: %s", doi)
+                    continue
                 logger.warning(f"LLM summary API error [{doi}]: {e}")
                 db.update_llm_summary_error(
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
@@ -152,4 +160,6 @@ def phase_f_llm_summary(db):
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                 )
 
+    if circuit_breaker.is_open:
+        logger.warning("Phase F circuit breaker opened; remaining papers will retry next run")
     logger.info(f"Phase F done: {success_count} summarized")

@@ -131,7 +131,8 @@ class PaperRelevanceChecker:
                 "   - C: Same field but distant from core interests\n"
                 "   - D: Irrelevant\n"
                 "3. Provide a confidence level: high / medium / low\n"
-                "4. Add notes explaining your judgment.\n\n"
+                "4. Add notes explaining your judgment. The Notes field MUST "
+                "be written in Chinese academic language (中文学术语言).\n\n"
                 "Output strictly in JSON with NO additional text. Example:\n"
                 "{json_example}"
             )
@@ -174,7 +175,7 @@ class PaperRelevanceChecker:
             "PredictedCategory": "B",
             "MatchedSubfields": example_keys,
             "Confidence": "high",
-            "Notes": "The paper studies laser-driven ion acceleration with plasma diagnostics.",
+            "Notes": "该论文研究激光驱动离子加速，并采用等离子体诊断方法，方法可迁移到本课题组的子域。",
         }, ensure_ascii=False)
 
         template = self._load_relevance_template()
@@ -189,7 +190,8 @@ class PaperRelevanceChecker:
     # ------------------------------------------------------------------
     # API 调用 (委托给 common.call_llm_api_with_retry)
     # ------------------------------------------------------------------
-    def call_deepseek_api(self, prompt: str, llm_api_config: Dict[str, Any]) -> str:
+    def call_deepseek_api(self, prompt: str, llm_api_config: Dict[str, Any],
+                          circuit_breaker=None) -> str:
         """调用 DeepSeek API 进行相关性判断。
 
         委托给 ``common.call_llm_api_with_retry``，该函数封装了重试、
@@ -223,7 +225,9 @@ class PaperRelevanceChecker:
             "thinking": {"type": config.get("thinking", "enabled")},
             "response_format": {"type": "json_object"},
         }
-        return call_llm_api_with_retry(config, headers, payload)
+        return call_llm_api_with_retry(
+            config, headers, payload, circuit_breaker=circuit_breaker,
+        )
 
 
 # ------------------------------------------------------------------

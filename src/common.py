@@ -24,7 +24,9 @@ LLM 调用工具:
 
 import json
 import logging
+import random
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import List, Dict, Any
@@ -70,6 +72,10 @@ class LLMAPICallError(Exception):
     """LLM API 调用失败——网络请求层面错误。"""
 
 
+class LLMServiceUnavailableError(LLMAPICallError):
+    """LLM 服务暂时不可用，可由熔断器统计并在后续任务中重试。"""
+
+
 class LLMResponseParseError(Exception):
     """LLM 响应解析失败——返回数据结构异常。"""
 
@@ -81,6 +87,48 @@ class LLMContextLengthExceed(Exception):
 # ---------- LLM 调用工具 ----------
 
 _logger = logging.getLogger(__name__)
+
+
+class LLMCircuitBreaker:
+    """Track consecutive transient LLM failures across concurrent requests."""
+
+    def __init__(self, failure_threshold: int = 5):
+        self.failure_threshold = max(1, failure_threshold)
+        self._consecutive_failures = 0
+        self._is_open = False
+        self._lock = threading.Lock()
+
+    @property
+    def is_open(self) -> bool:
+        """Whether new LLM requests must be rejected."""
+        with self._lock:
+            return self._is_open
+
+    def allow_request(self) -> bool:
+        """Return whether a new request may be submitted."""
+        return not self.is_open
+
+    def record_success(self) -> None:
+        """Reset the consecutive transient-failure count after success."""
+        with self._lock:
+            self._consecutive_failures = 0
+
+    def record_transient_failure(self) -> None:
+        """Open the circuit once the configured threshold is reached."""
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self.failure_threshold:
+                self._is_open = True
+
+
+def _retry_delay(response, attempt: int, max_delay: float) -> float:
+    """Return a jittered retry delay, honoring a numeric Retry-After header."""
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    try:
+        base_delay = float(retry_after) if retry_after else 2 ** attempt
+    except ValueError:
+        base_delay = 2 ** attempt
+    return min(max_delay, base_delay) * random.uniform(0.8, 1.2)
 
 
 def fix_json_invalid_escapes(content: str) -> str:
@@ -120,6 +168,7 @@ def call_llm_api_with_retry(
     headers: Dict[str, str],
     payload: Dict[str, Any],
     session: requests.Session | None = None,
+    circuit_breaker: LLMCircuitBreaker | None = None,
 ) -> str:
     """带重试和错误码友好提示的 LLM API 调用封装。
 
@@ -146,10 +195,16 @@ def call_llm_api_with_retry(
     LLMResponseParseError
         响应结构异常（缺少 choices[0].message.content）。
     """
+    if circuit_breaker is not None and not circuit_breaker.allow_request():
+        raise LLMServiceUnavailableError("LLM circuit breaker is open")
+
     _session = session or requests
     last_error = None
+    retryable = False
+    max_attempts = max(1, int(config.get("retry_max_attempts", 3)))
+    max_delay = float(config.get("retry_backoff_max_seconds", 30))
 
-    for attempt in range(2):
+    for attempt in range(max_attempts):
         try:
             t0 = time.time()
             resp = _session.post(
@@ -160,7 +215,16 @@ def call_llm_api_with_retry(
             )
             t1 = time.time()
             resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
+            response_data = resp.json()
+            try:
+                content = response_data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                service_message = ""
+                if isinstance(response_data, dict):
+                    service_message = str(response_data.get("message") or response_data.get("error") or "")
+                raise LLMServiceUnavailableError(
+                    f"LLM response missing choices: {service_message[:200] or exc}"
+                ) from exc
 
             try:
                 content = fix_json_invalid_escapes(content)
@@ -175,11 +239,16 @@ def call_llm_api_with_retry(
                 f"LLM API 响应耗时 {t1 - t0:.1f}s, "
                 f"输出 {len(content)} 字符"
             )
+            if circuit_breaker is not None:
+                circuit_breaker.record_success()
             return content
 
         except requests.exceptions.RequestException as e:
             last_error = e
             status_code = getattr(e.response, 'status_code', None)
+            retryable = status_code is None or status_code == 429 or (
+                status_code is not None and 500 <= status_code <= 599
+            )
             if status_code == 401:
                 msg = f"API Key 错误 (401)，请检查 .env 中的密钥"
             elif status_code == 402:
@@ -192,18 +261,32 @@ def call_llm_api_with_retry(
                 msg = f"API HTTP {status_code}"
             else:
                 msg = str(e)
-            if attempt == 0:
-                _logger.debug(f"API 失败 ({msg})，{2 ** attempt}s 后重试")
-                time.sleep(2 ** attempt)
+            if retryable and attempt < max_attempts - 1:
+                delay = _retry_delay(getattr(e, "response", None), attempt, max_delay)
+                _logger.debug("API 暂时失败 (%s)，%.1fs 后重试", msg, delay)
+                time.sleep(delay)
                 continue
 
+        except LLMServiceUnavailableError as e:
+            last_error = e
+            retryable = True
+            if attempt < max_attempts - 1:
+                delay = _retry_delay(None, attempt, max_delay)
+                _logger.debug("API 服务响应异常，%.1fs 后重试: %s", delay, e)
+                time.sleep(delay)
+                continue
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
             last_error = e
-            if attempt == 0:
+            retryable = False
+            if attempt < max_attempts - 1:
                 _logger.debug(f"API 响应异常，{2 ** attempt}s 后重试: {e}")
                 time.sleep(2 ** attempt)
                 continue
 
+    if retryable and circuit_breaker is not None:
+        circuit_breaker.record_transient_failure()
+    if retryable:
+        raise LLMServiceUnavailableError(f"LLM service unavailable: {last_error}") from last_error
     if isinstance(last_error, requests.exceptions.RequestException):
         status_code = getattr(last_error.response, 'status_code', '?')
         raise LLMAPICallError(

@@ -63,7 +63,8 @@ class DeepSeekPaperSummarizer:
     # ------------------------------------------------------------------
     # API 调用 (委托给 common.call_llm_api_with_retry)
     # ------------------------------------------------------------------
-    def call_deepseek_api(self, article_text, system_prompt: str) -> str:
+    def call_deepseek_api(self, article_text, system_prompt: str,
+                          circuit_breaker=None) -> str:
         """调用 DeepSeek API 生成论文结构化总结。
 
         委托给 ``common.call_llm_api_with_retry``，该函数封装了重试、
@@ -110,7 +111,9 @@ class DeepSeekPaperSummarizer:
             "thinking": {"type": config.get("thinking", "enabled")},
             "response_format": {"type": "json_object"},
         }
-        return call_llm_api_with_retry(config, headers, payload)
+        return call_llm_api_with_retry(
+            config, headers, payload, circuit_breaker=circuit_breaker,
+        )
 
 
     # ------------------------------------------------------------------
