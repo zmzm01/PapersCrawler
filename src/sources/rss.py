@@ -44,6 +44,8 @@ class RSSProcessor:
         # 创建复用的 Session，并预设所有请求都需要的请求头
         # Session 会自动管理连接池和 Cookie，避免频繁 TCP 握手
         self.session = requests.Session()
+        # RSS 不应意外继承桌面/本地代理；需要代理的来源必须显式配置。
+        self.session.trust_env = False
         self.session.headers.update({
             "User-Agent": (
                 "Mozilla/5.0 "

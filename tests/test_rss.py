@@ -67,6 +67,13 @@ def test_parse_rss_full_flow():
     assert papers[2].date == "2025-06-03"
 
 
+def test_rss_session_does_not_inherit_environment_proxy():
+    """RSS requests must not be redirected through ambient desktop proxies."""
+    processor = RSSProcessor()
+    assert processor.session.trust_env is False
+    processor.close()
+
+
 # ---- DOI extraction ----
 
 def test_extract_doi_from_prism():

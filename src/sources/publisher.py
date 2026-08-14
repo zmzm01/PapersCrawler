@@ -113,6 +113,13 @@ class BasePublisherScraper:
     # 其他 publisher 关闭，避免误选文章页中的配图下载链接（如 Optica）。
     extract_on_page_pdf_link: bool = False
 
+    # ── Phase C 预热导航 ──
+    # 非空时，Phase C 开始抓取该 publisher 前先访问一次域名根路径，
+    # 以触发 Cookie 同意（如 AIP 的 Osano consent）并建立会话 Cookie，
+    # 避免该 publisher 组内第一篇论文因冷启动拿到"同意壳"空页面而失败。
+    # 仅需要的 publisher 覆盖（如 AIP），其他保持 None 以省去预热开销。
+    prewarm_url: str | None = None
+
     def __init__(self, user_data_dir):
         """初始化基础爬虫。
 
@@ -148,6 +155,37 @@ class BasePublisherScraper:
         )
         self.page = self.context.new_page()
 
+    def prewarm(self):
+        """预热导航到出版社域名根路径，建立 Cookie 同意等会话状态。
+
+        冷启动浏览器后首次访问某些出版社（如 AIP 的 Osano consent）可能
+        只返回"同意壳"空页面（无 body、无 citation meta），导致该组第一篇
+        论文解析失败。预热访问一次域名根路径可触发并完成同意流程，使后续
+        论文抓取正常。
+
+        仅当类属性 ``prewarm_url`` 非空时执行（未配置则 no-op）。
+        失败仅记录 warning，不阻断主流程。
+
+        Returns:
+            bool: 预热是否成功（未配置时返回 True）。
+        """
+        logger = logging.getLogger(__name__)
+        if not self.prewarm_url:
+            return True
+        try:
+            logger.info("Prewarming %s → %s", type(self).__name__, self.prewarm_url)
+            self.page.goto(self.prewarm_url, wait_until="domcontentloaded", timeout=120000)
+            self.page.wait_for_timeout(15000)
+            self.html = self.page.content()
+            if self._is_cf_challenge_page(self.html, self.page.title()):
+                logger.info("Prewarm page hit CF challenge, waiting for it to clear")
+                self.page.wait_for_timeout(15000)
+            logger.info("Prewarm done for %s", type(self).__name__)
+            return True
+        except Exception as exc:
+            logger.warning("Prewarm failed for %s: %s", type(self).__name__, exc)
+            return False
+
     # ──────────────────────────────────────────────────────────
     # HTTP Fallback 机制
     # ──────────────────────────────────────────────────────────
@@ -169,10 +207,12 @@ class BasePublisherScraper:
         logger = logging.getLogger(__name__)
         if self.http_fallback_mode == "requests":
             try:
-                resp = py_requests.get(
-                    url,
-                    timeout=timeout_sec,
-                    headers={
+                session = py_requests.Session()
+                # Nature HTTP 回退必须绕过环境代理。代理出口曾返回 406，
+                # 而直连可得到正常文章页；显式 publisher 代理仍由浏览器处理。
+                session.trust_env = False
+                resp = session.get(
+                    url, timeout=timeout_sec, headers={
                         "User-Agent": (
                             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -1293,6 +1333,10 @@ class AIPScraper(BasePublisherScraper):
           区域提取。
     """
 
+    # 冷启动首次访问 AIP 论文页可能只返回 Osano consent 空壳（无 body），
+    # 预热导航到域名根路径先触发并完成同意流程，避免组内第一篇解析失败。
+    prewarm_url = "https://pubs.aip.org"
+
     def parse_page(self):
         """解析 AIP 论文页面。
 
@@ -1535,4 +1579,3 @@ class OpticaScraper(BasePublisherScraper):
             authors=authors,
             pdf_url=pdf_url,
         )
-

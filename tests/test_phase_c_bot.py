@@ -8,6 +8,7 @@ scripts or valid content.
 
 import sys
 import os
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -311,3 +312,55 @@ class TestIntegration:
         """
         title = _extract_page_title(html)
         assert not _has_bot_markers(html, page_title=title)
+
+
+# ---- prewarm()（Phase C 预热导航） ----
+
+class TestPrewarm:
+    """测试 BasePublisherScraper.prewarm()。
+
+    预热导航用于 AIP 等出版社：冷启动首次访问论文页可能只返回 Osano
+    consent 空壳，先在组内预热访问域名根路径建立会话。
+    """
+
+    class _Scraper(BasePublisherScraper):
+        prewarm_url = "https://pubs.aip.org"
+
+    class _NoPrewarm(BasePublisherScraper):
+        prewarm_url = None
+
+    def test_no_prewarm_url_is_noop(self, tmp_path):
+        """未配置 prewarm_url 时不访问页面，直接返回 True。"""
+        s = self._NoPrewarm(tmp_path)
+        assert s.prewarm() is True
+
+    def test_prewarm_navigates_and_returns_true(self, tmp_path):
+        """配置 prewarm_url 时导航到域名根路径并返回 True。"""
+        s = self._Scraper(tmp_path)
+        calls = []
+
+        def goto(url, **k):
+            calls.append(url)
+
+        s.page = SimpleNamespace(
+            goto=goto,
+            wait_for_timeout=lambda *a, **k: None,
+            content=lambda: "<html><body>ok</body></html>",
+            title=lambda: "AIP Publishing",
+        )
+        s.html = ""
+        assert s.prewarm() is True
+        assert calls == ["https://pubs.aip.org"]
+
+    def test_prewarm_exception_is_caught(self, tmp_path):
+        """导航抛异常时返回 False 而非冒泡。"""
+        s = self._Scraper(tmp_path)
+
+        def boom(*a, **k):
+            raise RuntimeError("nav failed")
+
+        s.page = SimpleNamespace(
+            goto=boom,
+            wait_for_timeout=lambda *a, **k: None,
+        )
+        assert s.prewarm() is False

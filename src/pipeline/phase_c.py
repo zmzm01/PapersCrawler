@@ -185,6 +185,14 @@ def phase_c_publisher(db, publishers):
                     pass
             continue
 
+        # 预热导航：建立 Cookie 同意等会话状态（仅配置了 prewarm_url 的
+        # 出版社执行，如 AIP 的 Osano consent），避免组内第一篇论文因
+        # 冷启动拿到"同意壳"空页面而解析失败。失败仅告警，不阻断。
+        try:
+            scraper.prewarm()
+        except Exception:
+            logger.warning("Prewarm raised for %s, continuing anyway", publisher_key)
+
         try:
             consecutive_failures = 0
             is_first_in_group = True
