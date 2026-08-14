@@ -343,8 +343,14 @@ class DatabaseClient:
             doi: 论文 DOI 字符串
         Returns:
             bool: True 表示已存在, False 表示不存在
+
+        Note:
+            使用 LOWER(doi) 做大小写不敏感比较：RSS 与 CrossRef 返回的 DOI
+            大小写可能不同，避免同一论文因大小写差异被重复插入。
         """
-        cur = self.conn.execute("SELECT 1 FROM papers WHERE doi = ?", (doi,))
+        cur = self.conn.execute(
+            "SELECT 1 FROM papers WHERE LOWER(doi) = LOWER(?)", (doi,),
+        )
         return cur.fetchone() is not None
 
     def is_doi_skipped(self, doi):
@@ -362,9 +368,12 @@ class DatabaseClient:
         -------
         bool
             True 表示该 DOI 已被跳过。
+
+        Note:
+            使用 LOWER(doi) 做大小写不敏感比较（DOI 大小写不敏感）。
         """
         cur = self.conn.execute(
-            "SELECT 1 FROM skipped_dois WHERE doi = ?", (doi,),
+            "SELECT 1 FROM skipped_dois WHERE LOWER(doi) = LOWER(?)", (doi,),
         )
         return cur.fetchone() is not None
 
@@ -386,10 +395,11 @@ class DatabaseClient:
         from datetime import datetime
         if created_date is None:
             created_date = str(datetime.now())
+        # DOI 规范为小写（与 papers 表一致，保证大小写不敏感的跳过判定）
         self.conn.execute(
             "INSERT OR IGNORE INTO skipped_dois (doi, reason, created_date) "
             "VALUES (?, ?, ?)",
-            (doi, reason, created_date),
+            (doi.lower(), reason, created_date),
         )
         self.conn.commit()
 
@@ -503,13 +513,14 @@ class DatabaseClient:
             publisher: 出版社标识
             updated:   RSS 中显示的发布/更新日期 (存储在 paperdate_rss 列)
         """
+        # DOI 规范为小写（DOI 本身大小写不敏感，避免 RSS/CrossRef 双插不同大小写副本）
         self.conn.execute(
             """
             INSERT INTO papers (doi, title, page_url, journal, publisher,
                                 paperdate_rss, discovery_source)
             VALUES (?, ?, ?, ?, ?, ?, 'rss')
             """,
-            (doi, title, link, journal, publisher, updated),
+            (doi.lower(), title, link, journal, publisher, updated),
         )
         self.conn.commit()
 
@@ -523,8 +534,9 @@ class DatabaseClient:
             doi:          论文 DOI
             created_date: 创建日期字符串 (如 "2026-05-18")
         """
+        # 与 insert_*_basicinfo 一致，DOI 先转小写再匹配
         self.conn.execute(
-            "UPDATE papers SET created_date = ? WHERE doi = ?",
+            "UPDATE papers SET created_date = ? WHERE LOWER(doi) = LOWER(?)",
             (created_date, doi),
         )
         self.conn.commit()
@@ -546,13 +558,14 @@ class DatabaseClient:
             date:      发布日期 (paperdate_rss 列)
             source:    发现来源，如 "rss" / "crossref"
         """
+        # DOI 规范为小写（DOI 本身大小写不敏感，避免 RSS/CrossRef 双插不同大小写副本）
         self.conn.execute(
             """
             INSERT INTO papers (doi, title, page_url, journal, publisher,
                                 paperdate_rss, discovery_source)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (doi, title, link, journal, publisher, date, source),
+            (doi.lower(), title, link, journal, publisher, date, source),
         )
         self.conn.commit()
 
@@ -569,7 +582,8 @@ class DatabaseClient:
             source: 要追加的来源名称（如 "crossref"）
         """
         cur = self.conn.execute(
-            "SELECT discovery_source FROM papers WHERE doi = ?", (doi,)
+            "SELECT discovery_source FROM papers WHERE LOWER(doi) = LOWER(?)",
+            (doi,),
         )
         row = cur.fetchone()
         if row is None:
@@ -581,7 +595,7 @@ class DatabaseClient:
             sources.append(source)
             new_value = ",".join(sources)
             self.conn.execute(
-                "UPDATE papers SET discovery_source = ? WHERE doi = ?",
+                "UPDATE papers SET discovery_source = ? WHERE LOWER(doi) = LOWER(?)",
                 (new_value, doi),
             )
             self.conn.commit()
