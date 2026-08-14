@@ -281,6 +281,23 @@ def _timeago(timestamp: float) -> str:
     return f"{seconds // 604800}w ago"
 
 
+def _is_report_path_in_directory(file_path: Path, directory: Path) -> bool:
+    """Return whether a resolved report path is contained by a report directory.
+
+    Parameters
+    ----------
+    file_path : Path
+        Candidate path, which may contain traversal components.
+    directory : Path
+        Directory that exclusively owns report files.
+    """
+    try:
+        file_path.resolve().relative_to(directory.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def _list_reports():
     """List all report files from auto/ and user/ directories, newest first."""
     reports = []
@@ -326,7 +343,7 @@ async def report_data(filename: str):
     for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
         file_path = (directory / filename).resolve()
         # 防止 ../../etc/passwd 这类路径遍历
-        if not str(file_path).startswith(str(directory.resolve())):
+        if not _is_report_path_in_directory(file_path, directory):
             return JSONResponse({"error": "Invalid path"}, status_code=400)
         if file_path.exists():
             content = file_path.read_text(encoding="utf-8")
@@ -339,7 +356,7 @@ async def download_report(filename: str):
     for directory in [AUTO_REPORT_DIR, USER_REPORT_DIR]:
         file_path = (directory / filename).resolve()
         # 防止 ../../etc/passwd 这类路径遍历
-        if not str(file_path).startswith(str(directory.resolve())):
+        if not _is_report_path_in_directory(file_path, directory):
             return JSONResponse({"error": "Invalid path"}, status_code=400)
         if file_path.exists():
             return FileResponse(str(file_path), filename=filename, media_type="text/markdown")
