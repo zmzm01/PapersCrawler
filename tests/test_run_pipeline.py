@@ -139,6 +139,30 @@ def test_run_pipeline_dry_run_all_does_not_call_run_pipeline():
             mock_run_phases.assert_not_called()
 
 
+def test_run_pipeline_reset_relevance_flagged_off():
+    """--no-reset-relevance 应使 _run_auto_reset 收到 reset_relevance=False."""
+    with patch("tools.run_pipeline.run_phases") as mock_run_phases:
+        with patch("tools.run_pipeline._run_auto_reset") as mock_auto_reset:
+            import tools.run_pipeline
+            tools.run_pipeline.main(["--phases", "A", "--no-reset-relevance"])
+            mock_auto_reset.assert_called_once_with(
+                True, True, False, dry_run=False,
+            )
+            mock_run_phases.assert_called_once_with(phase_list=["A"], force=False)
+
+
+def test_run_pipeline_reset_relevance_enabled_flag():
+    """默认（未指定 --no-reset-relevance）时 _run_auto_reset 收到 reset_relevance=True."""
+    with patch("tools.run_pipeline.run_phases") as mock_run_phases:
+        with patch("tools.run_pipeline._run_auto_reset") as mock_auto_reset:
+            import tools.run_pipeline
+            tools.run_pipeline.main(["--phases", "A"])
+            mock_auto_reset.assert_called_once_with(
+                True, True, True, dry_run=False,
+            )
+            mock_run_phases.assert_called_once_with(phase_list=["A"], force=False)
+
+
 # ===================================================================
 # send_report 测试
 # ===================================================================
