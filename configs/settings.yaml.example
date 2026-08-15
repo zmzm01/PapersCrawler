@@ -16,6 +16,7 @@ skip_phases:
   C: false           # Publisher 页面爬取
   E: false           # LLM 相关性判断
   E2: false          # MinerU PDF 解析
+  E3: false          # 正文相关性终审
   F: false           # LLM 论文总结
   G: true           # 报告生成
   H: true           # 邮件推送
@@ -40,8 +41,21 @@ llm:
     thinking: enabled
     timeout: 300
 
+  # 正文相关性终审（Phase E3）— 强模型
+  fulltext_relevance:
+    model: deepseek-v4-pro
+    thinking: enabled
+    timeout: 300
+    evidence_max_chars: 60000
+
   # 并发上限：Phase E/F 同时发起的 LLM 请求数
   concurrent_max: 100
+
+fulltext_download:
+  daily_max: 3
+  publisher_daily_max: 2
+  delay_min_seconds: 30
+  delay_max_seconds: 90
 
 # ---------------------------------------------------------------------------
 # 流水线运行参数

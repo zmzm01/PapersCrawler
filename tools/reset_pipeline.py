@@ -50,6 +50,14 @@ RELEVANCE_RESET = [
     "llm_relevance_result = NULL",       # deprecated
     "llm_relevance_confidence = NULL",
     "llm_relevance_reason = NULL",
+    "llm_relevance_basis = NULL",
+    "relevance_screen_status = 'pending'",
+    "relevance_screen_error = NULL",
+    "relevance_screen_date = NULL",
+    "relevance_screen_category = NULL",
+    "relevance_screen_subfields = NULL",
+    "relevance_screen_confidence = NULL",
+    "relevance_screen_reason = NULL",
 ]
 
 
@@ -278,9 +286,28 @@ def cmd_reset_mineru(publisher=None):
 # 不级联 E2/F/G（相关性结果不影响已有 MinerU 全文和 LLM 总结）。
 # ------------------------------------------------------------------
 
-def cmd_reset_relevance(publisher=None, reset_all=False):
+def cmd_reset_relevance(publisher=None, reset_all=False, categories=None):
     """重置 Phase E LLM 相关性判断结果。"""
-    if reset_all:
+    if reset_all and categories:
+        print("--categories 与 --all 不能同时使用")
+        return
+    category_clause = ""
+    category_params = ()
+    if categories:
+        values = [value.strip().upper() for value in categories.split(",")]
+        if not values or any(value not in {"A", "B", "C", "D"} for value in values):
+            print("--categories 只能包含 A,B,C,D")
+            return
+        category_clause = "llm_relevance_category IN (" + ",".join("?" for _ in values) + ")"
+        category_params = tuple(values)
+    if categories:
+        if publisher:
+            where = "WHERE publisher = ? AND " + category_clause
+            params = (publisher,) + category_params
+        else:
+            where = "WHERE " + category_clause
+            params = category_params
+    elif reset_all:
         if publisher:
             where = "WHERE publisher = ?"
             params = (publisher,)
@@ -295,7 +322,6 @@ def cmd_reset_relevance(publisher=None, reset_all=False):
         else:
             where = "WHERE llm_relevance_status IN ('failed', 'skipped')"
             params = ()
-
     count_sql = f"SELECT COUNT(*) FROM papers {where}"
     conn = sqlite3.connect(str(DB_PATH))
     count = conn.execute(count_sql, params).fetchone()[0]
@@ -308,7 +334,7 @@ def cmd_reset_relevance(publisher=None, reset_all=False):
     set_clause = ",\n            ".join(RELEVANCE_RESET)
     sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
 
-    mode = "--all，全部" if reset_all else "仅失败/跳过"
+    mode = "--all，全部" if reset_all else (f"类别 {categories}" if categories else "仅失败/跳过")
     print(f"\n将重置 {count} 篇论文的 LLM 相关性判断状态（{mode}，publisher={publisher or '全部'}）")
     print()
     print("  受影响的状态列:")
@@ -574,6 +600,8 @@ if __name__ == "__main__":
     p_rel.add_argument("--publisher", help="仅重置指定出版社")
     p_rel.add_argument("--all", action="store_true",
         help="重置全部论文（含 success），修改 domain_description 后重新判断时使用")
+    p_rel.add_argument("--categories",
+        help="按最终类别重置，如 A,B,C；与 --all 互斥")
 
     p_sum = sub.add_parser("reset-summary",
         help="重置 LLM 总结状态（加 --all 重置包括 success 的全部论文）",
@@ -645,7 +673,7 @@ if __name__ == "__main__":
     elif args.command == "reset-mineru":
         cmd_reset_mineru(args.publisher)
     elif args.command == "reset-relevance":
-        cmd_reset_relevance(args.publisher, reset_all=args.all)
+        cmd_reset_relevance(args.publisher, reset_all=args.all, categories=args.categories)
     elif args.command == "reset-summary":
         cmd_reset_summary(args.publisher, reset_all=args.all)
     elif args.command == "reset-report":

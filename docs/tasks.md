@@ -1,5 +1,12 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-15：两阶段相关性与下载限流
+
+- 将标题摘要筛选与正文终审拆为 E/E3；E2 仅处理 A/B/C + 低置信 D。
+- 新增 SQLite 下载事件审计和 Asia/Shanghai 每日硬配额（总计 3、单出版社 2），失败尝试占额。
+- 报告支持正文不可用的 A/B 摘要降级，并显示动态方向与判定依据。
+- 本次未触发实际批量下载或外部 LLM；使用 `/path/to/paperscrawler-venv` 完成全量离线测试。
+
 ## 2026-08-14: LLM Base URL 可配置化
 
 - **背景**：`src/config.py` 将 DeepSeek 的完整 Chat Completions 地址写死，虽然模型等参数可在 `settings.yaml` 覆盖，但无法切换到 OpenCode Go 等 OpenAI 兼容网关。

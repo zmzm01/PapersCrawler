@@ -6,7 +6,7 @@
 
 调用模式::
 
-    # 每日调度（Phase A-RSS/A-CR/B/C/E/E2/F）
+    # 每日调度（Phase A-RSS/A-CR/B/C/E/E2/E3/F）
     python tools/run_pipeline.py --daily
 
     # 每周调度（Phase G/H）
@@ -78,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例:\n"
-            "  %(prog)s --daily          每日调度 (A-RSS/A-CR/B/C/E/E2/F)\n"
+            "  %(prog)s --daily          每日调度 (A-RSS/A-CR/B/C/E/E2/E3/F)\n"
             "  %(prog)s --weekly         每周调度 (G/H)\n"
             "  %(prog)s --all            全流程强制（含 SKIP 阶段）\n"
             "  %(prog)s --phases A,B     仅执行 Phase A、B\n"
@@ -90,7 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--daily",
         action="store_true",
-        help="每日调度：Phase A-RSS/A-CR/B/C/E/E2/F（默认尊重 SKIP_PHASE_* 配置）",
+        help="每日调度：Phase A-RSS/A-CR/B/C/E/E2/E3/F（默认尊重 SKIP_PHASE_* 配置）",
     )
     mode.add_argument(
         "--weekly",
@@ -231,12 +231,21 @@ def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: 
         logger.info("Auto-reset mineru: disabled")
 
     if reset_relevance:
-        count = reset_db.batch_reset_status(
-            [("llm_relevance_status", "pending")],
+        screen_count = reset_db.batch_reset_status(
+            [("relevance_screen_status", "pending"),
+             ("relevance_screen_error", None)],
+            "relevance_screen_status = 'failed'",
+        )
+        final_count = reset_db.batch_reset_status(
+            [("llm_relevance_status", "pending"),
+             ("llm_relevance_error", None)],
             "llm_relevance_status = 'failed'",
         )
-        if count:
-            logger.info("Auto-reset %d failed relevance judgments for retry", count)
+        if screen_count or final_count:
+            logger.info(
+                "Auto-reset relevance for retry: screen=%d, final=%d",
+                screen_count, final_count,
+            )
     else:
         logger.info("Auto-reset relevance: disabled")
 

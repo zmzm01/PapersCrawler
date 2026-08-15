@@ -119,10 +119,11 @@ def _pipeline_status():
             if breakdown:
                 out["failed_breakdown"] = breakdown
             phases[ps["label"]] = out
-        # Count papers pending report: A/B 相关 + LLM 总结成功 + 尚未被报告
+        # Count pending report papers, including terminal abstract fallback.
         pending_report = db.conn.execute(
             "SELECT COUNT(*) FROM papers "
-            "WHERE llm_summary_status = 'success' "
+            "WHERE (llm_summary_status = 'success' "
+            "   OR llm_relevance_basis = 'abstract_fallback') "
             "  AND report_date IS NULL "
             "  AND llm_relevance_status = 'success' "
             "  AND llm_relevance_category IN ('A', 'B')"
@@ -167,7 +168,7 @@ async def pipeline_weekly_stats():
     """Return per-day stats for the last 7 days: 3 buckets matching explained.html.j2.
 
     Buckets:
-      - reportable:    llm_summary_status='success' AND report_date IS NULL
+      - reportable:    final A/B with summary or abstract fallback, unreported
       - total_failed:  publisher/mineru/summary any failed
       - other:         total - reportable - total_failed (pending / skipped / reported)
     """
@@ -195,7 +196,11 @@ async def pipeline_weekly_stats():
             SELECT
               created_date AS day,
               COUNT(*) AS total,
-              SUM(CASE WHEN llm_summary_status = 'success' AND report_date IS NULL
+              SUM(CASE WHEN (llm_summary_status = 'success'
+                                  OR llm_relevance_basis = 'abstract_fallback')
+                             AND report_date IS NULL
+                             AND llm_relevance_status = 'success'
+                             AND llm_relevance_category IN ('A', 'B')
                        THEN 1 ELSE 0 END) AS reportable,
               SUM(CASE WHEN publisher_page_fetched_status = 'failed'
                        THEN 1 ELSE 0 END) AS publisher_failed,

@@ -28,6 +28,17 @@
 {{ sort_note_tmpl.sort_note() }}
 {{ legend_tmpl.legend() }}
 {{ disclaimers_tmpl.disclaimers() }}
+{% if papers|length > 0 -%}
+{% set core_papers = papers|selectattr('relevance_category', 'equalto', 'A')|list -%}
+{% set watch_papers = papers|selectattr('relevance_category', 'equalto', 'B')|list -%}
+  <section class="decision-summary">
+    <p><strong>本期决策摘要：</strong>核心推荐（A）{{ core_papers|length }} 篇；邻近观察（B）{{ watch_papers|length }} 篇。</p>
+    <p><strong>核心推荐（A）</strong></p>
+    <ul>{% for p in core_papers %}<li><strong>{{ p.title }}</strong>{% if p.matched_subdomains_labels %} · {{ p.matched_subdomains_labels|join('、') }}{% endif %} · {{ p.relevance_basis }} — {{ p.one_sentence or p.relevance_reason }}{% if p.page_url %} <a href="{{ p.page_url }}">原文</a>{% endif %}</li>{% else %}<li>无</li>{% endfor %}</ul>
+    <p><strong>邻近观察（B，全部保留）</strong></p>
+    <ul>{% for p in watch_papers %}<li><strong>{{ p.title }}</strong>{% if p.matched_subdomains_labels %} · {{ p.matched_subdomains_labels|join('、') }}{% endif %} · {{ p.relevance_basis }} — {{ p.one_sentence or p.relevance_reason }}{% if p.page_url %} <a href="{{ p.page_url }}">原文</a>{% endif %}</li>{% else %}<li>无</li>{% endfor %}</ul>
+  </section>
+{% endif -%}
 {% for p in papers %}{{ paper_tmpl.paper(p) }}
 {% endfor %}
 </body>
@@ -36,6 +47,17 @@
 {{ sort_note_tmpl.sort_note() }}
 {{ legend_tmpl.legend() }}
 {{ disclaimers_tmpl.disclaimers() }}
+{% if papers|length > 0 -%}
+{% set core_papers = papers|selectattr('relevance_category', 'equalto', 'A')|list -%}
+{% set watch_papers = papers|selectattr('relevance_category', 'equalto', 'B')|list -%}
+  <section class="decision-summary">
+    <p><strong>本期决策摘要：</strong>核心推荐（A）{{ core_papers|length }} 篇；邻近观察（B）{{ watch_papers|length }} 篇。</p>
+    <p><strong>核心推荐（A）</strong></p>
+    <ul>{% for p in core_papers %}<li><strong>{{ p.title }}</strong>{% if p.matched_subdomains_labels %} · {{ p.matched_subdomains_labels|join('、') }}{% endif %} · {{ p.relevance_basis }} — {{ p.one_sentence or p.relevance_reason }}{% if p.page_url %} <a href="{{ p.page_url }}">原文</a>{% endif %}</li>{% else %}<li>无</li>{% endfor %}</ul>
+    <p><strong>邻近观察（B，全部保留）</strong></p>
+    <ul>{% for p in watch_papers %}<li><strong>{{ p.title }}</strong>{% if p.matched_subdomains_labels %} · {{ p.matched_subdomains_labels|join('、') }}{% endif %} · {{ p.relevance_basis }} — {{ p.one_sentence or p.relevance_reason }}{% if p.page_url %} <a href="{{ p.page_url }}">原文</a>{% endif %}</li>{% else %}<li>无</li>{% endfor %}</ul>
+  </section>
+{% endif -%}
 {% for p in papers %}{{ paper_tmpl.paper(p) }}
 {% endfor %}
 {%- endif %}

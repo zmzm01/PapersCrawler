@@ -40,6 +40,8 @@ db.py
 """
 
 import sqlite3
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from enum import Enum
 
 
@@ -107,6 +109,11 @@ class DatabaseClient:
         "llm_relevance_category", "llm_relevance_subfields",
         "llm_relevance_confidence",
         "llm_relevance_reason", "llm_summary_result",
+        "llm_relevance_basis",
+        "relevance_screen_status", "relevance_screen_error",
+        "relevance_screen_date", "relevance_screen_category",
+        "relevance_screen_subfields", "relevance_screen_confidence",
+        "relevance_screen_reason", "relevance_screen_is_backfill",
         "mineru_fulltext", "mineru_output_dir",
     })
 
@@ -248,8 +255,19 @@ class DatabaseClient:
             llm_relevance_subfields TEXT,             -- JSON array of matched sub-domains
             llm_relevance_confidence TEXT,
             llm_relevance_reason TEXT,
+            llm_relevance_basis TEXT,             -- fulltext/abstract_fallback/abstract_clear_reject
             llm_relevance_error TEXT,
             llm_relevance_date TEXT,
+
+            -- 标题+摘要初筛（Phase E）；最终判定仍使用 llm_relevance_*。
+            relevance_screen_status TEXT DEFAULT 'pending',
+            relevance_screen_category TEXT,
+            relevance_screen_subfields TEXT,
+            relevance_screen_confidence TEXT,
+            relevance_screen_reason TEXT,
+            relevance_screen_error TEXT,
+            relevance_screen_date TEXT,
+            relevance_screen_is_backfill INTEGER DEFAULT 0,
 
             -- LLM 论文总结
             llm_summary_status TEXT DEFAULT 'pending',
@@ -283,6 +301,28 @@ class DatabaseClient:
             created_date TEXT
         )
         """)
+        self.conn.commit()
+
+        # 下载审计表：配额占位和下载结果在同一 SQLite 数据库中持久化。
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS fulltext_download_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doi TEXT NOT NULL,
+            publisher TEXT,
+            local_date TEXT NOT NULL,
+            attempted_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT
+        )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_download_events_date "
+            "ON fulltext_download_events(local_date)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_download_events_date_publisher "
+            "ON fulltext_download_events(local_date, publisher)"
+        )
         self.conn.commit()
 
         # ---- 迁移: 为旧数据库添加 MinerU 列 (如果不存在) ----
@@ -328,6 +368,28 @@ class DatabaseClient:
                 self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
             except sqlite3.OperationalError:
                 pass  # 列已存在则跳过
+
+        # ---- 迁移：摘要初筛与最终判定依据列 ----
+        for col_def in [
+            "llm_relevance_basis TEXT",
+            "relevance_screen_status TEXT DEFAULT 'pending'",
+            "relevance_screen_category TEXT",
+            "relevance_screen_subfields TEXT",
+            "relevance_screen_confidence TEXT",
+            "relevance_screen_reason TEXT",
+            "relevance_screen_error TEXT",
+            "relevance_screen_date TEXT",
+            "relevance_screen_is_backfill INTEGER DEFAULT 0",
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass
+        self.conn.commit()
+
+        # Existing databases keep their final judgement as a screening
+        # snapshot; this does not trigger an LLM call or a PDF download.
+        self.migrate_relevance_screen_snapshot()
 
         # ==================================================================
     # 基本查询方法
@@ -712,7 +774,178 @@ class DatabaseClient:
     # Phase E: LLM 相关性判断结果
     # ==================================================================
 
-    def update_llm_relevance(self, doi, category, subfields, confidence, notes, status, status_date):
+    def update_relevance_screen(
+            self, doi, category, subfields, confidence, notes, status,
+            status_date):
+        """Persist the title/abstract relevance screening result.
+
+        Parameters
+        ----------
+        doi : str
+            Paper DOI.
+        category : str
+            Screening category A/B/C/D.
+        subfields : str
+            JSON encoded matched subfield keys.
+        confidence : str
+            LLM confidence (high/medium/low).
+        notes : str
+            Chinese evidence note returned by the LLM.
+        status : str
+            FetchStatus value.
+        status_date : str
+            Timestamp of the screening operation.
+        """
+        if not self.paper_doi_exists(doi):
+            raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
+        self.conn.execute(
+            """UPDATE papers SET relevance_screen_category = ?,
+                relevance_screen_subfields = ?, relevance_screen_confidence = ?,
+                relevance_screen_reason = ?, relevance_screen_status = ?,
+                relevance_screen_date = ?, relevance_screen_error = NULL
+                WHERE doi = ?""",
+            (category, subfields, confidence, notes, status, status_date, doi),
+        )
+        self.conn.commit()
+
+    def update_relevance_screen_error(self, doi, error, status, status_date):
+        """Record a screening error without changing the final judgement."""
+        if not self.paper_doi_exists(doi):
+            raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
+        self.conn.execute(
+            """UPDATE papers SET relevance_screen_error = ?,
+                relevance_screen_status = ?, relevance_screen_date = ?
+                WHERE doi = ?""",
+            (error, status, status_date, doi),
+        )
+        self.conn.commit()
+
+    def get_relevance_screen_candidates(self, limit=0, pending_only=True,
+                                        final_pending_only=False,
+                                        require_pdf_url=True):
+        """Return only papers eligible for full-text download.
+
+        The queue is deliberately limited to screen A/B/C and low-confidence
+        D. Medium/high-confidence D is a terminal rejection and never enters
+        the publisher download path.
+        """
+        conditions = [
+            "relevance_screen_status = 'success'",
+            "(relevance_screen_category IN ('A', 'B', 'C') "
+            "OR (relevance_screen_category = 'D' "
+            "AND lower(relevance_screen_confidence) = 'low'))",
+        ]
+        if pending_only:
+            conditions.append("mineru_parse_status = 'pending'")
+        if require_pdf_url:
+            conditions.append(
+                "((pdf_url IS NOT NULL AND pdf_url != '') "
+                "OR publisher = 'optica')"
+            )
+        if final_pending_only:
+            conditions.append("llm_relevance_status = 'pending'")
+        query = "SELECT * FROM papers WHERE " + " AND ".join(conditions)
+        query += """ ORDER BY COALESCE(relevance_screen_is_backfill, 0),
+            CASE relevance_screen_category
+              WHEN 'A' THEN 0 WHEN 'B' THEN 1 WHEN 'C' THEN 2 ELSE 3 END,
+            created_date DESC"""
+        if limit:
+            query += " LIMIT ?"
+            return self.conn.execute(query, (limit,)).fetchall()
+        return self.conn.execute(query).fetchall()
+
+    @staticmethod
+    def _local_date():
+        """Return the project-local calendar date (Asia/Shanghai)."""
+        return datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+
+    def claim_fulltext_download(self, doi, publisher, daily_max=3,
+                                publisher_daily_max=2):
+        """Atomically reserve one daily PDF attempt.
+
+        Failed attempts consume the reservation too.  ``BEGIN IMMEDIATE``
+        serializes concurrent callers, so repeated/manual runs cannot bypass
+        the hard limits.
+
+        Returns
+        -------
+        bool
+            True when a reservation was inserted, otherwise False.
+        """
+        local_date = self._local_date()
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            total = self.conn.execute(
+                "SELECT COUNT(*) FROM fulltext_download_events WHERE local_date = ?",
+                (local_date,),
+            ).fetchone()[0]
+            source = self.conn.execute(
+                "SELECT COUNT(*) FROM fulltext_download_events "
+                "WHERE local_date = ? AND publisher = ?",
+                (local_date, publisher or "__unknown__"),
+            ).fetchone()[0]
+            already_claimed = self.conn.execute(
+                "SELECT 1 FROM fulltext_download_events "
+                "WHERE local_date = ? AND doi = ? LIMIT 1",
+                (local_date, doi),
+            ).fetchone()
+            if already_claimed:
+                self.conn.rollback()
+                return False
+            if total >= int(daily_max) or source >= int(publisher_daily_max):
+                self.conn.rollback()
+                return False
+            self.conn.execute(
+                """INSERT INTO fulltext_download_events
+                   (doi, publisher, local_date, attempted_at, status)
+                   VALUES (?, ?, ?, ?, 'reserved')""",
+                (doi, publisher or "__unknown__", local_date,
+                 datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()),
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def finish_fulltext_download(self, doi, status, error=None):
+        """Update the most recent reservation for ``doi``."""
+        self.conn.execute(
+            """UPDATE fulltext_download_events SET status = ?, error = ?
+               WHERE id = (SELECT id FROM fulltext_download_events
+                           WHERE doi = ? ORDER BY id DESC LIMIT 1)""",
+            (status, error, doi),
+        )
+        self.conn.commit()
+
+    def migrate_relevance_screen_snapshot(self):
+        """Backfill screen columns from existing final relevance results."""
+        # Repair snapshots created by the first migration revision, which
+        # copied the final result but left the default is_backfill=0.  Exact
+        # status/date equality plus a missing final basis distinguishes those
+        # legacy copies from a genuinely new Phase E screen.
+        self.conn.execute("""UPDATE papers
+            SET relevance_screen_is_backfill = 1
+            WHERE COALESCE(relevance_screen_is_backfill, 0) = 0
+              AND llm_relevance_basis IS NULL
+              AND relevance_screen_status IN ('success', 'skipped')
+              AND relevance_screen_status = llm_relevance_status
+              AND relevance_screen_date IS llm_relevance_date""")
+        self.conn.execute("""UPDATE papers SET relevance_screen_status =
+            CASE WHEN llm_relevance_status IN ('success', 'skipped')
+                 THEN llm_relevance_status ELSE COALESCE(relevance_screen_status, 'pending') END,
+            relevance_screen_category = COALESCE(relevance_screen_category, llm_relevance_category),
+            relevance_screen_subfields = COALESCE(relevance_screen_subfields, llm_relevance_subfields),
+            relevance_screen_confidence = COALESCE(relevance_screen_confidence, llm_relevance_confidence),
+            relevance_screen_reason = COALESCE(relevance_screen_reason, llm_relevance_reason),
+            relevance_screen_date = COALESCE(relevance_screen_date, llm_relevance_date),
+            relevance_screen_is_backfill = 1
+            WHERE (relevance_screen_status IS NULL
+                   OR relevance_screen_status = 'pending')
+              AND llm_relevance_status IN ('success', 'skipped')""")
+        self.conn.commit()
+
+    def update_llm_relevance(self, doi, category, subfields, confidence, notes, status, status_date, basis=None):
         """
         Phase E 专用: 记录 LLM 相关性判断结果。
 
@@ -736,11 +969,12 @@ class DatabaseClient:
                 llm_relevance_subfields = ?,
                 llm_relevance_confidence = ?,
                 llm_relevance_reason = ?,
+                llm_relevance_basis = ?,
                 llm_relevance_status = ?,
                 llm_relevance_date = ?
             WHERE doi = ?
             """,
-            (category, subfields, confidence, notes, status, status_date, doi),
+            (category, subfields, confidence, notes, basis, status, status_date, doi),
         )
         self.conn.commit()
 
@@ -938,7 +1172,9 @@ class DatabaseClient:
         """
         cur = self.conn.execute("""
         SELECT * FROM papers
-        WHERE llm_summary_status = 'success'
+        WHERE (llm_summary_status = 'success'
+               OR (llm_relevance_basis = 'abstract_fallback'
+                   AND llm_relevance_status = 'success'))
           AND report_date IS NULL
           AND llm_relevance_category IN ('A', 'B')
           AND llm_relevance_status = 'success'

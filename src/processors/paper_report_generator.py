@@ -356,8 +356,11 @@ def _build_subdomain_labels(scope_definition: Dict) -> Dict[str, str]:
         ``{subdomain_key: short_label}`` 映射。
     """
     labels = {}
-    for key in scope_definition:
-        labels[key] = _SUBDOMAIN_LABEL_MAP.get(key, key)
+    for key, section in scope_definition.items():
+        labels[key] = (
+            section.get("display_name")
+            or _SUBDOMAIN_LABEL_MAP.get(key, key)
+        )
     return labels
 
 
@@ -468,6 +471,11 @@ def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
             _process_results_markdown(relevance_reason, heading_base)
             if relevance_reason else ""
         ),
+        'relevance_basis': {
+            'fulltext': '正文终审',
+            'abstract_fallback': '仅标题和摘要（正文不可用）',
+            'abstract_clear_reject': '标题和摘要',
+        }.get(paper.get('relevance_basis', ''), paper.get('relevance_basis', '')),
         'matched_subdomains_labels': matched_subdomains_labels,
         'page_url': paper.get('page_url', ''),
         'pdf_url': paper.get('pdf_url', ''),
@@ -481,6 +489,7 @@ def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
             paper.get('main_results_and_physics', ''), heading_base),
         'take_home_message': _process_results_markdown(
             paper.get('take_home_message', ''), heading_base),
+        'has_full_summary': paper.get('has_full_summary', True),
     }
 
 
@@ -522,6 +531,11 @@ def _make_paper_payload_html(paper: Dict, scope_definition: Optional[Dict] = Non
         'relevance_category': _html_escape(paper.get('relevance_category', '')),
         'relevance_reason': _process_text_for_html(
             paper.get('relevance_reason', '')),
+        'relevance_basis': _html_escape({
+            'fulltext': '正文终审',
+            'abstract_fallback': '仅标题和摘要（正文不可用）',
+            'abstract_clear_reject': '标题和摘要',
+        }.get(paper.get('relevance_basis', ''), paper.get('relevance_basis', ''))),
         'matched_subdomains_labels': matched_subdomains_labels,
         'page_url': _safe_url(paper.get('page_url', '')),
         'pdf_url': _safe_url(paper.get('pdf_url', '')),
@@ -535,6 +549,7 @@ def _make_paper_payload_html(paper: Dict, scope_definition: Optional[Dict] = Non
             paper.get('main_results_and_physics', '')),
         'take_home_message': _process_text_for_html(
             paper.get('take_home_message', '')),
+        'has_full_summary': paper.get('has_full_summary', True),
     }
 
 

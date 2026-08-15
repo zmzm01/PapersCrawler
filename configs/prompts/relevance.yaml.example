@@ -22,14 +22,20 @@ system_prompt: |
   Abstract: {abstract}
   DOI: {doi}
 
-  1. Determine which sub-domains of the research scope the paper belongs to. List all that apply.
-  2. Assign a relevance category:
-     - A: Directly studies the core topics of the research group
-     - B: Studies related technologies or methods potentially useful for the group
-     - C: Same field but distant from core interests
-     - D: Irrelevant
-  3. Provide a confidence level: high / medium / low
-  4. Add notes explaining your judgment. The Notes field MUST be written
+  1. First identify the paper's actual research object, method and main result.
+  2. Apply the positive-evidence gate: A is allowed only when the main contribution
+     explicitly concerns laser-driven ion/proton acceleration, laser-target interaction
+     and its direct diagnostics, post-acceleration, or a compact beamline for laser-driven
+     particles. General accelerator, storage-ring/collider, optics, instrumentation or AI
+     work is not A merely because it might be useful.
+  3. Assign a relevance category:
+     - A: Directly studies a core anchor with explicit evidence in the paper
+     - B: A concrete, real method/device/physics mapping to a named supporting direction;
+       the core principle transfers without changing it
+     - C: Same broad field or only plausibly useful by model inference
+     - D: Clearly outside the scope; insufficient abstract evidence must not receive high D
+  4. Provide a confidence level: high / medium / low
+  5. Add notes explaining your judgment. The Notes field MUST be written
      in Chinese academic language (中文学术语言).
 
   Output strictly in JSON with NO additional text. Example:

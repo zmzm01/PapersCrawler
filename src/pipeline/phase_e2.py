@@ -33,12 +33,9 @@ def phase_e2_mineru(db):
         logger.info("Phase E2: MINERU_TOKEN not configured, skipping")
         return
 
-    relevant_papers = db.get_relevant_papers()
-    papers_with_pdf = [
-        p for p in relevant_papers
-        if p["mineru_parse_status"] == "pending"
-        and (p["pdf_url"] or p["publisher"] == "optica")
-    ]
+    papers_with_pdf = db.get_relevance_screen_candidates(
+        require_pdf_url=False,
+    )
     if not papers_with_pdf:
         logger.info("Phase E2: no PDFs pending")
         return
@@ -46,6 +43,40 @@ def phase_e2_mineru(db):
     logger.info(f"Phase E2: {len(papers_with_pdf)} PDFs pending")
 
     parser = MinerUParser(CFG.MINERU_TOKEN)
+
+    # Reserve quota before launching any browser. Existing valid local PDFs
+    # do not consume quota; failed network attempts do.
+    reserved = []
+    for paper in papers_with_pdf:
+        safe_doi = paper["doi"].replace("/", "_").replace("\\", "_").replace("..", "_")
+        local_pdf = MINERU_OUTPUT_DIR / safe_doi / "paper.pdf"
+        if local_pdf.exists() and local_pdf.stat().st_size > 0:
+            try:
+                with local_pdf.open("rb") as stream:
+                    header = stream.read(5)
+                if header == b"%PDF-":
+                    reserved.append(dict(paper, _quota_reserved=False))
+                    continue
+            except OSError:
+                pass
+        if not paper["pdf_url"] and paper["publisher"] != "optica":
+            db.update_mineru_error(
+                paper["doi"], "No PDF URL available",
+                FetchStatus.SKIPPED.value, str(datetime.now()),
+            )
+            continue
+        if db.claim_fulltext_download(
+                paper["doi"], paper["publisher"],
+                CFG.FULLTEXT_DOWNLOAD_DAILY_MAX,
+                CFG.FULLTEXT_DOWNLOAD_PUBLISHER_MAX):
+            reserved.append(dict(paper, _quota_reserved=True))
+        else:
+            logger.info("Phase E2 daily download quota exhausted: %s", paper["doi"])
+
+    papers_with_pdf = reserved
+    if not papers_with_pdf:
+        logger.info("Phase E2: no papers admitted by download quota")
+        return
 
     # Group papers by publisher for per-publisher scraper with proper proxy
     papers_by_publisher = {}
@@ -89,6 +120,8 @@ def phase_e2_mineru(db):
                     paper["doi"], f"Browser launch failed: {e}"[:500],
                     FetchStatus.FAILED.value, str(datetime.now()),
                 )
+                if paper.get("_quota_reserved"):
+                    db.finish_fulltext_download(paper["doi"], "failed", str(e)[:500])
                 failed_count += 1
             try:
                 downloader.close()
@@ -143,6 +176,8 @@ def phase_e2_mineru(db):
                         FetchStatus.FAILED.value, timestamp,
                     )
                     failed_count += 1
+                    if paper.get("_quota_reserved"):
+                        db.finish_fulltext_download(doi, "failed", "No PDF URL")
                     continue
 
                 try:
@@ -188,6 +223,8 @@ def phase_e2_mineru(db):
                             FetchStatus.SUCCESS.value, timestamp,
                         )
                         success_count += 1
+                        if paper.get("_quota_reserved"):
+                            db.finish_fulltext_download(doi, "success")
                         logger.info(f"MinerU success: {doi} ({full_md_path.stat().st_size} bytes)")
                     else:
                         raise RuntimeError("MinerU output missing full.md")
@@ -198,8 +235,13 @@ def phase_e2_mineru(db):
                         doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                     )
                     failed_count += 1
+                    if paper.get("_quota_reserved"):
+                        db.finish_fulltext_download(doi, "failed", str(e)[:500])
 
-                delay = random.uniform(3, 8)
+                delay = random.uniform(
+                    CFG.FULLTEXT_DOWNLOAD_DELAY_MIN,
+                    CFG.FULLTEXT_DOWNLOAD_DELAY_MAX,
+                )
                 time.sleep(delay)
 
         finally:

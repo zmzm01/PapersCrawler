@@ -35,7 +35,9 @@ def phase_e_llm_relevance(db):
         logger.info("Phase E: no scope_definition config, skipping")
         return
 
-    paper_tasks = db.get_pendings("llm_relevance_status")
+    # Phase E is deliberately only the inexpensive title+abstract screen.
+    # The final llm_relevance_* columns are written by Phase E3.
+    paper_tasks = db.get_pendings("relevance_screen_status")
     if CFG.MAX_PAPERS_PER_PHASE:
         paper_tasks = paper_tasks[:CFG.MAX_PAPERS_PER_PHASE]
     if not paper_tasks:
@@ -61,9 +63,14 @@ def phase_e_llm_relevance(db):
                 continue
             logger.info(f"No abstract, skipping LLM: {doi}")
             db.update_process_status(
-                doi, "llm_relevance_status",
+                doi, "relevance_screen_status",
                 FetchStatus.SKIPPED.value,
-                "llm_relevance_date", str(datetime.now()),
+                "relevance_screen_date", str(datetime.now()),
+            )
+            db.update_llm_relevance(
+                doi, "D", "[]", "low", "摘要缺失，无法进行相关性判断。",
+                FetchStatus.SKIPPED.value, str(datetime.now()),
+                basis="abstract_clear_reject",
             )
             skipped_no_abstract += 1
             continue
@@ -107,13 +114,15 @@ def phase_e_llm_relevance(db):
 
                 if "PredictedCategory" not in result:
                     logger.warning(f"LLM response missing PredictedCategory [{doi}], marking failed")
-                    db.update_llm_relevance_error(
+                    db.update_relevance_screen_error(
                         doi, "LLM response missing PredictedCategory field",
                         FetchStatus.FAILED.value, timestamp,
                     )
                     continue
 
-                category = result.get("PredictedCategory", "D")
+                category = str(result.get("PredictedCategory", "D")).upper()
+                if category not in {"A", "B", "C", "D"}:
+                    category = "D"
 
                 # 规范化子领域 key：小写化 + 空格→下划线 + 剔除无关字符
                 raw_subfields = result.get("MatchedSubfields", [])
@@ -133,13 +142,24 @@ def phase_e_llm_relevance(db):
                         normalized.append(s_norm)
                 subfields = json.dumps(normalized, ensure_ascii=False)
 
-                confidence = result.get("Confidence", "low")
+                confidence = str(result.get("Confidence", "low")).lower()
+                if confidence not in {"high", "medium", "low"}:
+                    confidence = "low"
                 notes = result.get("Notes", "")
 
-                db.update_llm_relevance(
+                db.update_relevance_screen(
                     doi, category, subfields, confidence, notes,
                     FetchStatus.SUCCESS.value, timestamp,
                 )
+                # Only low-confidence D remains a full-text candidate. A
+                # medium/high D is a terminal abstract decision and must not
+                # leave the final relevance state pending forever.
+                if category == "D" and confidence != "low":
+                    db.update_llm_relevance(
+                        doi, "D", "[]", confidence, notes,
+                        FetchStatus.SUCCESS.value, timestamp,
+                        basis="abstract_clear_reject",
+                    )
                 success_count += 1
 
             except (LLMAPICallError, LLMResponseParseError) as e:
@@ -147,19 +167,19 @@ def phase_e_llm_relevance(db):
                     logger.warning("LLM circuit open; retaining pending relevance: %s", doi)
                     continue
                 logger.warning(f"LLM relevance API error [{doi}]: {e}")
-                db.update_llm_relevance_error(
+                db.update_relevance_screen_error(
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                 )
 
             except json.JSONDecodeError as e:
                 logger.warning(f"LLM non-JSON response [{doi}]: {e}")
-                db.update_llm_relevance_error(
+                db.update_relevance_screen_error(
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                 )
 
             except Exception as e:
                 logger.error(f"LLM relevance error [{doi}]: {e}")
-                db.update_llm_relevance_error(
+                db.update_relevance_screen_error(
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                 )
 

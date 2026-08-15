@@ -269,16 +269,43 @@ def test_build_subdomain_labels_fallback_key():
 
 # ---- 元数据新顺序 + 字段删除（2026-07-25）----
 
-def test_report_no_subdomain_in_metadata():
-    """2026-07-25 起删除「相关方向」行（判断理由已足够说明问题）。"""
+def test_report_displays_dynamic_subdomain_metadata():
+    """报告使用配置生成的中文标签恢复显示相关方向。"""
     papers = [
         _sample_paper(matched_subdomains=["acceleration", "plasma_physics"],
                       title="Paper A"),
     ]
     md = generate_report(papers, format="markdown", toc=True,
                          scope_definition=_SCOPE_DEF_FOR_LABELS)
-    assert "**相关方向**" not in md
-    assert "加速与后加速" not in md  # 即使传了 scope_definition 也不渲染
+    assert "**相关方向**" in md
+    assert "加速与后加速" in md
+    assert "等离子体物理与诊断" in md
+
+
+def test_report_abstract_fallback_omits_empty_technical_sections():
+    """摘要降级论文不得伪装成已有完整技术总结。"""
+    paper = _sample_paper(
+        relevance_category="B",
+        relevance_basis="abstract_fallback",
+        has_full_summary=False,
+        matched_subdomains=["acceleration"],
+    )
+    md = generate_report(
+        [paper], format="markdown", scope_definition=_SCOPE_DEF_FOR_LABELS,
+    )
+    assert "仅标题和摘要（正文不可用）" in md
+    assert "无正文，无法生成详细总结" in md
+    assert "### 研究动机与目标" not in md
+    assert "### 主要结果与物理内涵" not in md
+
+
+def test_decision_summary_does_not_add_paper_heading():
+    """决策摘要不得增加会被 WebUI 误计为论文的二级标题。"""
+    md = generate_report(
+        [_sample_paper(relevance_category="A")], format="markdown",
+    )
+    assert "**本期决策摘要**" in md
+    assert "## 本期决策摘要" not in md
 
 
 def test_report_no_publisher_no_pdf_in_metadata():

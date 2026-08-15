@@ -19,7 +19,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -161,6 +161,31 @@ def test_run_pipeline_reset_relevance_enabled_flag():
                 True, True, True, dry_run=False,
             )
             mock_run_phases.assert_called_once_with(phase_list=["A"], force=False)
+
+
+def test_auto_reset_retries_screen_and_final_relevance_failures():
+    """The daily retry must cover both Phase E and Phase E3 failures."""
+    import tools.run_pipeline
+
+    with patch("tools.run_pipeline.DatabaseClient") as client_class:
+        client = client_class.return_value
+        client.batch_reset_status.return_value = 1
+        tools.run_pipeline._run_auto_reset(
+            False, False, True, dry_run=False,
+        )
+
+    assert client.batch_reset_status.call_args_list == [
+        call(
+            [("relevance_screen_status", "pending"),
+             ("relevance_screen_error", None)],
+            "relevance_screen_status = 'failed'",
+        ),
+        call(
+            [("llm_relevance_status", "pending"),
+             ("llm_relevance_error", None)],
+            "llm_relevance_status = 'failed'",
+        ),
+    ]
 
 
 # ===================================================================

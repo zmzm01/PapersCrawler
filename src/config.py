@@ -162,6 +162,15 @@ CFG.LLM_API_CONFIG_DICT_RELE = {
     "retry_max_attempts": 3,
     "retry_backoff_max_seconds": 30,
 }
+CFG.LLM_API_CONFIG_DICT_FULLTEXT = {
+    "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
+    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "model": "deepseek-v4-pro",
+    "thinking": "enabled",
+    "timeout": 300,
+    "retry_max_attempts": 3,
+    "retry_backoff_max_seconds": 30,
+}
 CFG.LLM_API_CONFIG_DICT_SUMM = {
     "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
@@ -216,6 +225,7 @@ CFG.SKIP_PHASE_B = False
 CFG.SKIP_PHASE_C = False
 CFG.SKIP_PHASE_E = False
 CFG.SKIP_PHASE_E2 = False
+CFG.SKIP_PHASE_E3 = False
 CFG.SKIP_PHASE_F = False
 CFG.SKIP_PHASE_G = False
 CFG.SKIP_PHASE_H = True
@@ -265,6 +275,11 @@ CFG.FORCE_FORMULA_FIX = False
 # ---------- 邮件模板 ----------
 CFG.EMAIL_TEMPLATE_DEFAULT = "default"
 CFG.EMAIL_TEMPLATE_NAME = "default"
+CFG.FULLTEXT_DOWNLOAD_DAILY_MAX = 3
+CFG.FULLTEXT_DOWNLOAD_PUBLISHER_MAX = 2
+CFG.FULLTEXT_DOWNLOAD_DELAY_MIN = 30
+CFG.FULLTEXT_DOWNLOAD_DELAY_MAX = 90
+CFG.FULLTEXT_RELEVANCE_MAX_CHARS = 60000
 
 
 # ==================================================================
@@ -290,6 +305,7 @@ def _apply_settings(settings):
     CFG.LLM_BASE_URL = str(base_url).strip()
     api_url = build_chat_completions_url(CFG.LLM_BASE_URL)
     CFG.LLM_API_CONFIG_DICT_RELE["api_url"] = api_url
+    CFG.LLM_API_CONFIG_DICT_FULLTEXT["api_url"] = api_url
     CFG.LLM_API_CONFIG_DICT_SUMM["api_url"] = api_url
     rele = llm_cfg.get("relevance", {})
     CFG.LLM_API_CONFIG_DICT_RELE["model"] = rele.get("model", CFG.LLM_API_CONFIG_DICT_RELE["model"])
@@ -299,9 +315,18 @@ def _apply_settings(settings):
     CFG.LLM_API_CONFIG_DICT_SUMM["model"] = summ.get("model", CFG.LLM_API_CONFIG_DICT_SUMM["model"])
     CFG.LLM_API_CONFIG_DICT_SUMM["thinking"] = summ.get("thinking", CFG.LLM_API_CONFIG_DICT_SUMM["thinking"])
     CFG.LLM_API_CONFIG_DICT_SUMM["timeout"] = summ.get("timeout", CFG.LLM_API_CONFIG_DICT_SUMM["timeout"])
+    fulltext = llm_cfg.get("fulltext_relevance", {})
+    for key in ("model", "thinking", "timeout"):
+        if key in fulltext:
+            CFG.LLM_API_CONFIG_DICT_FULLTEXT[key] = fulltext[key]
+    CFG.FULLTEXT_RELEVANCE_MAX_CHARS = fulltext.get(
+        "evidence_max_chars", CFG.FULLTEXT_RELEVANCE_MAX_CHARS,
+    )
     CFG.LLM_CONCURRENT_MAX = llm_cfg.get("concurrent_max", CFG.LLM_CONCURRENT_MAX)
     retry_cfg = llm_cfg.get("retry", {})
-    for config_dict in (CFG.LLM_API_CONFIG_DICT_RELE, CFG.LLM_API_CONFIG_DICT_SUMM):
+    for config_dict in (CFG.LLM_API_CONFIG_DICT_RELE,
+                        CFG.LLM_API_CONFIG_DICT_SUMM,
+                        CFG.LLM_API_CONFIG_DICT_FULLTEXT):
         config_dict["retry_max_attempts"] = retry_cfg.get(
             "max_attempts", config_dict["retry_max_attempts"],
         )
@@ -325,6 +350,7 @@ def _apply_settings(settings):
     CFG.SKIP_PHASE_C = skip.get("C", CFG.SKIP_PHASE_C)
     CFG.SKIP_PHASE_E = skip.get("E", CFG.SKIP_PHASE_E)
     CFG.SKIP_PHASE_E2 = skip.get("E2", CFG.SKIP_PHASE_E2)
+    CFG.SKIP_PHASE_E3 = skip.get("E3", CFG.SKIP_PHASE_E3)
     CFG.SKIP_PHASE_F = skip.get("F", CFG.SKIP_PHASE_F)
     CFG.SKIP_PHASE_G = skip.get("G", CFG.SKIP_PHASE_G)
     CFG.SKIP_PHASE_H = skip.get("H", CFG.SKIP_PHASE_H)
@@ -339,6 +365,11 @@ def _apply_settings(settings):
     CFG.POSTFETCH_NON_RESEARCH = pp.get("postfetch_non_research", CFG.POSTFETCH_NON_RESEARCH)
     CFG.GENERATE_EXPLAINED_HTML = pp.get("generate_explained_html", CFG.GENERATE_EXPLAINED_HTML)
     CFG.NON_RESEARCH_KEYWORDS = pp.get("non_research_keywords", CFG.NON_RESEARCH_KEYWORDS)
+    download = settings.get("fulltext_download", {})
+    CFG.FULLTEXT_DOWNLOAD_DAILY_MAX = download.get("daily_max", CFG.FULLTEXT_DOWNLOAD_DAILY_MAX)
+    CFG.FULLTEXT_DOWNLOAD_PUBLISHER_MAX = download.get("publisher_daily_max", CFG.FULLTEXT_DOWNLOAD_PUBLISHER_MAX)
+    CFG.FULLTEXT_DOWNLOAD_DELAY_MIN = download.get("delay_min_seconds", CFG.FULLTEXT_DOWNLOAD_DELAY_MIN)
+    CFG.FULLTEXT_DOWNLOAD_DELAY_MAX = download.get("delay_max_seconds", CFG.FULLTEXT_DOWNLOAD_DELAY_MAX)
 
     # 爬虫参数
     ps = settings.get("publisher", {})
@@ -417,6 +448,7 @@ def load_keywords():
     path = CONFIG_DIR / "keywords.yaml"
     empty = {
         "scope_definition": {},
+        "core_anchors": [],
         "context_gates": [],
         "irrelevant_fields": {"description": "", "topics": []},
     }
@@ -431,12 +463,14 @@ def load_keywords():
         return empty
     return {
         "scope_definition": data.get("scope_definition", {}),
+        "core_anchors": data.get("core_anchors", []),
         "context_gates": data.get("context_gates", []),
         "irrelevant_fields": data.get("irrelevant_fields", {"description": "", "topics": []}),
     }
 
 
-def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=None):
+def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=None,
+                      core_anchors=None):
     """将 scope_definition 格式化为 LLM prompt 中可用的文本块。
 
     Parameters
@@ -448,6 +482,8 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
         relevant_contexts, irrelevant_contexts。
     irrelevant_fields : dict, optional
         {"description": str, "topics": list[str]}
+    core_anchors : list[str], optional
+        Positive evidence anchors required for the core category.
 
     Returns
     -------
@@ -458,6 +494,13 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
         "# Research Scope Definition",
         "",
     ]
+    if core_anchors:
+        lines.extend([
+            "# Core anchors (positive evidence gate)",
+            "论文主贡献必须明确研究以下对象之一，背景提及或潜在用途不算：",
+        ])
+        lines.extend(f"- {anchor}" for anchor in core_anchors)
+        lines.append("")
 
     # 1. Global context gates (word sense disambiguation) — Step 1 of the
     # 3-step classification flow. Rendered first so the LLM applies term
@@ -506,6 +549,18 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
     # after gates + denylist pass.
     for key, section in scope_definition.items():
         lines.append(f"# Sub-Domain: {key}")
+
+        for field, label in (("display_name", "Display name"),
+                             ("role", "Role"),
+                             ("a_requirements", "A requirements"),
+                             ("adjacent_examples", "Concrete B mappings"),
+                             ("exclusions", "Exclusions")):
+            value = section.get(field)
+            if value:
+                if isinstance(value, list):
+                    lines.append(f"{label}: " + "; ".join(map(str, value)))
+                else:
+                    lines.append(f"{label}: {value}")
 
         lines.append(section.get("description", "").strip())
         lines.append("")

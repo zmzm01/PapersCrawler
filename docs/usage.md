@@ -51,7 +51,7 @@
 
 | 模式 | 说明 | 等效旧入口 |
 |------|------|-----------|
-| `--daily` | 每日调度：Phase A-RSS/A-CR/B/C/E/E2/F | `schedule_daily.py` |
+| `--daily` | 每日调度：Phase A-RSS/A-CR/B/C/E/E2/E3/F | `schedule_daily.py` |
 | `--weekly` | 每周调度：Phase G/H | `schedule_weekly.py` |
 | `--all` | 全流程强制：忽略 SKIP 配置执行全部阶段 | `src/main.py` |
 | `--phases A,B,C` | 自定义阶段列表 | — |
@@ -85,7 +85,8 @@ python tools/run_pipeline.py --phases A-RSS,B,C,F
 自动重置逻辑与 `schedule_daily.py` 一致：
 - `publisher_page_fetched_status = 'failed'` → `pending`
 - `mineru_parse_status IN ('failed', 'skipped')` → `pending`
-- `llm_relevance_status = 'failed'` → `pending`
+- `relevance_screen_status = 'failed'` → `pending`（Phase E 初筛）
+- `llm_relevance_status = 'failed'` → `pending`（Phase E3 终审）
 
 **典型 cron**：
 ```bash
@@ -110,6 +111,7 @@ skip_phases:
   C: false           # Publisher 页面爬取
   E: false           # LLM 相关性
   E2: false          # MinerU PDF
+  E3: false          # 正文相关性终审
   F: false           # LLM 总结
   G: false           # 报告生成
   H: true            # 邮件推送（默认关闭，需配 SMTP）
@@ -687,7 +689,7 @@ Accepted Paper 仅从 `papers` 删除，**不**写入 `skipped_dois`（同 DOI �
 
 ## 数据流与架构
 
-### 8 阶段流水线
+### 9 阶段流水线
 
 ```text
 Phase A (RSS + CrossRef) ── 发现论文
@@ -696,9 +698,12 @@ Phase B (CrossRef) ──────── 补充元数据（作者、日期、
        ↓
 Phase C (Publisher) ─────── 爬取页面 + PDF 链接（cloakbrowser）
        ↓
-Phase E (DeepSeek) ──────── LLM 判断相关性 → A/B/C/D 四级分类
-       ↓                          (仅 A/B 进入下游)
-Phase E2 (MinerU) ───────── PDF 全文解析
+Phase E (DeepSeek) ──────── 标题/摘要高召回初筛 → A/B/C/低置信 D 候选
+       ↓                          (高/中置信 D 直接终止)
+Phase E2 (MinerU) ───────── 每日限额下载 PDF + 全文解析
+       ↓
+Phase E3 (DeepSeek) ─────── 正文相关性终审 → A/B/C/D
+       ↓                          (仅终审 A/B 进入下游)
        ↓
 Phase F (DeepSeek) ──────── LLM 结构化总结
        ↓
@@ -724,11 +729,13 @@ Phase H (SMTP) ──────────── 邮件推送（email.yaml �
 │ 流水线状态（每阶段三列）:                                    │
 │   Phase B:  cr_metadata_fetched_status / _error / _date      │
 │   Phase C:  publisher_page_fetched_status / _error / _date   │
-│   Phase E:  llm_relevance_status / _error / _date            │
-│             llm_relevance_category (A/B/C/D)                 │
-│             llm_relevance_subfields (JSON 数组)              │
+│   Phase E:  relevance_screen_status / _error / _date          │
+│             relevance_screen_category / confidence / reason  │
+│             relevance_screen_is_backfill                     │
 │   Phase E2: mineru_parse_status / _error / _date             │
 │             mineru_output_dir                                │
+│   Phase E3: llm_relevance_status / _error / _date            │
+│             llm_relevance_category / subfields / basis       │
 │   Phase F:  llm_summary_status / _error / _date              │
 │             llm_summary_result (JSON)                        │
 │   Phase G:  report_status / report_date                      │
@@ -743,6 +750,7 @@ Phase H (SMTP) ──────────── 邮件推送（email.yaml �
 
 - `email.yaml` — 邮件收件人配置（`enabled=true` 优先于 .env `SMTP_TO_ADDRS`）
 - `skipped_dois` — 被永久跳过的论文 DOI（`NonResearchPageError` 等）
+- `fulltext_download_events` — PDF 尝试与每日/出版社配额审计；失败尝试也保留
 
 ### 报告输出
 
@@ -870,6 +878,37 @@ vim configs/settings.yaml
 ```
 
 ### Phase E2 PDF 下载失败
+
+Phase E2 只接收初筛 A/B/C 与低置信 D。下载安全参数位于
+`configs/settings.yaml`：
+
+```yaml
+llm:
+  fulltext_relevance:
+    model: deepseek-v4-pro
+    thinking: enabled
+    timeout: 300
+    evidence_max_chars: 60000
+
+fulltext_download:
+  daily_max: 3
+  publisher_daily_max: 2
+  delay_min_seconds: 30
+  delay_max_seconds: 90
+```
+
+每日额度以 Asia/Shanghai 自然日持久化在 `fulltext_download_events`，失败尝试也占额度，
+重复运行不能绕过。同一 DOI 当天最多尝试一次；新论文优先，历史 A/B/C 回填仅使用剩余额度。
+等待次日额度的论文保持 `pending`，不会被 E3 提前按摘要终审。
+
+修改研究方向后如需重判历史 A/B/C：
+
+```bash
+python tools/reset_pipeline.py reset-relevance --categories A,B,C
+```
+
+`--categories` 与 `--all` 互斥。无正文且已确定无法继续解析时，初筛 A/B 以
+`abstract_fallback` 进入报告，仅显示元信息、摘要和相关性理由，不生成空技术章节。
 
 ```bash
 # 手动下载 PDF 后导入
