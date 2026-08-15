@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+from common import build_chat_completions_url
 from dotenv import load_dotenv
 import yaml
 
@@ -150,9 +151,10 @@ CFG.CROSSREF_MAILTO = os.getenv("CROSSREF_MAILTO", "your_email@example.com")
 # ---------- MinerU ----------
 CFG.MINERU_TOKEN = os.getenv("MINERU_TOKEN", "")
 
-# ---------- DeepSeek LLM API ----------
+# ---------- OpenAI-compatible LLM API ----------
+CFG.LLM_BASE_URL = "https://api.deepseek.com"
 CFG.LLM_API_CONFIG_DICT_RELE = {
-    "api_url": "https://api.deepseek.com/chat/completions",
+    "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     "model": "deepseek-v4-flash",
     "thinking": "disabled",
@@ -161,7 +163,7 @@ CFG.LLM_API_CONFIG_DICT_RELE = {
     "retry_backoff_max_seconds": 30,
 }
 CFG.LLM_API_CONFIG_DICT_SUMM = {
-    "api_url": "https://api.deepseek.com/chat/completions",
+    "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     "model": "deepseek-v4-pro",
     "thinking": "enabled",
@@ -284,6 +286,11 @@ def _apply_settings(settings):
 
     # LLM API 配置
     llm_cfg = settings.get("llm", {})
+    base_url = llm_cfg.get("base_url", CFG.LLM_BASE_URL)
+    CFG.LLM_BASE_URL = str(base_url).strip()
+    api_url = build_chat_completions_url(CFG.LLM_BASE_URL)
+    CFG.LLM_API_CONFIG_DICT_RELE["api_url"] = api_url
+    CFG.LLM_API_CONFIG_DICT_SUMM["api_url"] = api_url
     rele = llm_cfg.get("relevance", {})
     CFG.LLM_API_CONFIG_DICT_RELE["model"] = rele.get("model", CFG.LLM_API_CONFIG_DICT_RELE["model"])
     CFG.LLM_API_CONFIG_DICT_RELE["thinking"] = rele.get("thinking", CFG.LLM_API_CONFIG_DICT_RELE["thinking"])

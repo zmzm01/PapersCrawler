@@ -15,8 +15,31 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from common import (
     LLMCircuitBreaker, LLMServiceUnavailableError, call_llm_api_with_retry,
-    fix_json_invalid_escapes,
+    build_chat_completions_url, fix_json_invalid_escapes,
 )
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_url"),
+    [
+        ("https://api.deepseek.com", "https://api.deepseek.com/chat/completions"),
+        ("https://gateway.example/v1/", "https://gateway.example/v1/chat/completions"),
+        (
+            "https://gateway.example/v1/chat/completions",
+            "https://gateway.example/v1/chat/completions",
+        ),
+    ],
+)
+def test_build_chat_completions_url(base_url, expected_url):
+    """The configurable LLM base URL should produce one completion endpoint."""
+    assert build_chat_completions_url(base_url) == expected_url
+
+
+@pytest.mark.parametrize("base_url", ["", "gateway.example/v1", "ftp://gateway.example"])
+def test_build_chat_completions_url_rejects_invalid_base_url(base_url):
+    """LLM endpoints must be absolute HTTP(S) base URLs."""
+    with pytest.raises(ValueError):
+        build_chat_completions_url(base_url)
 
 
 # ---- fix_json_invalid_escapes ----

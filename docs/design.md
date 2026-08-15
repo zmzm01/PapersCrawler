@@ -151,7 +151,7 @@ Phase B: CrossRef 元数据
 Phase C: Publisher 页面 (cloakbrowser)
       │  爬取摘要 / PDF 链接 (绕过 Cloudflare)
       ▼
-Phase E: LLM 相关性判断 (DeepSeek)  ← 四级分类 A/B/C/D
+Phase E: LLM 相关性判断（OpenAI 兼容 LLM API）  ← 四级分类 A/B/C/D
       │  → 类别 A: 直接相关 (核心方向)
       │  → 类别 B: 间接相关 (技术/方法可迁移)
       │  → 类别 C: 同领域但距离较远
@@ -161,7 +161,7 @@ Phase E: LLM 相关性判断 (DeepSeek)  ← 四级分类 A/B/C/D
 Phase E2: MinerU PDF 全文解析
       │  下载 PDF → MinerU API → 提取 Markdown 全文
       ▼
-Phase F: LLM 论文总结 (DeepSeek)
+Phase F: LLM 论文总结（OpenAI 兼容 LLM API）
       │  生成结构化总结 (优先用 MinerU 全文, 无全文则跳过)
       ▼
 Phase G: 报告生成
@@ -730,6 +730,12 @@ SKIP_PHASE_B = False
 ## 3. LLM API 重试
 
 `call_llm_api_with_retry()` (`src/common.py`) 是共用封装。对 429/5xx、网络错误与 HTTP 200 但缺少 `choices` 的服务端错误载荷，采用可配置的指数退避（默认最多 3 次）并计入每阶段熔断器；连续 5 次瞬态失败后不再发起新的外部请求，未执行任务保留 `pending` 等待下一日自动重试。401/402、请求格式和内容 JSON 错误不计入熔断。所有 LLM 调用（Phase E 相关性、Phase F 总结、FormulaFixer）统一使用。
+
+LLM 服务地址由 `configs/settings.yaml` 的 `llm.base_url` 控制，默认
+`https://api.deepseek.com`。`src/common.py:build_chat_completions_url()` 仅接受绝对 HTTP(S)
+基础地址，保留其中的版本路径（例如 `/v1`），并统一追加 `/chat/completions` 后传给三个
+LLM 调用方。因此可切换到任意 OpenAI Chat Completions 兼容网关（包括 OpenCode Go），而无需修改
+处理器代码；网关切换时仍须由使用者调整对应的模型名与 API Key。
 
 RSS 与 Nature 的 requests HTTP 回退使用 `trust_env=False` 的专用 Session，避免桌面代理环境变量导致代理出口返回 406；需要代理的出版商必须通过 `publisher.proxy` 显式配置。
 

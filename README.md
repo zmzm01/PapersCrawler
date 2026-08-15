@@ -78,7 +78,7 @@ PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
 - **数据库**：SQLite（WAL 模式）
 - **抓取**：cloakbrowser（Persistent Context 绕过 Cloudflare）
 - **PDF 解析**：MinerU API
-- **LLM**：DeepSeek（相关性 v4-flash / 总结 v4-pro）
+- **LLM**：OpenAI 兼容 API（默认 DeepSeek；可在 `llm.base_url` 切换网关）
 - **配置**：YAML + `.env`（密钥 gitignored）
 
 ## 部署
