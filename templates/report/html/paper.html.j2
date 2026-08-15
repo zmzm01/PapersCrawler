@@ -24,10 +24,13 @@
 {% if p.page_url %}  <strong>页面:</strong> <a href="{{ p.page_url }}">{{ p.page_url }}</a><br>{% endif -%}
 {% if p.relevance_category %}  <strong>相关性等级:</strong> {{ p.relevance_category }}<br>{% endif -%}
 {% if p.relevance_reason %}  <strong>判断理由:</strong> {{ p.relevance_reason }}<br>{% endif -%}
+{% if p.relevance_basis %}  <strong>判定依据:</strong> {{ p.relevance_basis }}<br>{% endif -%}
+{% if p.matched_subdomains_labels %}  <strong>相关方向:</strong> {{ p.matched_subdomains_labels|join('、') }}<br>{% endif -%}
   </p>
 {% if p.abstract %}
   <p><strong>原文摘要:</strong> {{ p.abstract }}</p>
 {% endif %}
+{% if p.has_full_summary %}
   <p><strong>一句话:</strong> {{ p.one_sentence|default('') }}</p>
   <h3>研究动机与目标</h3>
   <p>{{ p.motivation_and_goal|default('') }}</p>
@@ -37,6 +40,9 @@
   <p>{{ p.main_results_and_physics|default('') }}</p>
   <h3>要点总结</h3>
   <p>{{ p.take_home_message|default('') }}</p>
+{% else %}
+  <p><strong>说明:</strong> 无正文，无法生成详细总结。</p>
+{% endif %}
 </section>
 <hr>
 {%- endmacro %}

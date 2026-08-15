@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _PHASE_KEY_MAP = {
     "A-RSS": "SKIP_PHASE_A_RSS", "A-CR": "SKIP_PHASE_A_CR",
     "B": "SKIP_PHASE_B", "C": "SKIP_PHASE_C",
-    "E": "SKIP_PHASE_E", "E2": "SKIP_PHASE_E2",
+    "E": "SKIP_PHASE_E", "E2": "SKIP_PHASE_E2", "E3": "SKIP_PHASE_E3",
     "F": "SKIP_PHASE_F", "G": "SKIP_PHASE_G", "H": "SKIP_PHASE_H",
 }
 
@@ -30,6 +30,7 @@ from pipeline.phase_b import phase_b_crossref
 from pipeline.phase_c import phase_c_publisher
 from pipeline.phase_e import phase_e_llm_relevance
 from pipeline.phase_e2 import phase_e2_mineru
+from pipeline.phase_e3 import phase_e3_fulltext_relevance
 from pipeline.phase_f import phase_f_llm_summary
 from pipeline.phase_g import phase_g_report
 from pipeline.phase_h import phase_h_email
@@ -67,6 +68,7 @@ def run_phases(phase_list=None, force=False):
         "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
         "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
         "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
+        "E3": (phase_e3_fulltext_relevance, [db], not effective_skip["E3"]),
         "F": (phase_f_llm_summary, [db], not effective_skip["F"]),
         "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], not effective_skip["G"]),
         "H": (phase_h_email, [db, AUTO_REPORT_DIR], not effective_skip["H"]),
@@ -107,7 +109,7 @@ def run_pipeline(force=False, run_all=False):
 
 # ── 便捷方法：每日/每周调度 ─────────────────────────────────────────
 
-DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "E", "E2", "F"]
+DAILY_PHASES = ["A-RSS", "A-CR", "B", "C", "E", "E2", "E3", "F"]
 WEEKLY_PHASES = ["G", "H"]
 
 

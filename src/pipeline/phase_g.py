@@ -46,7 +46,8 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         # 因为 update_llm_relevance() 不会级联重置 llm_summary_*。
         cur = db.conn.execute(
             f"SELECT * FROM papers "
-            f"WHERE llm_summary_status = 'success' "
+            f"WHERE (llm_summary_status = 'success' "
+            f"   OR llm_relevance_basis = 'abstract_fallback') "
             f"  AND llm_relevance_category IN ('A', 'B') "
             f"  AND llm_relevance_status = 'success' "
             f"  AND doi IN ({placeholders})",
@@ -102,6 +103,7 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
             "matched_subdomains": subfields,
             "relevance_category": p["llm_relevance_category"] or "",
             "relevance_reason": p["llm_relevance_reason"] or "",
+            "relevance_basis": p["llm_relevance_basis"] or "",
             "page_url": p["page_url"] or "",
             "pdf_url": p["pdf_url"] or "",
             "abstract": p["abstract"] or "",
@@ -110,6 +112,7 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
             "key_setup_and_method": summary.get("key_setup_and_method", ""),
             "main_results_and_physics": summary.get("main_results_and_physics", ""),
             "take_home_message": summary.get("take_home_message", ""),
+            "has_full_summary": p["llm_summary_status"] == "success",
         }
         paper_list.append(paper_dict)
         reported_dois.append(p["doi"])

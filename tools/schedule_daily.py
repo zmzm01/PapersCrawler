@@ -71,12 +71,21 @@ def _run_auto_reset(args):
         logger.info("Auto-reset mineru: disabled")
 
     if not args.no_reset_relevance:
-        count = reset_db.batch_reset_status(
-            [("llm_relevance_status", "pending")],
+        screen_count = reset_db.batch_reset_status(
+            [("relevance_screen_status", "pending"),
+             ("relevance_screen_error", None)],
+            "relevance_screen_status = 'failed'",
+        )
+        final_count = reset_db.batch_reset_status(
+            [("llm_relevance_status", "pending"),
+             ("llm_relevance_error", None)],
             "llm_relevance_status = 'failed'",
         )
-        if count:
-            logger.info(f"Auto-reset {count} failed relevance judgments for retry")
+        if screen_count or final_count:
+            logger.info(
+                "Auto-reset relevance for retry: screen=%d, final=%d",
+                screen_count, final_count,
+            )
     else:
         logger.info("Auto-reset relevance: disabled")
 

@@ -5,28 +5,58 @@
 # scope_definition: Phase E LLM prompt 使用的完整领域定义（中文）
 # =============================================================================
 
+core_anchors:
+- 激光驱动离子/质子加速及后加速
+- 激光靶相互作用与直接诊断
+- 激光驱动粒子的紧凑输运、聚焦及实验束线
+
 scope_definition:
   laser_driven_ion_acceleration:
+    display_name: 激光驱动离子/质子加速
+    role: core
+    a_requirements: [主贡献研究激光驱动离子或质子产生、加速或后加速]
+    adjacent_examples: []
+    exclusions: [普通同步环/对撞机加速器]
     description: '研究方向: laser_driven_ion_acceleration — 请替换为实际的中文描述'
     topics:
     - Topic 1 — 说明1
     - Topic 2 — 说明2
   laser_plasma_physics_and_diagnostics:
+    display_name: 激光等离子体物理与直接诊断
+    role: core
+    a_requirements: [明确研究激光靶相互作用、预等离子体或服务该体系的诊断]
+    adjacent_examples: []
+    exclusions: [与激光驱动粒子无关的通用等离子体]
     description: '研究方向: laser_plasma_physics_and_diagnostics — 请替换为实际的中文描述'
     topics:
     - Topic 1 — 说明1
     - Topic 2 — 说明2
   high_gradient_beam_transport:
+    display_name: 高梯度束流传输与后加速
+    role: core
+    a_requirements: [明确服务激光驱动粒子的紧凑传输、聚焦或后加速]
+    adjacent_examples: [具体束线磁光学方法可迁移到激光驱动粒子束]
+    exclusions: [仅讨论传统加速器束线]
     description: '研究方向: high_gradient_beam_transport — 请替换为实际的中文描述'
     topics:
     - Topic 1 — 说明1
     - Topic 2 — 说明2
   beam_irradiation_and_applications:
+    display_name: 束流辐照与应用
+    role: supporting
+    a_requirements: []
+    adjacent_examples: [与激光驱动粒子束实验链路直接对应的辐照方法]
+    exclusions: []
     description: '研究方向: beam_irradiation_and_applications — 请替换为实际的中文描述'
     topics:
     - Topic 1 — 说明1
     - Topic 2 — 说明2
   accelerator_control_automation_and_ai:
+    display_name: 加速器控制、自动化与 AI
+    role: supporting
+    a_requirements: []
+    adjacent_examples: [论文实际展示对激光驱动紧凑束线的控制迁移]
+    exclusions: [仅在同步环/对撞机上验证的 AI]
     description: '研究方向: accelerator_control_automation_and_ai — 请替换为实际的中文描述'
     topics:
     - Topic 1 — 说明1

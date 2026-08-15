@@ -7,9 +7,9 @@
 **激光/等离子体/束流物理**（加速器方向），可由 `configs/keywords.yaml` 自定义。
 
 ```text
-RSS / CrossRef → 元数据补全 → 页面爬取 → LLM 判相关
-    ↓                                          ↓ (A/B 级)
-  丢弃不相关                                   PDF 解析 → LLM 总结 → 报告 → 邮件
+RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
+                                              ↓ (A/B/C + low-D)
+明确无关终止 ← 正文相关性终审 ← 限额 PDF 解析 → A/B 总结 → 报告 → 邮件
 ```
 
 ## 免责声明
@@ -25,9 +25,9 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → LLM 判相关
 
 ## 特性
 
-- **8 阶段流水线**（A-RSS/A-CR → B → C → E → E2 → F → G → H），SQLite 单表驱动，断点续跑
+- **9 阶段流水线**（A-RSS/A-CR → B → C → E → E2 → E3 → F → G → H），SQLite 状态驱动，断点续跑
 - **双源发现**：RSS Feed + CrossRef ISSN 查询，智能回溯补漏
-- **LLM 四级相关性分类**（A/B/C/D），仅 A/B 进入下游
+- **两阶段 LLM 四级相关性分类**（A/B/C/D）：初筛 A/B/C + 低置信 D 进入限额正文终审，终审 A/B 才进入总结与报告
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
 - **Publisher 爬虫**：cloakbrowser 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供只读监控与报告阅览
@@ -63,6 +63,8 @@ PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
 打开 http://localhost:8080 查看 Pipeline 状态、Papers 列表和已生成报告。
 
 ## 文档
+
+流水线采用“标题+摘要初筛（E）→受持久化配额保护的 PDF/MinerU（E2）→正文相关性终审（E3）→总结（F）”流程。全文下载默认每日最多 3 篇、单一出版社最多 2 篇，失败尝试同样计入配额。
 
 - **[`docs/usage.md`](docs/usage.md)** — 详细使用手册
   （所有入口/工具/配置/工作流/故障排查）

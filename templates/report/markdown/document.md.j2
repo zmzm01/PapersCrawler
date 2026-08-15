@@ -14,6 +14,25 @@
 {{ sort_note_tmpl.sort_note() }}
 {{ legend_tmpl.legend() }}
 {{ disclaimers_tmpl.disclaimers() }}
+{% if papers|length > 0 -%}
+{% set core_papers = papers|selectattr('relevance_category', 'equalto', 'A')|list -%}
+{% set watch_papers = papers|selectattr('relevance_category', 'equalto', 'B')|list -%}
+> **本期决策摘要**：核心推荐（A）{{ core_papers|length }} 篇；邻近观察（B）{{ watch_papers|length }} 篇。
+>
+> **核心推荐（A）**
+{% for p in core_papers -%}
+> - **{{ p.title }}**{% if p.matched_subdomains_labels %} · {{ p.matched_subdomains_labels|join('、') }}{% endif %} · {{ p.relevance_basis }} — {{ p.one_sentence or p.relevance_reason }}{% if p.page_url %} [原文]({{ p.page_url }}){% endif %}
+{% else -%}
+> - 无
+{% endfor -%}
+>
+> **邻近观察（B，全部保留）**
+{% for p in watch_papers -%}
+> - **{{ p.title }}**{% if p.matched_subdomains_labels %} · {{ p.matched_subdomains_labels|join('、') }}{% endif %} · {{ p.relevance_basis }} — {{ p.one_sentence or p.relevance_reason }}{% if p.page_url %} [原文]({{ p.page_url }}){% endif %}
+{% else -%}
+> - 无
+{% endfor %}
+{% endif -%}
 {% if papers|length > 1 -%}
 # 文献报告
 

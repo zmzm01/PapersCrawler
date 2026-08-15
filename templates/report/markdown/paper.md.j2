@@ -30,10 +30,12 @@
 {% endif %}{% if p.page_url %}**页面**: [链接]({{ p.page_url }})  
 {% endif %}{% if p.relevance_category %}**相关性等级**: {{ p.relevance_category }}  
 {% endif %}{% if p.relevance_reason %}**判断理由**: {{ p.relevance_reason }}  
+{% endif %}{% if p.relevance_basis %}**判定依据**: {{ p.relevance_basis }}{{ "  " }}
+{% endif %}{% if p.matched_subdomains_labels %}**相关方向**: {{ p.matched_subdomains_labels|join('、') }}{{ "  " }}
 {% endif %}{% if p.abstract %}
 **原文摘要**: {{ p.abstract }}
 
-{% endif %}**一句话**: {{ p.one_sentence|default('') }}
+{% endif %}{% if p.has_full_summary %}**一句话**: {{ p.one_sentence|default('') }}
 
 ### 研究动机与目标
 
@@ -50,6 +52,8 @@
 ### 要点总结
 
 {{ p.take_home_message|default('') }}
+{% else %}**说明**: 无正文，无法生成详细总结。
+{% endif %}
 
 ---
 

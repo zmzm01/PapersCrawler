@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from pipeline.runner import DAILY_PHASES, WEEKLY_PHASES  # noqa: E402
 
 # Phase keys registered inside run_phases() — kept in sync manually.
-PHASE_MAP_KEYS = {"A-RSS", "A-CR", "B", "C", "E", "E2", "F", "G", "H"}
+PHASE_MAP_KEYS = {"A-RSS", "A-CR", "B", "C", "E", "E2", "E3", "F", "G", "H"}
 
 
 def test_daily_phases_subset_of_phase_map():

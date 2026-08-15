@@ -46,6 +46,7 @@ class PaperRelevanceChecker:
         self.scope_definition = keywords.get("scope_definition", {})
         self.context_gates = keywords.get("context_gates", [])
         self.irrelevant_fields = keywords.get("irrelevant_fields", {})
+        self.core_anchors = keywords.get("core_anchors", [])
 
         # 从所有 topics 中自动提取关键词列表，用于传统关键词匹配
         all_keywords = []
@@ -167,6 +168,7 @@ class PaperRelevanceChecker:
             self.scope_definition,
             context_gates=self.context_gates,
             irrelevant_fields=self.irrelevant_fields,
+            core_anchors=self.core_anchors,
         )
         # 从 scope_definition 中提取合法的子领域 key 列表供 LLM 参考
         known_keys = list(self.scope_definition.keys()) if self.scope_definition else []
@@ -186,6 +188,15 @@ class PaperRelevanceChecker:
             doi=doi,
             json_example=json_example,
         )
+
+    def build_fulltext_prompt(self, title: str, abstract: str,
+                              evidence: str, doi: str = "") -> str:
+        """Build a final relevance prompt using extracted full-text evidence."""
+        base = self.build_default_prompt(title, abstract, doi=doi)
+        return (base + "\n\n# Full-text evidence for final adjudication\n"
+                "以下证据来自论文正文；必须依据研究目标、方法和结果重新判定，"
+                "不得把背景、参考文献或潜在用途当作正向证据。\n"
+                f"{evidence}")
 
     # ------------------------------------------------------------------
     # API 调用 (委托给 common.call_llm_api_with_retry)

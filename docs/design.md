@@ -137,7 +137,7 @@ class Paper:
 
 # 流水线架构
 
-整个项目以 SQLite 数据库为中心，按 8 个阶段顺序执行。每个阶段读取上一阶段的输出，处理后写入数据库。
+整个项目以 SQLite 数据库为中心，按 9 个阶段顺序执行。每个阶段读取上一阶段的输出，处理后写入数据库。
 
 ```
 Phase A: 双源发现 (RSS + CrossRef 并行)
@@ -151,15 +151,14 @@ Phase B: CrossRef 元数据
 Phase C: Publisher 页面 (cloakbrowser)
       │  爬取摘要 / PDF 链接 (绕过 Cloudflare)
       ▼
-Phase E: LLM 相关性判断（OpenAI 兼容 LLM API）  ← 四级分类 A/B/C/D
-      │  → 类别 A: 直接相关 (核心方向)
-      │  → 类别 B: 间接相关 (技术/方法可迁移)
-      │  → 类别 C: 同领域但距离较远
-      │  → 类别 D: 基本无关
-      │  仅 A/B 进入下游, C/D 终止
+Phase E: 标题/摘要相关性初筛（OpenAI 兼容 LLM API）
+      │  A/B/C + 低置信 D 进入正文候选；高/中置信 D 终止
       ▼
-Phase E2: MinerU PDF 全文解析
-      │  下载 PDF → MinerU API → 提取 Markdown 全文
+Phase E2: 限额 PDF 下载与 MinerU 全文解析
+      │  每日总尝试 ≤ 3、单出版社 ≤ 2，失败也占额
+      ▼
+Phase E3: 正文相关性终审（OpenAI 兼容 LLM API）
+      │  终审 A/B 进入下游；C/D 终止
       ▼
 Phase F: LLM 论文总结（OpenAI 兼容 LLM API）
       │  生成结构化总结 (优先用 MinerU 全文, 无全文则跳过)
@@ -192,8 +191,9 @@ Phase H: 邮件推送
   │  流水线状态 (每阶段 status + error + date 三列):             │
   │    Phase B: cr_metadata_fetched_*  → CrossRef 元数据         │
   │    Phase C: publisher_page_fetched_* → 期刊页面              │
-  │    Phase E: llm_relevance_*         → LLM 相关性            │
+  │    Phase E: relevance_screen_*      → 标题/摘要初筛          │
   │    Phase E2: mineru_parse_*         → MinerU PDF            │
+  │    Phase E3: llm_relevance_*        → 正文相关性终审         │
   │    Phase F: llm_summary_*           → LLM 总结              │
   │    Phase G: report_*                → 报告状态              │
   │                                                              │
@@ -211,15 +211,25 @@ Phase H: 邮件推送
 **Publisher 页面** (Phase C) — 三列：`publisher_page_fetched_status` / `_error` / `_date`
 - `paperdate_page`, `pdf_url`
 
-**LLM 相关性** (Phase E) — 三列：`llm_relevance_status` / `_error` / `_date`
+**相关性初筛** (Phase E)
+- `relevance_screen_status` / `_error` / `_date`
+- `relevance_screen_category`, `_subfields`, `_confidence`, `_reason`
+- `relevance_screen_is_backfill` — `0` 为新论文，`1` 为历史回填；下载队列优先新论文
+
+**LLM 相关性终审** (Phase E3) — 三列：`llm_relevance_status` / `_error` / `_date`
 - `llm_relevance_category` (TEXT: A/B/C/D) — 四级分类，替代已废弃的 `llm_relevance_result`
 - `llm_relevance_subfields` (TEXT: JSON 数组) — 匹配的子领域列表
 - `llm_relevance_confidence`, `llm_relevance_reason`
+- `llm_relevance_basis` — `fulltext` / `abstract_fallback` / `abstract_clear_reject`
 - `llm_relevance_result` (INTEGER, **已废弃**) — 旧版二分类 0/1，`reset-relevance --all` 后不再写入
 
 **MinerU 全文** (Phase E2) — 三列：`mineru_parse_status` / `_error` / `_date`
 - `mineru_output_dir` — 解析输出目录相对路径（如 `data/mineru_output/10_1103_xxx/`）
 - `mineru_fulltext` — 已废弃，不再写入。Phase F 直接从 `mineru_output_dir/full.md` 读取全文
+
+**下载配额审计** — 独立表 `fulltext_download_events`
+- 记录 `doi`, `publisher`, `local_date`, `attempted_at`, `status`, `error`
+- 用 `BEGIN IMMEDIATE` 原子占位，按 Asia/Shanghai 自然日限制总尝试 3 篇、单 publisher 2 篇；失败占额且同一 DOI 当日最多尝试一次
 
 **LLM 总结** (Phase F) — 三列：`llm_summary_status` / `_error` / `_date`
 - `llm_summary_result` (JSON 字符串)
@@ -642,7 +652,7 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| Dashboard | `GET /dashboard`（`/` 302 重定向至此） | 状态概览：3 统计卡片（论文总数 / Pending Report / 出版社数）；Pipeline 各阶段状态柱状图（pending 在 UI 层合并到 skipped 显示，3 段柱状图）；**近 7 天采集趋势图（3 桶：reportable / total_failed / other，与 explained.html 设计一致）**；每 10s 自动刷新。 |
+| Dashboard | `GET /dashboard`（`/` 302 重定向至此） | 状态概览：3 统计卡片（论文总数 / Pending Report / 出版社数）；Pending Report 与 7 天 `reportable` 同时计入终审 A/B 的完整总结和 `abstract_fallback`；Pipeline 各阶段状态柱状图（pending 在 UI 层合并到 skipped 显示，3 段柱状图）；**近 7 天采集趋势图（3 桶：reportable / total_failed / other，与 explained.html 设计一致）**；每 10s 自动刷新。 |
 | Papers | `GET /papers?sort=created\|published\|summary&category=a\|b\|ab\|all&has_summary=0\|1&page=N&per_page=50\|100\|200` | **只读浏览**：三种排序（入库/发表/LLM 总结生成时间）、四类筛选（A/B/AB/All）、`has_summary` 筛选可报告论文；**分页**：底部分页器 `共 M 篇 · 第 N/T 页 · [每页 K ▾] [‹ 上一页] [下一页 ›]`，per_page 白名单 50/100/200。无 checkbox 选取、无生成按钮 |
 | Report | `GET /report?show=<filename>` | **报告档案馆**，仅查看不编辑。顶部下拉选择器按 `mtime DESC` 列出所有报告（每条：日期切片/来源/论文数/相对时间，auto + user 混排），主区渲染选中报告（marked + KaTeX + DOMPurify 反 XSS）；下载链接常驻右侧 |
 
@@ -1040,12 +1050,12 @@ pdf_body = resp.content
 
 | 类别 | 标签 | 含义 | 后续处理 |
 |------|------|------|---------|
-| **A** | 直接相关 | 直接研究课题组核心方向的理论/实验/模拟 | → E2/F/G/H |
-| **B** | 间接相关 | 相关技术或方法，对课题组有潜在参考价值 | → E2/F/G/H |
-| **C** | 同领域但远 | 同属加速器/等离子体领域，但与核心兴趣距离较远 | 终止，不进入下游 |
-| **D** | 基本无关 | 不属于课题组关注范围 | 终止，不进入下游 |
+| **A** | 直接相关 | 有激光驱动离子/质子、激光靶与直接诊断、后加速或激光驱动紧凑束线的正向证据 | → E2/E3 候选 |
+| **B** | 间接相关 | 论文实际展示了可不改变核心原理而迁移的具体技术或方法 | → E2/E3 候选 |
+| **C** | 同领域但远 | 同属加速器/等离子体领域，但与核心兴趣距离较远 | → E2/E3 候选 |
+| **D** | 基本无关 | 不属于课题组关注范围 | 仅低置信 D → E2/E3；高/中置信 D 终止 |
 
-Phase E2（MinerU PDF 解析）、Phase F（LLM 总结）、Phase G（报告生成）仅在论文被标记为 **A 或 B** 时执行。C 类论文保留在数据库中供人工复核。
+Phase E 的分类是高召回初筛，不直接决定报告资格。E2/E3 覆盖 A/B/C 与低置信 D，E3 用正文作最终分类；只有终审 **A 或 B** 才进入 Phase F/G/H。正文确定不可用时，初筛 A/B 可按 `abstract_fallback` 降级保留。
 
 ### 匹配子领域记录
 
@@ -1429,7 +1439,7 @@ python tools/import_local_pdf.py --doi <DOI> --pdf <PATH_TO_PDF>
 Optica OA 论文因 Phase C 被跳过（`publisher_page_fetched_status = 'skipped'`），
 `pdf_url` 字段为空。Phase E2 在 PDF 下载前先执行延迟页面访问补齐 `pdf_url`：
 
-1. 筛选 Optica 的 A/B 类论文时，允许 `pdf_url` 为空（`publisher == "optica"` 特例）
+1. 筛选 Optica 的初筛候选论文时，允许 `pdf_url` 为空（`publisher == "optica"` 特例）
 2. 浏览器启动后（使用 `OpticaScraper` 而非 `BasePublisherScraper`，以获取 `parse_page()` 能力），
    对每组中缺少 `pdf_url` 的论文执行 `fetch_page(page_url) + parse_page()`
 3. 成功提取 `citation_pdf_url` meta 标签后，通过 `update_publisher_pdf_url()` 写入数据库
@@ -1484,7 +1494,7 @@ APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的�
 
 ## Phase F — LLM 结构化总结
 
-- 仅处理有 MinerU 全文 **且** Phase E 判定为 A/B 类的论文（无全文或 C/D 类直接标记 skipped）
+- 仅处理 Phase E3 终审为 A/B 的论文；通常使用 MinerU 全文，正文确定不可用但初筛 A/B 时允许 `abstract_fallback`
 - MinerU 全文路径解析：`mineru_output_dir` 在 DB 中存储为相对于 `DATA_DIR` 的路径，Phase F 使用 `DATA_DIR / output_dir / "full.md"` 拼接（曾误用 `DATA_DIR.parent` 导致 `full.md` 找不到，所有论文被跳过）
 - 使用 `ThreadPoolExecutor` 并发调用 DeepSeek API
 - 输出 JSON 包含 5 个字段：`one_sentence`、`motivation_and_goal`、`key_setup_and_method`、`main_results_and_physics`、`take_home_message`
@@ -1739,3 +1749,13 @@ Phase E2 不再向数据库 `mineru_fulltext` 列写入全文文本（文本已�
 2026-07-26 起 WebUI 收敛为只读 Dashboard、Papers 与 Report 页面；此前的 SSE 日志流、子进程运行控制和
 Config 页面均已删除。运行、配置修改和邮件模板选择应通过 CLI、YAML 配置文件及
 `DATA_DIR/email_template_override.txt` 完成。历史实施过程保留在 `docs/tasks.md`。
+
+## 两阶段相关性与全文下载安全
+
+Phase E 只用标题和摘要做高召回筛选，结果写入 `relevance_screen_*`。只有 A/B/C 和低置信度 D 进入 E2；高/中置信度 D 直接写入最终 D。E2 在 `fulltext_download_events` 中用 `BEGIN IMMEDIATE` 原子占位，按 Asia/Shanghai 自然日限制总尝试 3 篇、单 publisher 2 篇，失败也占额。同一 DOI 当天只能占位一次；队列按新论文优先、A→B→C→low-D 排序，历史回填仅使用剩余额度。
+
+E3 对短正文使用全文；长正文按 `llm.fulltext_relevance.evidence_max_chars` 提取引言、结论、章节标题和领域关键词窗口。最终结果写入 `llm_relevance_*`，`llm_relevance_basis` 取 `fulltext`、`abstract_fallback` 或 `abstract_clear_reject`。仍在等待下载配额的 `mineru_parse_status='pending'` 不得提前降级；正文确定不可用时，初筛 A/B 才能以摘要结果进入报告。
+
+新增表 `fulltext_download_events(id, doi, publisher, local_date, attempted_at, status, error)` 作为配额审计日志。新增 `relevance_screen_*` 列保存初筛快照，`relevance_screen_is_backfill` 区分历史回填与新论文；旧 `llm_relevance_*` 始终表示最终判定，保持 WebUI 和报告查询兼容。
+
+A 必须有核心对象的正向证据：激光驱动离子/质子、激光靶及直接诊断、后加速或激光驱动粒子紧凑束线；B 必须是论文实际展示的具体可迁移映射；仅同大领域或“可能有用”是 C。
