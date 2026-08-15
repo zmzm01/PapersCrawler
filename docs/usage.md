@@ -313,6 +313,9 @@ skip_phases:                     # 阶段开关
   H: true                        # 邮件默认跳过
 
 llm:
+  # OpenAI 兼容服务基础地址；程序自动追加 /chat/completions。
+  # 例如网关地址可保留 /v1 路径前缀。
+  base_url: https://api.deepseek.com
   relevance:                     # Phase E 相关性判断
     model: deepseek-v4-flash
     thinking: disabled
@@ -358,6 +361,12 @@ formula_fix:
 report:
   generate_explained_html: true  # 是否生成 report_<date>_explained.html 解释页
 ```
+
+`llm.base_url` 用于切换 OpenAI Chat Completions 兼容服务。程序会将其规范化为
+`<base_url>/chat/completions`：`https://gateway.example/v1` 会请求
+`https://gateway.example/v1/chat/completions`。因此使用 OpenCode Go 时，将该项替换为其提供的
+OpenAI 兼容基础地址，并按该服务要求同步调整 `model` 和 `.env` 中的 API Key；不要填写完整的
+`/chat/completions` URL（即使填写，当前版本也会兼容处理）。
 
 ### `configs/publishers.yaml` — 期刊配置
 
@@ -816,7 +825,7 @@ T3 脚本会消耗 API 配额，谨慎运行。
 
 - 检查 `data/PaperCrawler.log` 最新输出
 - 确认 `SKIP_PHASE_*` 没有全部置 true
-- 确认 `.env` 至少填了 `DEEPSEEK_API_KEY`（Phase E 必需）
+- 确认 `.env` 中的 LLM API Key 已按当前网关要求填写（默认变量名为 `DEEPSEEK_API_KEY`）
 
 ### Phase C 大量 failed（Cloudflare / Radware 拦截）
 

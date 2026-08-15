@@ -15,6 +15,7 @@ common.py
     LLMContextLengthExceed  — 输入文本超过模型上下文窗口限制
 
 LLM 调用工具:
+    build_chat_completions_url   — 规范化 OpenAI Chat Completions 端点
     fix_json_invalid_escapes     — 修复 JSON 字符串中不合法的转义序列
     call_llm_api_with_retry      — 带重试的 LLM API 调用封装
 
@@ -30,6 +31,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import List, Dict, Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -87,6 +89,46 @@ class LLMContextLengthExceed(Exception):
 # ---------- LLM 调用工具 ----------
 
 _logger = logging.getLogger(__name__)
+
+
+def build_chat_completions_url(base_url: str) -> str:
+    """Build the Chat Completions endpoint from a configurable base URL.
+
+    Parameters
+    ----------
+    base_url : str
+        Service base URL, optionally including a version prefix such as ``/v1``.
+
+    Returns
+    -------
+    str
+        The normalized ``/chat/completions`` endpoint URL.
+
+    Raises
+    ------
+    ValueError
+        If ``base_url`` is invalid.
+    """
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    if not normalized_base_url:
+        raise ValueError("LLM base_url must not be empty")
+
+    parsed_url = urlsplit(normalized_base_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise ValueError("LLM base_url must be an absolute HTTP(S) URL")
+    if parsed_url.query or parsed_url.fragment:
+        raise ValueError("LLM base_url must not include a query string or fragment")
+
+    endpoint_path = parsed_url.path.rstrip("/")
+    if endpoint_path.endswith("/chat/completions"):
+        return urlunsplit(parsed_url)
+    return urlunsplit((
+        parsed_url.scheme,
+        parsed_url.netloc,
+        f"{endpoint_path}/chat/completions",
+        "",
+        "",
+    ))
 
 
 class LLMCircuitBreaker:

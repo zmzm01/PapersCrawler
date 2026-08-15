@@ -1,5 +1,11 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-14: LLM Base URL 可配置化
+
+- **背景**：`src/config.py` 将 DeepSeek 的完整 Chat Completions 地址写死，虽然模型等参数可在 `settings.yaml` 覆盖，但无法切换到 OpenCode Go 等 OpenAI 兼容网关。
+- **改动**：新增 `llm.base_url`（默认 `https://api.deepseek.com`），由 `src/common.py` 的 `build_chat_completions_url()` 保留可选版本路径并追加 `/chat/completions`；Phase E、Phase F 和 FormulaFixer 共用的两份 API 配置会在首次加载及 `reload_config()` 时同步更新。函数拒绝空值、非 HTTP(S) 地址、query/fragment，避免将错误配置静默发往错误端点。
+- **兼容性与验证**：默认请求地址保持 `https://api.deepseek.com/chat/completions` 不变；已覆盖普通基础地址、带 `/v1/` 地址、完整 endpoint 兼容输入和非法地址。README、设计文档、使用手册及 settings 示例同步说明切换网关时还需匹配 `model` 与 API Key。
+
 ## 2026-08-11: Nature 406 根因与 LLM 服务降级治理
 
 - **Nature 406 根因**：当日 Nature/Nature Physics RSS 与 Nature 页面存档均为 `406 Not Acceptable`；失败页面标题不是解析结构变化而是 HTTP 拒绝页。绕过环境 `HTTP(S)_PROXY` 后，RSS 返回有效 `200` XML，文章页经公开重定向后返回 `200` 和 `dc.type=OriginalPaper`。因此将 RSS 和 Nature requests 回退改为 `trust_env=False`，保留显式 publisher 代理。

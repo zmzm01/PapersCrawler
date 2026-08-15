@@ -24,6 +24,10 @@ skip_phases:
 # LLM API 配置
 # ---------------------------------------------------------------------------
 llm:
+  # OpenAI 兼容服务的基础地址；程序自动追加 /chat/completions。
+  # 切换 OpenCode Go 等网关时，仅修改此项（可保留 /v1 路径前缀）。
+  base_url: https://api.deepseek.com
+
   # 相关性判断（Phase E）— 快速模型，不需深度思考
   relevance:
     model: deepseek-v4-flash
@@ -36,7 +40,7 @@ llm:
     thinking: enabled
     timeout: 300
 
-  # 并发上限：Phase E/F 同时发起的 DeepSeek 请求数
+  # 并发上限：Phase E/F 同时发起的 LLM 请求数
   concurrent_max: 100
 
 # ---------------------------------------------------------------------------
