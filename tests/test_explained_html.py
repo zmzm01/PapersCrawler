@@ -104,6 +104,15 @@ class TestCollectDashboardData:
 # write_explained_html tests
 # ======================================================================
 
+
+def test_extract_date_from_compact_report_filename():
+    """Phase G 的 YYYYMMDD 文件名应被转换为 ISO 日期。"""
+    from processors.report_explainer import _extract_date_from_path
+
+    assert _extract_date_from_path(
+        Path("report_20260816_explained.html")
+    ) == "2026-08-16"
+
 class TestWriteExplainedHtml:
     """Integration-level tests with real template rendering."""
 

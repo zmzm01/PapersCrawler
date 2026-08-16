@@ -394,6 +394,8 @@ Markdown/HTML 报告**当前**显示在每篇论文标题下方的元信息行�
 
 模板位于 `templates/report/{markdown,html}/disclaimers.{md,html}.j2`，可由用户自行编辑。CSS：淡橙底 + 橙色左竖线，与 `sort-note`（黄）和 `relevance-legend`（蓝）形成三色区分：蓝=图例（结构）、黄=排序（流程）、橙=说明（解读）。
 
+Markdown 模板的相邻引用块和正文标题必须以空行分隔；这些结构边界不得使用会吞掉换行的 Jinja 空白控制符（`-%}`）。
+
 **报告排序**（2026-07-25 改）：`paper_report_generator._sort_papers()` 用稳定 sort 实现「相关性等级 A 先 → 同级日期倒序（最新在前）」：
 - 一级 key：`relevance_category` 经 `_RELEVANCE_RANK = {"A":0, "B":1, "C":2, "D":3}` 映射升序（未知值 rank=99 排末位）
 - 二级 key：`date` 字符串倒序；ISO `YYYY-MM-DD` 字符串字典序 ≡ 时间序，无需 datetime 解析
@@ -407,6 +409,7 @@ Markdown/HTML 报告**当前**显示在每篇论文标题下方的元信息行�
 - **模板文件**：`templates/report/html/explained.html.j2`
 - **渲染环境**：复用 `src/processors/paper_report_generator.py:_get_template_env()` 创建的 Jinja2 Environment（`FileSystemLoader` 指向 `templates/report/`），不引入新的 Environment。
 - **输出要求**：单文件自包含 HTML，无外部 `<link>` / `<script>` / CDN / Google Fonts；全部 CSS 内联在 `<style>` 中；字体使用系统栈。
+- **日期文件名兼容**：Phase G 使用 `report_YYYYMMDD_explained.html`；解释页日期解析同时兼容该紧凑格式和历史 `report_YYYY-MM-DD_explained.html` 格式，并统一显示为 `YYYY-MM-DD`。
 - **页面结构（2026-07-25 大幅简化后）**：
   1. Header：标题「报告解释 · {{ date_str }}」+ 副标题「本期论文推送的判定依据与 Prompt 快照」。
   2. 完整 Prompt 快照：两个 `<details>` 折叠区，Phase E 相关性判断默认展开，Phase F 论文总结默认折叠，均用 `<pre>` 保留源码（含 LaTeX）不渲染。
