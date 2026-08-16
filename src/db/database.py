@@ -255,7 +255,7 @@ class DatabaseClient:
             llm_relevance_subfields TEXT,             -- JSON array of matched sub-domains
             llm_relevance_confidence TEXT,
             llm_relevance_reason TEXT,
-            llm_relevance_basis TEXT,             -- fulltext/abstract_fallback/abstract_clear_reject
+            llm_relevance_basis TEXT,             -- fulltext/abstract_clear_reject
             llm_relevance_error TEXT,
             llm_relevance_date TEXT,
 
@@ -943,6 +943,26 @@ class DatabaseClient:
             WHERE (relevance_screen_status IS NULL
                    OR relevance_screen_status = 'pending')
               AND llm_relevance_status IN ('success', 'skipped')""")
+
+        # ``abstract_fallback`` was a temporary design that allowed A/B
+        # screening results into reports before full-text adjudication.  Keep
+        # the screen snapshot but reopen those legacy records so E2/E3 can
+        # retry them; never let a legacy abstract-only summary stand in for a
+        # full-text review.
+        self.conn.execute("""UPDATE papers
+            SET llm_relevance_status = 'pending',
+                llm_relevance_category = NULL,
+                llm_relevance_subfields = NULL,
+                llm_relevance_confidence = NULL,
+                llm_relevance_reason = NULL,
+                llm_relevance_basis = NULL,
+                llm_relevance_error = NULL,
+                llm_relevance_date = NULL,
+                llm_summary_status = 'pending',
+                llm_summary_error = NULL,
+                llm_summary_date = NULL,
+                llm_summary_result = NULL
+            WHERE llm_relevance_basis = 'abstract_fallback'""")
         self.conn.commit()
 
     def update_llm_relevance(self, doi, category, subfields, confidence, notes, status, status_date, basis=None):
@@ -1156,12 +1176,13 @@ class DatabaseClient:
 
     def get_papers_for_report(self):
         """
-        获取待汇入报告的新论文：LLM 总结成功且尚未被报告过。
+        获取待汇入报告的新论文：全文终审和 LLM 总结均成功且尚未被报告过。
 
         查询条件: llm_summary_status = 'success'
                   AND report_date IS NULL
                   AND llm_relevance_category IN ('A', 'B')
                   AND llm_relevance_status = 'success'
+                  AND llm_relevance_basis = 'fulltext'
         用 report_date 替代 report_status 作为过滤条件，支持按日期重置重报。
         显式加 relevance 过滤是必要的：update_llm_relevance() 不会重置
         llm_summary_* 字段，若论文被从 A/B 重判为 C/D，summary_status 仍
@@ -1172,12 +1193,11 @@ class DatabaseClient:
         """
         cur = self.conn.execute("""
         SELECT * FROM papers
-        WHERE (llm_summary_status = 'success'
-               OR (llm_relevance_basis = 'abstract_fallback'
-                   AND llm_relevance_status = 'success'))
+        WHERE llm_summary_status = 'success'
           AND report_date IS NULL
           AND llm_relevance_category IN ('A', 'B')
           AND llm_relevance_status = 'success'
+          AND llm_relevance_basis = 'fulltext'
         ORDER BY paperdate_rss DESC
         """)
         return cur.fetchall()

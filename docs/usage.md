@@ -215,8 +215,10 @@ ls data/reports/auto/        # 自动日报 Markdown
 # 1) 修改 configs/keywords.yaml 的 scope_definition
 # 2) 重置 LLM 相关性判断
 python tools/reset_pipeline.py reset-relevance --all
+# 仅重判指定论文（DOI 不区分大小写，可与 --publisher 组合）
+python tools/reset_pipeline.py reset-relevance --dois 10.1017/hpl.2025.10094,10.1088/1361-6587/ae99fd,10.1088/1361-6587/ae97b7
 # 3) 重跑后续阶段（自动从断点继续）
-python src/main.py
+python tools/run_pipeline.py --phases E,E2,E3,F
 ```
 
 ### 4. Phase C 被 Cloudflare 拦截后重试
@@ -414,8 +416,10 @@ irrelevant_fields:
   topics:
     - "Collider physics: high-energy hadron colliders..."
 context_gates:
-  - term: "fusion"
-    rule: "如未明确指出 LPA/LWFA/PWFA 等离子体加速语境，归 D"
+  - term: "fusion target / cryogenic target / target injection"
+    description: "聚变靶送靶不能判 A；只有实际展示高重复频率激光聚焦条件下可迁移的靶输运/注入才可判 B"
+  - term: "wakefield acceleration"
+    description: "纯电子 LWFA 的波导/通道形成、演化或表征仍可判 A；仅纯电子加速且无通道贡献才在范围外"
 ```
 
 | 字段 | 用途 | 语种 |
@@ -524,7 +528,7 @@ python tools/send_report.py --report report_20260726.md --dry-run
 
 | 工具 | 说明 | 典型用法 |
 |------|------|---------|
-| `reset_pipeline.py` | 6 子命令重置各阶段状态 | `python tools/reset_pipeline.py reset-relevance --all` |
+| `reset_pipeline.py` | 6 子命令重置各阶段状态 | `python tools/reset_pipeline.py reset-relevance --dois 10.1234/example` |
 
 **`reset_pipeline.py` 子命令**：
 
@@ -534,10 +538,10 @@ python tools/send_report.py --report report_20260726.md --dry-run
 | `reset-publisher` | `publisher_page_fetched_*` | — | failed/skipped，排除 NonResearchPageError |
 | `reset-mineru` | `mineru_parse_*` | — | failed/skipped |
 | `reset-summary` | `llm_summary_*` | — | failed/skipped；`--all` 可含 success |
-| `reset-relevance` | `llm_relevance_*` | — | failed/skipped；`--all` 可含 success |
+| `reset-relevance` | `llm_relevance_*` 与 `relevance_screen_*` | — | failed/skipped；`--all` 可含 success；`--categories` 或精确 `--dois` |
 | `reset-report` | `report_status` / `report_date` | — | reported |
 
-所有子命令支持 `--publisher` 过滤（如 `reset-publisher --publisher aps`），执行前交互确认。
+所有子命令支持 `--publisher` 过滤（如 `reset-publisher --publisher aps`），执行前交互确认。`reset-relevance --dois` 按逗号分隔 DOI 精确匹配且不区分大小写，与 `--all`/`--categories` 互斥。
 **不提供一键重置全部**，防止误操作丢失数据。
 
 ### 报告生成
@@ -882,6 +886,9 @@ vim configs/settings.yaml
 Phase E2 只接收初筛 A/B/C 与低置信 D。下载安全参数位于
 `configs/settings.yaml`：
 
+当前 A 类核心锚点包含束流辐照与应用：论文主贡献须研究辐照效应、剂量/损伤机制，
+或实验/模拟验证材料、辐射生物、成像等明确应用；仅在背景或展望中提到用途不算 A。
+
 ```yaml
 llm:
   fulltext_relevance:
@@ -899,7 +906,7 @@ fulltext_download:
 
 每日额度以 Asia/Shanghai 自然日持久化在 `fulltext_download_events`，失败尝试也占额度，
 重复运行不能绕过。同一 DOI 当天最多尝试一次；新论文优先，历史 A/B/C 回填仅使用剩余额度。
-等待次日额度的论文保持 `pending`，不会被 E3 提前按摘要终审。
+等待次日额度、下载失败或解析跳过的论文都保持最终相关性 `pending`，不会被 E3 提前按摘要终审；daily 默认会将 MinerU 的 `failed/skipped` 重置为 `pending` 后重试。
 
 修改研究方向后如需重判历史 A/B/C：
 
@@ -907,8 +914,8 @@ fulltext_download:
 python tools/reset_pipeline.py reset-relevance --categories A,B,C
 ```
 
-`--categories` 与 `--all` 互斥。无正文且已确定无法继续解析时，初筛 A/B 以
-`abstract_fallback` 进入报告，仅显示元信息、摘要和相关性理由，不生成空技术章节。
+`--categories` 与 `--all` 互斥。报告只接收正文终审完成
+（`llm_relevance_basis='fulltext'`）且 LLM 总结成功的 A/B；没有正文的条目保持待处理，待自动重试或手动导入 PDF 后继续 E2→E3。
 
 ```bash
 # 手动下载 PDF 后导入

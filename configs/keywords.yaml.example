@@ -9,6 +9,7 @@ core_anchors:
 - 激光驱动离子/质子加速及后加速
 - 激光靶相互作用与直接诊断
 - 激光驱动粒子的紧凑输运、聚焦及实验束线
+- 束流辐照效应与明确下游应用（材料、辐射生物、成像等）
 
 scope_definition:
   laser_driven_ion_acceleration:
@@ -41,12 +42,22 @@ scope_definition:
     topics:
     - Topic 1 — 说明1
     - Topic 2 — 说明2
+  plasma_waveguide_and_channel:
+    display_name: 等离子体波导与通道
+    role: core
+    a_requirements: [主贡献研究等离子体波导/通道的形成、演化、稳定性或诊断表征；纯电子 LWFA 只是应用背景时仍可判 A]
+    adjacent_examples: [具体可迁移的波导、通道形成或表征方法]
+    exclusions: [仅研究纯电子加速且没有通道/波导贡献，或传统加速器独立通道]
+    description: '研究方向: plasma_waveguide_and_channel — 请替换为实际的中文描述'
+    topics:
+    - Plasma waveguide/channel formation and characterization
+    - Capillary discharge and laser-induced plasma channels
   beam_irradiation_and_applications:
     display_name: 束流辐照与应用
-    role: supporting
-    a_requirements: []
-    adjacent_examples: [与激光驱动粒子束实验链路直接对应的辐照方法]
-    exclusions: []
+    role: core
+    a_requirements: [主贡献研究粒子束辐照效应、剂量或损伤机制，或验证材料、辐射生物、成像等明确应用]
+    adjacent_examples: [仅提供可迁移的辐照装置、剂量学或探测方法]
+    exclusions: [只在背景或展望中泛泛提到潜在应用]
     description: '研究方向: beam_irradiation_and_applications — 请替换为实际的中文描述'
     topics:
     - Topic 1 — 说明1

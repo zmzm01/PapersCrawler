@@ -4,7 +4,7 @@
 
 自动抓取 7 个出版社 25 个核心期刊的新文章，用 LLM 判相关、用 MinerU 解析 PDF 全文本，
 再让 LLM 生成结构化总结，最终通过邮件/Hugo 站点推送给研究组。研究领域聚焦
-**激光/等离子体/束流物理**（加速器方向），可由 `configs/keywords.yaml` 自定义。
+**激光/等离子体/束流物理及束流辐照应用**（加速器方向），可由 `configs/keywords.yaml` 自定义。
 
 ```text
 RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
@@ -27,7 +27,7 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 
 - **9 阶段流水线**（A-RSS/A-CR → B → C → E → E2 → E3 → F → G → H），SQLite 状态驱动，断点续跑
 - **双源发现**：RSS Feed + CrossRef ISSN 查询，智能回溯补漏
-- **两阶段 LLM 四级相关性分类**（A/B/C/D）：初筛 A/B/C + 低置信 D 进入限额正文终审，终审 A/B 才进入总结与报告
+- **两阶段 LLM 四级相关性分类**（A/B/C/D）：初筛 A/B/C + 低置信 D 进入限额正文终审；等离子体波导/通道形成、演化与表征可直接判 A，终审 A/B 才进入总结与报告
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
 - **Publisher 爬虫**：cloakbrowser 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供只读监控与报告阅览

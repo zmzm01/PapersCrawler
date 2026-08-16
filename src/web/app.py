@@ -119,14 +119,14 @@ def _pipeline_status():
             if breakdown:
                 out["failed_breakdown"] = breakdown
             phases[ps["label"]] = out
-        # Count pending report papers, including terminal abstract fallback.
+        # Only full-text-adjudicated papers with complete summaries are reportable.
         pending_report = db.conn.execute(
             "SELECT COUNT(*) FROM papers "
-            "WHERE (llm_summary_status = 'success' "
-            "   OR llm_relevance_basis = 'abstract_fallback') "
+            "WHERE llm_summary_status = 'success' "
             "  AND report_date IS NULL "
             "  AND llm_relevance_status = 'success' "
-            "  AND llm_relevance_category IN ('A', 'B')"
+            "  AND llm_relevance_category IN ('A', 'B') "
+            "  AND llm_relevance_basis = 'fulltext'"
         ).fetchone()[0]
         return {
             "total": total,
@@ -196,11 +196,11 @@ async def pipeline_weekly_stats():
             SELECT
               created_date AS day,
               COUNT(*) AS total,
-              SUM(CASE WHEN (llm_summary_status = 'success'
-                                  OR llm_relevance_basis = 'abstract_fallback')
+              SUM(CASE WHEN llm_summary_status = 'success'
                              AND report_date IS NULL
                              AND llm_relevance_status = 'success'
                              AND llm_relevance_category IN ('A', 'B')
+                             AND llm_relevance_basis = 'fulltext'
                        THEN 1 ELSE 0 END) AS reportable,
               SUM(CASE WHEN publisher_page_fetched_status = 'failed'
                        THEN 1 ELSE 0 END) AS publisher_failed,

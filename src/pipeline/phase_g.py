@@ -46,10 +46,10 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
         # 因为 update_llm_relevance() 不会级联重置 llm_summary_*。
         cur = db.conn.execute(
             f"SELECT * FROM papers "
-            f"WHERE (llm_summary_status = 'success' "
-            f"   OR llm_relevance_basis = 'abstract_fallback') "
+            f"WHERE llm_summary_status = 'success' "
             f"  AND llm_relevance_category IN ('A', 'B') "
             f"  AND llm_relevance_status = 'success' "
+            f"  AND llm_relevance_basis = 'fulltext' "
             f"  AND doi IN ({placeholders})",
             doi_list,
         )

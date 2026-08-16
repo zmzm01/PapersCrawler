@@ -286,21 +286,55 @@ def cmd_reset_mineru(publisher=None):
 # 不级联 E2/F/G（相关性结果不影响已有 MinerU 全文和 LLM 总结）。
 # ------------------------------------------------------------------
 
-def cmd_reset_relevance(publisher=None, reset_all=False, categories=None):
-    """重置 Phase E LLM 相关性判断结果。"""
-    if reset_all and categories:
-        print("--categories 与 --all 不能同时使用")
+def cmd_reset_relevance(publisher=None, reset_all=False, categories=None, dois=None):
+    """重置 Phase E LLM 相关性判断结果。
+
+    Parameters
+    ----------
+    publisher : str, optional
+        仅重置指定出版社。
+    reset_all : bool
+        重置全部论文（含 success）。
+    categories : str, optional
+        逗号分隔的最终类别筛选。
+    dois : str, optional
+        逗号分隔的精确 DOI 筛选；匹配不区分大小写，可与 publisher 组合。
+        指定 DOI 时不受论文当前相关性状态限制。
+    """
+    selectors = int(reset_all) + int(categories is not None) + int(dois is not None)
+    if selectors > 1:
+        print("--all、--categories 与 --dois 互斥，只能指定其中一个")
         return
-    category_clause = ""
-    category_params = ()
-    if categories:
+    doi_clause = ""
+    doi_params = ()
+    normalized_dois = []
+    if dois is not None:
+        normalized_dois = list(dict.fromkeys(
+            value.strip().lower() for value in dois.split(",") if value.strip()
+        ))
+        if not normalized_dois:
+            print("--dois 必须包含至少一个非空 DOI")
+            return
+        doi_clause = "LOWER(TRIM(doi)) IN (" + ",".join(
+            "?" for _ in normalized_dois
+        ) + ")"
+        doi_params = tuple(normalized_dois)
+    if dois is not None:
+        # Exact DOI selection intentionally ignores current relevance status.
+        clauses = [doi_clause]
+        params_list = list(doi_params)
+        if publisher:
+            clauses.insert(0, "publisher = ?")
+            params_list.insert(0, publisher)
+        where = "WHERE " + " AND ".join(clauses)
+        params = tuple(params_list)
+    elif categories:
         values = [value.strip().upper() for value in categories.split(",")]
         if not values or any(value not in {"A", "B", "C", "D"} for value in values):
             print("--categories 只能包含 A,B,C,D")
             return
         category_clause = "llm_relevance_category IN (" + ",".join("?" for _ in values) + ")"
         category_params = tuple(values)
-    if categories:
         if publisher:
             where = "WHERE publisher = ? AND " + category_clause
             params = (publisher,) + category_params
@@ -334,7 +368,11 @@ def cmd_reset_relevance(publisher=None, reset_all=False, categories=None):
     set_clause = ",\n            ".join(RELEVANCE_RESET)
     sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
 
-    mode = "--all，全部" if reset_all else (f"类别 {categories}" if categories else "仅失败/跳过")
+    mode = (
+        "--all，全部" if reset_all else
+        (f"类别 {categories}" if categories else
+         (f"精确 DOI（{len(normalized_dois)} 个）" if dois is not None else "仅失败/跳过"))
+    )
     print(f"\n将重置 {count} 篇论文的 LLM 相关性判断状态（{mode}，publisher={publisher or '全部'}）")
     print()
     print("  受影响的状态列:")
@@ -346,6 +384,8 @@ def cmd_reset_relevance(publisher=None, reset_all=False, categories=None):
     print("    llm_relevance_result      → NULL  (deprecated)")
     print("    llm_relevance_confidence  → NULL")
     print("    llm_relevance_reason      → NULL")
+    print("    llm_relevance_basis       → NULL")
+    print("    relevance_screen_*        → pending / NULL")
     print("  不受影响（保持不变）:")
     print("    publisher_page_*, mineru_*, llm_summary_*, report_*")
     print("  级联: 无（相关性结果不影响 MinerU 全文和 LLM 总结）")
@@ -585,6 +625,8 @@ if __name__ == "__main__":
             "\n  llm_relevance_result      → NULL"
             "\n  llm_relevance_confidence  → NULL"
             "\n  llm_relevance_reason      → NULL"
+            "\n  llm_relevance_basis       → NULL"
+            "\n  relevance_screen_*         → pending / NULL"
             "\n  不受影响（保持不变）:"
             "\n  publisher_page_*, mineru_*,"
             "\n  llm_summary_*, report_*"
@@ -602,6 +644,8 @@ if __name__ == "__main__":
         help="重置全部论文（含 success），修改 domain_description 后重新判断时使用")
     p_rel.add_argument("--categories",
         help="按最终类别重置，如 A,B,C；与 --all 互斥")
+    p_rel.add_argument("--dois",
+        help="按精确 DOI 重置，逗号分隔且不区分大小写；与 --all/--categories 互斥")
 
     p_sum = sub.add_parser("reset-summary",
         help="重置 LLM 总结状态（加 --all 重置包括 success 的全部论文）",
@@ -673,7 +717,12 @@ if __name__ == "__main__":
     elif args.command == "reset-mineru":
         cmd_reset_mineru(args.publisher)
     elif args.command == "reset-relevance":
-        cmd_reset_relevance(args.publisher, reset_all=args.all, categories=args.categories)
+        cmd_reset_relevance(
+            args.publisher,
+            reset_all=args.all,
+            categories=args.categories,
+            dois=args.dois,
+        )
     elif args.command == "reset-summary":
         cmd_reset_summary(args.publisher, reset_all=args.all)
     elif args.command == "reset-report":
