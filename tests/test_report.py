@@ -187,6 +187,22 @@ def test_generate_markdown_multiple_papers():
     assert "第二篇论文" in md
 
 
+def test_markdown_header_blocks_and_title_are_separated():
+    """头部引用块、决策条目与一级标题必须保留 Markdown 空行。"""
+    papers = [
+        _sample_paper(title="Core paper", relevance_category="A"),
+        _sample_paper(title="Watch paper", relevance_category="B",
+                      doi="10.1234/watch"),
+    ]
+
+    md = generate_report(papers, format="markdown", toc=True)
+
+    assert "\n\n> **相关性等级说明**" in md
+    assert "a>" not in md
+    assert "\n> **邻近观察（B，全部保留）**" in md
+    assert "\n\n# 文献报告\n" in md
+
+
 def test_generate_markdown_empty_fields():
     """空字段不应导致错误。"""
     paper = {

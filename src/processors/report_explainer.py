@@ -25,6 +25,7 @@ Dependencies
 """
 
 import logging
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -122,31 +123,29 @@ def write_explained_html(db, html_path: Path) -> None:
 
 
 def _extract_date_from_path(path: Path) -> str:
-    """Extract ``YYYY-MM-DD`` from a report filename.
+    """Extract a report date from a compact or ISO-format filename.
 
     Parameters
     ----------
     path : Path
-        Path like ``.../report_2026-07-26_explained.html``.
+        Path like ``.../report_20260726_explained.html`` or
+        ``.../report_2026-07-26_explained.html``.
 
     Returns
     -------
     str
         Date string ``"2026-07-26"``.  Falls back to today on parse failure.
     """
-    stem = path.stem  # e.g. "report_2026-07-26_explained"
-    # Strip leading "report_" and trailing "_explained"
-    # Expected: "report_2026-07-26_explained" → "2026-07-26"
-    try:
-        parts = stem.split("_", 1)  # ["report", "2026-07-26_explained"]
-        if len(parts) >= 2:
-            inner = parts[1]  # "2026-07-26_explained"
-            # The date is the first 10 chars of the remainder
-            candidate = inner[:10]
-            # Validate
-            datetime.strptime(candidate, "%Y-%m-%d")
-            return candidate
-    except (ValueError, IndexError):
-        pass
+    match = re.match(
+        r"^report_(?P<date>\d{8}|\d{4}-\d{2}-\d{2})_explained$",
+        path.stem,
+    )
+    if match:
+        raw_date = match.group("date")
+        date_format = "%Y%m%d" if len(raw_date) == 8 else "%Y-%m-%d"
+        try:
+            return datetime.strptime(raw_date, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
     logger.warning("Could not extract date from %s, using today", path.name)
     return date.today().strftime("%Y-%m-%d")

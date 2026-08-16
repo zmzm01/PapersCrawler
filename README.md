@@ -32,7 +32,7 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **Publisher 爬虫**：cloakbrowser 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供只读监控与报告阅览
 - **报告双输出**：自动日报（邮件）+ 可由 CLI 工具生成的预览报告
-- **报告解释页**：`report_<date>_explained.html` 展示 LLM prompt 快照
+- **报告解释页**：`report_YYYYMMDD_explained.html` 展示 LLM prompt 快照
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
 
 ## 快速开始

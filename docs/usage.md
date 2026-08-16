@@ -546,6 +546,8 @@ python tools/send_report.py --report report_20260726.md --dry-run
 
 ### 报告生成
 
+自动报告的 Markdown 头部引用块、决策摘要和 `# 文献报告` 必须由空行分隔。若转换日志提示「一级标题为 0」，先检查是否有引用块末行与标题粘连；模板中不要在这些边界使用 Jinja `-%}`。
+
 | 工具 | 说明 | 典型用法 |
 |------|------|---------|
 | `preview_report.py` | 生成报告**不**标记数据库 | `python tools/preview_report.py --output /tmp/p.md` |
