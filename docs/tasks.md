@@ -1,7 +1,20 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-15：相关性边界修正与精确重判工具
+
+- 保持 daily 的 `A-RSS/A-CR/B/C/E/E2/E3/F` 顺序不变，确认新流程已包含正文终审 E3。
+- 修正三个误判边界：聚变/低温靶送靶不能因主题本身判 A；等离子体波导/通道形成、演化和表征即使服务纯电子 LWFA 仍可判 A；非激光聚变/Z-pinch/DPF 中实际展示的 FLASH/MHD、鞘层跟踪或合成诊断可判 B，单纯工具名不算。
+- 新增 `reset-relevance --dois DOI1,DOI2`，大小写不敏感精确匹配，可叠加出版社过滤，与 `--all`/`--categories` 互斥。
+- 新增离线 prompt/config 与 reset 单元测试；未调用真实 LLM、PDF 下载或修改 `data/papers.db`。
+
+## 2026-08-16：正文复检成为报告硬门槛
+
+- 取消 `abstract_fallback`：MinerU 下载/解析暂时失败不再以标题和摘要写入最终 A/B，也不能抢先进入周报；最终相关性保持 `pending`，daily 默认重置 `mineru_parse_status in ('failed', 'skipped')` 后继续重试，用户手动导入 PDF 也回到 E2→E3。
+- 将 `llm_relevance_status='success' AND llm_relevance_basis='fulltext'` 明确为 Phase E3 正文复检完成标志；自动/用户报告、Dashboard 待报告计数和 7 天 reportable 统计均要求该标志、A/B 与成功 summary。
+
 ## 2026-08-15：两阶段相关性与下载限流
 
+- 将“束流辐照与应用”由 supporting 提升为 core anchor；A 类要求辐照效应、剂量/损伤机制或明确下游应用是论文主贡献，泛泛应用展望不升级为 A。
 - 将标题摘要筛选与正文终审拆为 E/E3；E2 仅处理 A/B/C + 低置信 D。
 - 新增 SQLite 下载事件审计和 Asia/Shanghai 每日硬配额（总计 3、单出版社 2），失败尝试占额。
 - 报告支持正文不可用的 A/B 摘要降级，并显示动态方向与判定依据。

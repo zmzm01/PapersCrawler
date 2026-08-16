@@ -74,7 +74,7 @@ def _normalise_result(result, domain_config):
 
 
 def phase_e3_fulltext_relevance(db):
-    """Adjudicate screened candidates with full text, or safely fall back."""
+    """Adjudicate screened candidates only when full-text evidence is available."""
     logger.info("--- Phase E3: full-text relevance adjudication ---")
     if CFG.SKIP_PHASE_E3:
         logger.info("Phase E3: SKIP_PHASE_E3=True, skipping")
@@ -99,20 +99,10 @@ def phase_e3_fulltext_relevance(db):
             except OSError as error:
                 logger.warning("Cannot read full text %s: %s", path, error)
         if not fulltext.strip():
-            # A pending MinerU item may merely be waiting for tomorrow's
-            # download quota. Do not finalize it from the abstract early.
-            if paper["mineru_parse_status"] == FetchStatus.PENDING.value:
-                continue
-            if paper["llm_relevance_status"] == FetchStatus.SUCCESS.value:
-                continue
-            category = paper["relevance_screen_category"]
-            basis = "abstract_fallback" if category in ("A", "B") else "abstract_clear_reject"
-            db.update_llm_relevance(
-                paper["doi"], category, paper["relevance_screen_subfields"] or "[]",
-                paper["relevance_screen_confidence"] or "low",
-                paper["relevance_screen_reason"] or "",
-                FetchStatus.SUCCESS.value, str(datetime.now()), basis=basis,
-            )
+            # MinerU may succeed on a later daily retry or after a manually
+            # supplied PDF.  Keep the final judgement pending until E3 has
+            # actual full-text evidence; title/abstract screening never makes
+            # an A/B paper reportable on its own.
             continue
         if paper["llm_relevance_basis"] == "fulltext":
             continue

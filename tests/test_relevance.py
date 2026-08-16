@@ -174,6 +174,20 @@ def test_build_scope_block_renders_in_three_step_order():
     )
 
 
+def test_build_scope_block_renders_beam_irradiation_core_anchor():
+    """Beam irradiation/applications must be available to the A evidence gate."""
+    from config import build_scope_block
+
+    anchor = "束流辐照效应与明确下游应用（材料、辐射生物、成像等）"
+    block = build_scope_block(
+        scope_definition=_make_full_keywords()["scope_definition"],
+        core_anchors=[anchor],
+    )
+
+    assert "Core anchors (positive evidence gate)" in block
+    assert anchor in block
+
+
 def test_build_default_prompt_contains_decision_tree_steps():
     """Final prompt must surface the (a)/(b)/(c)/(d) decision tree."""
     checker = PaperRelevanceChecker(_make_full_keywords())
@@ -253,6 +267,41 @@ def test_decision_tree_a_assigns_d_on_irrelevant_term():
     assert "MUST NOT contribute to sub-domain matching" in a_block
 
 
+def test_boundary_rules_allow_transferable_but_not_out_of_scope_a():
+    """The prompt must encode the three recently reviewed boundary cases."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    prompt = checker.build_default_prompt(title="T", abstract="A", doi="10.1/x")
+
+    assert "ICF/cryogenic fusion target injection is not A" in prompt
+    assert "high-repetition laser-focus" in prompt
+    assert "plasma waveguide or channel" in prompt
+    assert "even when its demonstrated application is pure electron LWFA" in prompt
+    assert "FLASH/MHD algorithms" in prompt
+    assert "mere FLASH/tool-name mention is not B" in prompt
+    assert "concrete method, device, algorithm" in prompt
+
+
+def test_context_gate_does_not_make_transferable_methods_automatically_d():
+    """Out-of-scope context forbids A but leaves the explicit B exception."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    prompt = checker.build_default_prompt(title="T", abstract="A", doi="10.1/x")
+    a_block = prompt.split("(a) Apply Context Gates", 1)[1].split("(b)", 1)[0]
+
+    assert "cannot be category A" in a_block
+    assert "allow B" in a_block
+    assert "Assign D directly only when" in a_block
+
+
+def test_irrelevant_fields_remain_hard_rejects():
+    """Topic-level blacklists must not become a broad B back door."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    prompt = checker.build_default_prompt(title="T", abstract="A", doi="10.1/x")
+    b_block = prompt.split("(b) Check Irrelevant Fields", 1)[1].split("(c)", 1)[0]
+
+    assert "YES → assign D" in b_block
+    assert "no B exception" in b_block
+
+
 # ---- DeepSeek API call (mocked) ----
 
 def test_call_deepseek_api_mocked():
@@ -297,4 +346,3 @@ def test_call_deepseek_api_mocked():
         assert result["MatchedSubfields"] == ["Laser Wakefield Acceleration"]
         assert result["Confidence"] == "high"
         assert "GeV" in result["Notes"]
-

@@ -220,7 +220,9 @@ Phase H: 邮件推送
 - `llm_relevance_category` (TEXT: A/B/C/D) — 四级分类，替代已废弃的 `llm_relevance_result`
 - `llm_relevance_subfields` (TEXT: JSON 数组) — 匹配的子领域列表
 - `llm_relevance_confidence`, `llm_relevance_reason`
-- `llm_relevance_basis` — `fulltext` / `abstract_fallback` / `abstract_clear_reject`
+- `llm_relevance_basis` — `fulltext` / `abstract_clear_reject`。其中
+  `llm_relevance_status='success' AND llm_relevance_basis='fulltext'` 是
+  Phase E3 正文复检完成的明确标志；仅该组合的 A/B 才可进入报告。
 - `llm_relevance_result` (INTEGER, **已废弃**) — 旧版二分类 0/1，`reset-relevance --all` 后不再写入
 
 **MinerU 全文** (Phase E2) — 三列：`mineru_parse_status` / `_error` / `_date`
@@ -652,7 +654,7 @@ SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
 
 | 页面 | 路由 | 功能 |
 |------|------|------|
-| Dashboard | `GET /dashboard`（`/` 302 重定向至此） | 状态概览：3 统计卡片（论文总数 / Pending Report / 出版社数）；Pending Report 与 7 天 `reportable` 同时计入终审 A/B 的完整总结和 `abstract_fallback`；Pipeline 各阶段状态柱状图（pending 在 UI 层合并到 skipped 显示，3 段柱状图）；**近 7 天采集趋势图（3 桶：reportable / total_failed / other，与 explained.html 设计一致）**；每 10s 自动刷新。 |
+| Dashboard | `GET /dashboard`（`/` 302 重定向至此） | 状态概览：3 统计卡片（论文总数 / Pending Report / 出版社数）；Pending Report 与 7 天 `reportable` 仅计入“正文终审为 A/B 且完整总结成功”的论文；Pipeline 各阶段状态柱状图（pending 在 UI 层合并到 skipped 显示，3 段柱状图）；**近 7 天采集趋势图（3 桶：reportable / total_failed / other，与 explained.html 设计一致）**；每 10s 自动刷新。 |
 | Papers | `GET /papers?sort=created\|published\|summary&category=a\|b\|ab\|all&has_summary=0\|1&page=N&per_page=50\|100\|200` | **只读浏览**：三种排序（入库/发表/LLM 总结生成时间）、四类筛选（A/B/AB/All）、`has_summary` 筛选可报告论文；**分页**：底部分页器 `共 M 篇 · 第 N/T 页 · [每页 K ▾] [‹ 上一页] [下一页 ›]`，per_page 白名单 50/100/200。无 checkbox 选取、无生成按钮 |
 | Report | `GET /report?show=<filename>` | **报告档案馆**，仅查看不编辑。顶部下拉选择器按 `mtime DESC` 列出所有报告（每条：日期切片/来源/论文数/相对时间，auto + user 混排），主区渲染选中报告（marked + KaTeX + DOMPurify 反 XSS）；下载链接常驻右侧 |
 
@@ -1050,12 +1052,12 @@ pdf_body = resp.content
 
 | 类别 | 标签 | 含义 | 后续处理 |
 |------|------|------|---------|
-| **A** | 直接相关 | 有激光驱动离子/质子、激光靶与直接诊断、后加速或激光驱动紧凑束线的正向证据 | → E2/E3 候选 |
-| **B** | 间接相关 | 论文实际展示了可不改变核心原理而迁移的具体技术或方法 | → E2/E3 候选 |
+| **A** | 直接相关 | 有激光驱动离子/质子、激光靶与直接诊断、后加速、激光驱动紧凑束线、束流辐照效应与明确下游应用，或等离子体波导/通道形成、演化、稳定性与表征的正向证据；纯电子 LWFA 作为波导应用不改变 A | → E2/E3 候选 |
+| **B** | 间接相关 | 论文实际展示了可不改变核心原理而迁移的具体技术、器件、算法或诊断方法；ICF/低温靶送靶仅在实际展示高重复频率激光聚焦条件下可迁移的输运/注入时为 B，非激光聚变/Z-pinch/DPF 中实际展示的 FLASH/MHD、鞘层跟踪或合成诊断也可为 B | → E2/E3 候选 |
 | **C** | 同领域但远 | 同属加速器/等离子体领域，但与核心兴趣距离较远 | → E2/E3 候选 |
 | **D** | 基本无关 | 不属于课题组关注范围 | 仅低置信 D → E2/E3；高/中置信 D 终止 |
 
-Phase E 的分类是高召回初筛，不直接决定报告资格。E2/E3 覆盖 A/B/C 与低置信 D，E3 用正文作最终分类；只有终审 **A 或 B** 才进入 Phase F/G/H。正文确定不可用时，初筛 A/B 可按 `abstract_fallback` 降级保留。
+Phase E 的分类是高召回初筛，不直接决定报告资格。E2/E3 覆盖 A/B/C 与低置信 D，E3 用正文作最终分类；只有终审 **A 或 B**、且 `llm_relevance_basis='fulltext'`、并完成 Phase F 总结的论文才进入 G/H。正文暂不可用时最终相关性保持 `pending`，由 daily 自动重试 MinerU；用户手动导入 PDF 后继续 E2→E3，不以标题/摘要降级入报。
 
 ### 匹配子领域记录
 
@@ -1494,7 +1496,7 @@ APS 使用 `link.aps.org` → `journals.aps.org` 双域名架构，goto 后的�
 
 ## Phase F — LLM 结构化总结
 
-- 仅处理 Phase E3 终审为 A/B 的论文；通常使用 MinerU 全文，正文确定不可用但初筛 A/B 时允许 `abstract_fallback`
+- 仅处理 Phase E3 已完成正文终审（`llm_relevance_basis='fulltext'`）且为 A/B 的论文；没有全文时保持 pending，不生成摘要或报告
 - MinerU 全文路径解析：`mineru_output_dir` 在 DB 中存储为相对于 `DATA_DIR` 的路径，Phase F 使用 `DATA_DIR / output_dir / "full.md"` 拼接（曾误用 `DATA_DIR.parent` 导致 `full.md` 找不到，所有论文被跳过）
 - 使用 `ThreadPoolExecutor` 并发调用 DeepSeek API
 - 输出 JSON 包含 5 个字段：`one_sentence`、`motivation_and_goal`、`key_setup_and_method`、`main_results_and_physics`、`take_home_message`
@@ -1532,7 +1534,7 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 
 | 命令 | 重置范围 | 默认条件 | 级联 | 典型用途 |
 |------|---------|---------|------|---------|
-| `reset-relevance` | `llm_relevance_*`（6 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 scope_definition 后 |
+| `reset-relevance` | `llm_relevance_*`（及初筛快照列） | `failed`/`skipped`（`--all` 含 success）；`--categories` 按类别；`--dois` 精确 DOI | 无 | 修改 scope_definition 后；针对样例论文复核时用 `--dois` |
 | `reset-publisher` | `publisher_page_fetched_status/error`（2 列） | `failed`/`skipped`（跳过 NonResearchPageError） | 无 | 重试被 CF 拦截的论文 |
 | `reset-mineru` | `mineru_parse_*`（5 列） | `failed`/`skipped` | 无 | 重试 PDF 解析失败的论文 |
 | `reset-summary` | `llm_summary_*`（4 列） | `failed`/`skipped`（`--all` 含 success） | 无 | 修改 prompt 后重生成总结 |
@@ -1543,6 +1545,7 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 - `reset-publisher` **跳过** `NonResearchPageError` 条目（非论文页面重试无意义）
 - `reset-mineru` / `reset-summary` 重新解析/总结后，下游状态为 pending 的被自动拾取（无需显式级联）
 - 所有命令执行前打印影响行数，交互确认后才执行
+- `reset-relevance --dois DOI1,DOI2` 使用 `LOWER(TRIM(doi))` 精确匹配，不区分 DOI 大小写；与 `--all`、`--categories` 互斥，可继续叠加 `--publisher`
 
 # Hugo 报告部署
 
@@ -1754,8 +1757,8 @@ Config 页面均已删除。运行、配置修改和邮件模板选择应通过 
 
 Phase E 只用标题和摘要做高召回筛选，结果写入 `relevance_screen_*`。只有 A/B/C 和低置信度 D 进入 E2；高/中置信度 D 直接写入最终 D。E2 在 `fulltext_download_events` 中用 `BEGIN IMMEDIATE` 原子占位，按 Asia/Shanghai 自然日限制总尝试 3 篇、单 publisher 2 篇，失败也占额。同一 DOI 当天只能占位一次；队列按新论文优先、A→B→C→low-D 排序，历史回填仅使用剩余额度。
 
-E3 对短正文使用全文；长正文按 `llm.fulltext_relevance.evidence_max_chars` 提取引言、结论、章节标题和领域关键词窗口。最终结果写入 `llm_relevance_*`，`llm_relevance_basis` 取 `fulltext`、`abstract_fallback` 或 `abstract_clear_reject`。仍在等待下载配额的 `mineru_parse_status='pending'` 不得提前降级；正文确定不可用时，初筛 A/B 才能以摘要结果进入报告。
+E3 对短正文使用全文；长正文按 `llm.fulltext_relevance.evidence_max_chars` 提取引言、结论、章节标题和领域关键词窗口。最终结果写入 `llm_relevance_*`：高/中置信初筛 D 使用 `abstract_clear_reject`；有全文的候选使用 `fulltext`。A/B/C 与低置信 D 在 `mineru_parse_status` 为 `pending`、`failed` 或 `skipped` 时都保持最终相关性 pending，等待 daily 自动重试或用户手动导入 PDF，绝不以摘要进入报告。
 
 新增表 `fulltext_download_events(id, doi, publisher, local_date, attempted_at, status, error)` 作为配额审计日志。新增 `relevance_screen_*` 列保存初筛快照，`relevance_screen_is_backfill` 区分历史回填与新论文；旧 `llm_relevance_*` 始终表示最终判定，保持 WebUI 和报告查询兼容。
 
-A 必须有核心对象的正向证据：激光驱动离子/质子、激光靶及直接诊断、后加速或激光驱动粒子紧凑束线；B 必须是论文实际展示的具体可迁移映射；仅同大领域或“可能有用”是 C。
+A 必须有核心对象的正向证据：激光驱动离子/质子、激光靶及直接诊断、后加速、激光驱动粒子紧凑束线、等离子体波导/通道形成演化与表征，或以束流辐照效应/剂量/损伤机制及明确下游应用为主贡献。聚变/低温靶注入不能判 A；只有实际展示高重复频率激光聚焦条件下可迁移的靶输运/注入才可判 B。非激光聚变、Z-pinch/DPF 论文只有在实际展示可迁移的 FLASH/MHD 算法、鞘层跟踪或合成诊断时才可判 B，单纯提及工具名不算。B 必须是论文实际展示的具体可迁移映射；仅同大领域、背景提及应用或“可能有用”是 C。

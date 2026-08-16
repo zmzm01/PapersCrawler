@@ -98,6 +98,32 @@ def test_migration_repairs_legacy_snapshot_backfill_flag(db):
     assert flags["10/x/fresh"] == 0
 
 
+def test_migration_reopens_legacy_abstract_fallback(db):
+    """Legacy abstract-only decisions must wait for full-text adjudication."""
+    _paper(db, "10/x/legacy-fallback")
+    db.update_relevance_screen(
+        "10/x/legacy-fallback", "B", '["plasma_diagnostics"]', "medium",
+        "screen result", "success", "now",
+    )
+    db.update_llm_relevance(
+        "10/x/legacy-fallback", "B", '["plasma_diagnostics"]', "medium",
+        "legacy fallback", "success", "now", basis="abstract_fallback",
+    )
+    db.update_llm_summary(
+        "10/x/legacy-fallback", '{"one_sentence":"old"}', "success", "now",
+    )
+
+    db.init_db_papers()
+    row = db.conn.execute(
+        "SELECT * FROM papers WHERE doi = ?", ("10/x/legacy-fallback",),
+    ).fetchone()
+    assert row["relevance_screen_status"] == "success"
+    assert row["relevance_screen_category"] == "B"
+    assert row["llm_relevance_status"] == "pending"
+    assert row["llm_relevance_basis"] is None
+    assert row["llm_summary_status"] == "pending"
+
+
 def test_download_quota_rejects_duplicate_doi_same_day(db):
     """Repeated/manual runs cannot reserve one paper twice in one day."""
     assert db.claim_fulltext_download("10/x/1", "aps", 3, 2)
@@ -147,8 +173,8 @@ def test_phase_e3_waits_for_candidate_pending_download(db):
     assert row["llm_relevance_basis"] is None
 
 
-def test_phase_e3_falls_back_only_after_terminal_parse_state(db):
-    """A terminal no-fulltext state may safely use the abstract fallback."""
+def test_phase_e3_keeps_terminal_parse_failure_pending(db):
+    """A failed parse waits for a later MinerU retry or a manually added PDF."""
     _paper(db, "10/x/fallback", pdf_url="")
     db.update_relevance_screen(
         "10/x/fallback", "B", '["plasma_diagnostics"]', "medium",
@@ -161,6 +187,6 @@ def test_phase_e3_falls_back_only_after_terminal_parse_state(db):
     row = db.conn.execute(
         "SELECT * FROM papers WHERE doi = ?", ("10/x/fallback",),
     ).fetchone()
-    assert row["llm_relevance_status"] == "success"
-    assert row["llm_relevance_category"] == "B"
-    assert row["llm_relevance_basis"] == "abstract_fallback"
+    assert row["llm_relevance_status"] == "pending"
+    assert row["llm_relevance_category"] is None
+    assert row["llm_relevance_basis"] is None

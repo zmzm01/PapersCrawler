@@ -213,9 +213,9 @@ def test_get_papers_for_report(db):
     db.insert_rss_basicinfo("10.0000/s2", "S2", "http://s2", "J", "pub", "2025")
     # 必须同时设置 relevance=A（否则新过滤会把 summary 状态孤立）
     db.update_llm_relevance("10.0000/s1", "A", '[]', "high", "ok",
-                            FetchStatus.SUCCESS.value, "2025")
+                            FetchStatus.SUCCESS.value, "2025", basis="fulltext")
     db.update_llm_relevance("10.0000/s2", "A", '[]', "high", "ok",
-                            FetchStatus.SUCCESS.value, "2025")
+                            FetchStatus.SUCCESS.value, "2025", basis="fulltext")
     db.update_llm_summary("10.0000/s1", '{"x":"y"}',
                           FetchStatus.SUCCESS.value, "2025")
     db.update_llm_summary("10.0000/s2", '{"x":"z"}',
@@ -235,7 +235,7 @@ def test_get_papers_for_report_excludes_reclassified_papers(db):
     """
     db.insert_rss_basicinfo("10.0000/r1", "R1", "http://r1", "J", "pub", "2025")
     db.update_llm_relevance("10.0000/r1", "A", '["LWFA"]', "high", "是",
-                            FetchStatus.SUCCESS.value, "2025-01-01")
+                            FetchStatus.SUCCESS.value, "2025-01-01", basis="fulltext")
     db.update_llm_summary("10.0000/r1", '{"one_sentence":"x"}',
                           FetchStatus.SUCCESS.value, "2025-01-02")
     # 此时应该入报
@@ -244,6 +244,19 @@ def test_get_papers_for_report_excludes_reclassified_papers(db):
     db.update_llm_relevance("10.0000/r1", "D", '[]', "high", "已不再相关",
                             FetchStatus.SUCCESS.value, "2025-07-25")
     # 修复后应被过滤掉
+    assert db.get_papers_for_report() == []
+
+
+def test_get_papers_for_report_requires_fulltext_adjudication(db):
+    """A/B papers without a full-text E3 basis must never be reportable."""
+    db.insert_rss_basicinfo("10.0000/fallback", "Fallback", "http://fallback",
+                            "J", "pub", "2025")
+    db.update_llm_relevance(
+        "10.0000/fallback", "A", '[]', "high", "screen-only",
+        FetchStatus.SUCCESS.value, "2025-01-01", basis="abstract_fallback",
+    )
+    db.update_llm_summary("10.0000/fallback", '{"one_sentence":"x"}',
+                          FetchStatus.SUCCESS.value, "2025-01-02")
     assert db.get_papers_for_report() == []
 
 

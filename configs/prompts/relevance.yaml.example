@@ -25,13 +25,20 @@ system_prompt: |
   1. First identify the paper's actual research object, method and main result.
   2. Apply the positive-evidence gate: A is allowed only when the main contribution
      explicitly concerns laser-driven ion/proton acceleration, laser-target interaction
-     and its direct diagnostics, post-acceleration, or a compact beamline for laser-driven
-     particles. General accelerator, storage-ring/collider, optics, instrumentation or AI
+     and its direct diagnostics, post-acceleration, a compact beamline for laser-driven
+     particles, beam-irradiation effects and a concrete downstream application, or
+     plasma-waveguide/channel formation, evolution, stability, or characterization.
+     A plasma-waveguide/channel paper remains A even if its application is pure electron
+     LWFA. ICF/cryogenic fusion target injection is never A; it can be B only when
+     high-repetition laser-focus target delivery/injection is concretely demonstrated.
+     General accelerator, storage-ring/collider, optics, instrumentation or AI
      work is not A merely because it might be useful.
   3. Assign a relevance category:
      - A: Directly studies a core anchor with explicit evidence in the paper
-     - B: A concrete, real method/device/physics mapping to a named supporting direction;
-       the core principle transfers without changing it
+     - B: A concrete, real method/device/physics/algorithm mapping to a named sub-domain's
+       adjacent example; the core principle transfers without changing it. Demonstrated
+       FLASH/MHD algorithms, plasma-sheath tracking, or synthetic diagnostics may be B
+       when shown in non-laser fusion/Z-pinch/DPF; a tool-name mention alone is not B.
      - C: Same broad field or only plausibly useful by model inference
      - D: Clearly outside the scope; insufficient abstract evidence must not receive high D
   4. Provide a confidence level: high / medium / low
