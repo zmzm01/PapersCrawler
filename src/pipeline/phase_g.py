@@ -11,9 +11,11 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import CFG, load_keywords
+from config import CFG, DB_PATH, PUBLIC_EXPORT_DIR, load_keywords
 from db.database import DatabaseClient
 from processors.paper_report_generator import generate_report
+from processors.public_report import write_public_report
+from processors.report_presentation import build_report_presentation
 
 logger = logging.getLogger(__name__)
 
@@ -134,15 +136,39 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
 
     # 加载子领域定义用于分组报告；无 scope_definition 时回退平铺模式
     scope_definition = load_keywords().get("scope_definition")
+    presentation = build_report_presentation(scope_definition, paper_list)
     md_report = generate_report(
         paper_list, format="markdown", toc=True,
         scope_definition=scope_definition,
+        presentation=presentation,
     )
     # 原子写入：先写 .tmp，再 rename，避免崩溃留下半写文件
     tmp_path = md_path.with_suffix(md_path.suffix + ".tmp")
     tmp_path.write_text(md_report, encoding="utf-8")
     tmp_path.replace(md_path)
     logger.info(f"Report saved: {md_path}")
+
+    # Keep a structured, public-safe snapshot next to the Markdown report.
+    # The later publishing step copies this sidecar; it never parses Markdown.
+    public_path = md_path.with_suffix(".public.json")
+    write_public_report(
+        public_path,
+        paper_list,
+        date_str if is_auto else timestamp_str[:8],
+        scope_definition=scope_definition,
+        presentation=presentation,
+    )
+    logger.info(f"Public report snapshot saved: {public_path}")
+
+    # Keep the static-site export in sync with the newly generated sidecar.
+    # Export failures must not invalidate the canonical report.
+    if is_auto:
+        try:
+            from tools.export_public_reports import export_reports
+            exported = export_reports(PUBLIC_EXPORT_DIR, Path(auto_dir), DB_PATH)
+            logger.info(f"Public report export updated: {exported} report(s) -> {PUBLIC_EXPORT_DIR}")
+        except Exception:
+            logger.warning("Public report export failed — canonical report is still complete", exc_info=True)
 
     # 写完 md 后条件性生成 explained.html（仅自动报告）
     if is_auto and getattr(CFG, "GENERATE_EXPLAINED_HTML", False):

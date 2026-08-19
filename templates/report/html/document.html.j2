@@ -25,9 +25,9 @@
 </head>
 <body>
   <h1>文献报告</h1>
-{{ sort_note_tmpl.sort_note() }}
-{{ legend_tmpl.legend() }}
-{{ disclaimers_tmpl.disclaimers() }}
+{{ sort_note_tmpl.sort_note(presentation) }}
+{{ legend_tmpl.legend(presentation) }}
+{{ disclaimers_tmpl.disclaimers(presentation) }}
 {% if papers|length > 0 -%}
 {% set core_papers = papers|selectattr('relevance_category', 'equalto', 'A')|list -%}
 {% set watch_papers = papers|selectattr('relevance_category', 'equalto', 'B')|list -%}
@@ -44,9 +44,9 @@
 </body>
 </html>
 {%- else -%}
-{{ sort_note_tmpl.sort_note() }}
-{{ legend_tmpl.legend() }}
-{{ disclaimers_tmpl.disclaimers() }}
+{{ sort_note_tmpl.sort_note(presentation) }}
+{{ legend_tmpl.legend(presentation) }}
+{{ disclaimers_tmpl.disclaimers(presentation) }}
 {% if papers|length > 0 -%}
 {% set core_papers = papers|selectattr('relevance_category', 'equalto', 'A')|list -%}
 {% set watch_papers = papers|selectattr('relevance_category', 'equalto', 'B')|list -%}

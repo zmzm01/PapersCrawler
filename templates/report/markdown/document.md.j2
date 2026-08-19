@@ -11,9 +11,9 @@
 {% import "markdown/legend.md.j2" as legend_tmpl %}
 {% import "markdown/sort_note.md.j2" as sort_note_tmpl %}
 {% import "markdown/disclaimers.md.j2" as disclaimers_tmpl %}
-{{ sort_note_tmpl.sort_note() }}{{ '\n\n' }}
-{{ legend_tmpl.legend() }}{{ '\n\n' }}
-{{ disclaimers_tmpl.disclaimers() }}{{ '\n\n' }}
+{{ sort_note_tmpl.sort_note(presentation) }}{{ '\n\n' }}
+{{ legend_tmpl.legend(presentation) }}{{ '\n\n' }}
+{{ disclaimers_tmpl.disclaimers(presentation) }}{{ '\n\n' }}
 {% if papers|length > 0 %}
 {% set core_papers = papers|selectattr('relevance_category', 'equalto', 'A')|list %}
 {% set watch_papers = papers|selectattr('relevance_category', 'equalto', 'B')|list %}
