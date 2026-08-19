@@ -126,9 +126,9 @@ skip_phases:
 通过环境变量控制级别：
 
 ```bash
-LOG_LEVEL=DEBUG python tools/schedule_daily.py
-LOG_LEVEL=INFO  python tools/schedule_daily.py  # 生产默认
-LOG_LEVEL=WARNING python tools/schedule_daily.py
+LOG_LEVEL=DEBUG python tools/run_pipeline.py --daily
+LOG_LEVEL=INFO  python tools/run_pipeline.py --daily  # 生产默认
+LOG_LEVEL=WARNING python tools/run_pipeline.py --daily
 ```
 
 ---
@@ -209,6 +209,32 @@ ls data/reports/auto/        # 自动日报 Markdown
 
 每天早上检查邮件，周日晚上查汇总报告；服务器时区应为 `Asia/Shanghai`。
 
+### ntfy 单条运行汇总
+
+`tools/run_pipeline.py` 在一次非 dry-run 自动运行结束时最多发送一条 ntfy 通知。通知包括运行状态、起止时间、总耗时、各阶段结果与耗时、Phase E/E3 相关性统计、Phase F 总结统计和有限错误摘要。
+
+通知使用 Markdown 请求头/内容类型和 Bearer token。正文采用 ntfy 官方支持的兼容子集：标题、粗体、行内代码、引用块、列表、emoji 和分隔线；**不使用 Markdown 表格**，因为 ntfy 的 Markdown 子集不支持表格。Web App 可渲染这些格式，部分移动端客户端可能仍按纯文本展示。正文保守限制在 3500 UTF-8 bytes；错误最多展示有限条，并移除 token、Bearer 值、URL 和本地路径。发送失败只写日志，不改变流水线结果。通知中不设置 `Click`、Dashboard 或任何公网链接。
+
+敏感配置放在 `.env`：
+
+```dotenv
+NTFY_BASE_URL=https://ntfy.sh
+NTFY_TOPIC=your_private_topic
+NTFY_TOKEN=tk_your_access_token
+```
+
+非敏感配置放在 `configs/settings.yaml`：
+
+```yaml
+ntfy:
+  enabled: true
+  timeout_seconds: 10
+  title: "PapersCrawler 运行汇总"
+  priority: default
+```
+
+`NTFY_TOPIC` 在公共 ntfy 服务上具有类似密码的作用，应保持难以猜测。`--dry-run` 不执行重置、不运行阶段，也不会发送通知。
+
 ### 3. 修改领域定义后重新筛选
 
 ```bash
@@ -247,7 +273,7 @@ python src/main.py
 也可通过 CLI：
 
 ```bash
-python tools/schedule_weekly.py     # 完整 G→H
+python tools/run_pipeline.py --weekly     # 完整 G→H
 ```
 
 ### 7. 修改报告模板/字段后预览
@@ -545,6 +571,37 @@ python tools/send_report.py --report report_20260726.md --dry-run
 **不提供一键重置全部**，防止误操作丢失数据。
 
 ### 报告生成
+
+### 导出公开报告（供 MySite 等静态站点使用）
+
+Phase G 自动报告会在 `data/reports/auto/` 旁生成同名的 `.public.json` sidecar。也可以将
+已有 sidecar 导出到站点工作区：
+
+```bash
+python tools/export_public_reports.py \
+  --out /path/to/MySite/.generated/reports
+```
+
+自动模式的 Phase G 在 sidecar 写入后会自动执行同等同步。目标目录默认为项目旁的
+`../MySite/.generated/reports`，也可通过环境变量 `PUBLIC_REPORT_EXPORT_DIR` 覆盖。公开导出失败
+只记录 warning，不会使 Markdown 报告或数据库标记回滚；手动命令仍可用于补导历史报告。
+
+默认读取 `data/reports/auto/report_*.public.json`，并写入：
+
+```text
+.generated/reports/papers/
+├── index.json
+└── papers-YYYYMMDD.json
+```
+
+导出器只接受 `source: "papers"` 且 ID 合法的 sidecar。它会保留 `content.papers` 中的
+论文顺序、A/B 相关性等级、摘要、LaTeX/Markdown 解读字段和 PDF/原文链接；如果历史 sidecar
+缺少 `abstract`、`pdfUrl` 或 `relevanceBasis`，会从 `--database` 指定的 SQLite 数据库补全。
+默认数据库为 `data/papers.db`。
+
+每个文件的 `schemaVersion` 当前为 `1`，顶层包括 `id`、`source`、`title`、`publishedAt`、
+`generatedAt`、`summary`、`tags` 和 `content.papers`。导出不会重新运行论文分析，也不会修改
+数据库；重新生成报告后再次运行导出命令即可同步站点。
 
 自动报告的 Markdown 头部引用块、决策摘要和 `# 文献报告` 必须由空行分隔。若转换日志提示「一级标题为 0」，先检查是否有引用块末行与标题粘连；模板中不要在这些边界使用 Jinja `-%}`。
 

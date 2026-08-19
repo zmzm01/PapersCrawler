@@ -32,8 +32,10 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **Publisher 爬虫**：cloakbrowser 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供只读监控与报告阅览
 - **报告双输出**：自动日报（邮件）+ 可由 CLI 工具生成的预览报告
+- **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
 - **报告解释页**：`report_YYYYMMDD_explained.html` 展示 LLM prompt 快照
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
+- **ntfy 单条运行汇总**：自动运行结束时汇总阶段耗时、E/E3 相关性、F 总结和错误；失败不阻塞流水线
 
 ## 快速开始
 
@@ -52,6 +54,8 @@ vim configs/keywords.yaml
 python tools/run_pipeline.py --all                  # 桌面环境
 xvfb-run -a python tools/run_pipeline.py --all      # 无头服务器（Phase C 需要 Xvfb）
 ```
+
+可选地在 `.env` 配置 ntfy topic/token，并在 `configs/settings.yaml` 开启最终汇总通知。每次自动运行只发送一条兼容 ntfy Markdown 子集的汇总；不会发送开始、逐阶段或即时错误通知，也不会添加 Dashboard 或其他公网链接。
 
 启动 Web UI（推荐日常使用）：
 
@@ -85,7 +89,7 @@ PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
 
 ## 部署
 
-典型 cron 部署（`run_daily.sh` + `run_weekly.sh` 包装）：
+典型 cron 部署（`run_daily.sh` + `run_weekly.sh` 包装；两个包装脚本内部统一调用 `tools/run_pipeline.py`）：
 
 ```cron
 # 每日 Phase A→F（发现 → LLM 总结）

@@ -4,6 +4,16 @@
 
 自动抓取领域核心期刊文章，筛选与组内工作相关的论文，生成结构化报告并推送。
 
+## 自动运行通知设计
+
+自动运行采用“单次最终汇总”模型：CLI 在流水线、自动重置和异常兜底完成后统一发布最多一条 ntfy Markdown 消息。运行过程中不发送开始通知、逐 Phase 通知或即时错误通知；通知正文不包含 Dashboard、Click action 或任何公网链接。
+
+`src/pipeline/runner.py` 返回 `PipelineRunResult`，每个 `PhaseRunResult` 记录阶段名称、`success` / `failed` / `skipped` 结果、耗时和异常摘要。初始化异常、阶段异常和统计异常均收集到同一结果中；阶段异常会继续执行后续阶段。`tools/run_pipeline.py` 的最外层 `try/finally` 负责最终通知，因此常规异常也能生成汇总。
+
+`DatabaseClient.get_run_metrics(run_started_at)` 以本次运行开始时间过滤状态日期，分别统计 Phase E 的 `relevance_screen_*`、Phase E3 的最终 `llm_relevance_*` 和 Phase F 的 `llm_summary_*`，避免把历史累计状态误报为本次结果。阶段耗时来自内存中的阶段结果，论文级错误摘要来自本次日期范围内的错误列。
+
+`src/processors/ntfy_notifier.py` 使用 `requests.post`、`Markdown: yes`、`Content-Type: text/markdown` 和可选 `Authorization: Bearer ...`。通知正文只使用 ntfy 官方 Markdown 子集（标题、强调、引用块、列表、行内代码、分隔线），不使用表格语法；表格不是 ntfy 支持的 Markdown 特性，且移动端客户端可能不渲染 Markdown。它对 UTF-8 正文做保守截断，并对错误信息脱敏。任何请求异常只记录日志并返回 `False`，不得影响数据库写入或流水线退出。
+
 # 项目结构
 
 ```
@@ -1144,9 +1154,9 @@ logging 配置，不再在模块 import 时被动初始化。
 
 | 文件 | 入口函数 | 用途 | Logger 配置 |
 |------|---------|------|------------|
-| `src/main.py` | `run_pipeline()` | CLI 全流程 (A→H) | `RotatingFileHandler` + `StreamHandler` |
-| `tools/schedule_daily.py` | `run_daily()` | Cron 每日 (A→F) | `RotatingFileHandler` + `StreamHandler` |
-| `tools/schedule_weekly.py` | `run_weekly()` | Cron 每周 (G→H) | `RotatingFileHandler` + `StreamHandler` |
+| `tools/run_pipeline.py` | `run_daily()` / `run_weekly()` / `run_pipeline()` | 推荐 CLI 与 Cron 入口：每日 (A→F)、每周 (G→H)、全流程 (A→H) | `RotatingFileHandler` + `StreamHandler`；最终统一发送 ntfy 汇总 |
+| `run_daily.sh` / `run_weekly.sh` | 调用 `tools/run_pipeline.py` | Cron 包装：daily 使用 `--daily`，weekly 使用 `--weekly`；weekly 随后部署 Hugo | shell + 全路径 Conda Python |
+| `src/main.py` / `tools/schedule_daily.py` / `tools/schedule_weekly.py` | 兼容旧调用 | 已弃用，不应作为生产 Cron 入口 | 各自保留历史 logging 行为 |
 
 ### 日志轮转
 
@@ -1162,16 +1172,16 @@ logging 配置，不再在模块 import 时被动初始化。
 LOG_LEVEL=INFO python src/main.py
 ```
 
-### 自动重置（schedule_daily.py 入口）
+### 自动重置（统一入口）
 
-`tools/schedule_daily.py` 在调用 `run_daily()` 前自动重置失败状态为 `pending`：
+`tools/run_pipeline.py --daily` 在调用 `run_daily()` 前自动重置失败状态为 `pending`：
 - `publisher_page_fetched_status = 'failed'`（Cloudflare 瞬态拦截等偶发失败）
 - `mineru_parse_status IN ('failed', 'skipped')`
 - `llm_relevance_status = 'failed'`（如 LLM API 临时降级导致的判断失败）
 
 使偶发失败的论文在每次每日运行时自动获得重试机会。
 仅重置 `failed` 状态，不触碰 `skipped`（`skipped` 通常表示合法的非论文/无摘要条目）。
-`tools/run_pipeline.py` 使用同一逻辑，可通过 `--no-reset-*` 逐项关闭。
+旧的 `tools/schedule_daily.py` 仍保留同样逻辑以兼容历史调用；生产 Cron 应使用统一入口，可通过 `--no-reset-*` 逐项关闭。
 
 ## 18. 配置持有对象（CFG）
 
@@ -1558,7 +1568,7 @@ python src/processors/md_to_pdf_katex.py data/reports/auto/report_YYYYMMDD.md
 
 ```
 run_weekly.sh
-  ├── python tools/schedule_weekly.py          # Phase G + H
+  ├── python tools/run_pipeline.py --weekly   # Phase G + H
   └── python tools/convert_reports_to_hugo.py --all --hugo --deploy
                          ↓
   ├── site/content/reports/report_*.md          # 复制报告 + 加 front matter
@@ -1757,6 +1767,37 @@ Config 页面均已删除。运行、配置修改和邮件模板选择应通过 
 `DATA_DIR/email_template_override.txt` 完成。历史实施过程保留在 `docs/tasks.md`。
 
 ## 两阶段相关性与全文下载安全
+
+## 公开报告导出协议
+
+公开报告由 Phase G 生成的 Markdown 报告和 `.public.json` sidecar 组成。sidecar 是站点消费
+用的稳定快照，不替代 Markdown/HTML 主报告：
+
+- `src/processors/public_report.py` 负责从 Phase G payload 生成 `schemaVersion = 1` 的 JSON。
+- `tools/export_public_reports.py` 将 `data/reports/auto/report_*.public.json` 复制到目标目录的
+  `papers/` 子目录，并生成 `papers/index.json`。
+- 公共条目保留 `rank`、`relevanceCategory`、`relevanceReason`、`abstract`、`oneSentence`、
+  `sections`、`pdfUrl` 和 `pageUrl`；`sections` 的 Markdown/LaTeX 文本由站点负责渲染。
+- 对历史 sidecar，导出器可通过 `--database` 从 SQLite 补全 `abstract`、`pdfUrl` 和
+  `relevanceBasis`，不会重新调用 LLM 或修改数据库。
+- 站点只应依赖 `index.json` 和导出的 JSON，不应直接读取 PapersCrawler 内部数据库表。
+- 自动模式的 Phase G 在写入 sidecar 后调用同一导出函数；目标目录由
+  `PUBLIC_REPORT_EXPORT_DIR` 覆盖，失败采用 fail-soft，不影响主报告。
+
+报告头部说明和子领域展示名由 `src/processors/report_presentation.py` 统一提供，
+Markdown/HTML 的 Jinja2 模板与公开 JSON 共用同一份结构化数据。JSON 的
+`content.header` 包含 `sortNote`、`relevanceLegend`、`disclaimers` 和
+`decisionSummary`；论文条目同时保留 `subfields` 稳定 key 与 `subfieldLabels`
+展示名称。MySite 的 `/paperscrawler/` 归档页读取 `content.header`，具体报告页只展示论文内容。
+
+典型同步命令：
+
+```bash
+python tools/export_public_reports.py \
+  --out /path/to/MySite/.generated/reports
+```
+
+报告重新生成后必须重新执行导出；导出目录可以安全地整体纳入静态站点的生成输入。
 
 Phase E 只用标题和摘要做高召回筛选，结果写入 `relevance_screen_*`。只有 A/B/C 和低置信度 D 进入 E2；高/中置信度 D 直接写入最终 D。E2 在 `fulltext_download_events` 中用 `BEGIN IMMEDIATE` 原子占位，按 Asia/Shanghai 自然日限制总尝试 3 篇、单 publisher 2 篇，失败也占额。同一 DOI 当天只能占位一次；队列按新论文优先、A→B→C→low-D 排序，历史回填仅使用剩余额度。
 
