@@ -1384,6 +1384,87 @@ class DatabaseClient:
         cur = self.conn.execute("SELECT * FROM papers ORDER BY created_date DESC")
         return cur.fetchall()
 
+    def get_run_metrics(self, run_started_at):
+        """Collect status metrics changed during one pipeline run.
+
+        Parameters
+        ----------
+        run_started_at : datetime or str
+            Lower bound for the phase status timestamps. The phase modules
+            persist local ``datetime.now()`` strings, so the comparison is
+            intentionally made against the same lexically sortable format.
+
+        Returns
+        -------
+        dict
+            Counts for E screening, E3 final relevance, F summaries, and a
+            bounded list of database error samples from this run.
+        """
+        started_text = str(run_started_at)
+
+        def collect(status_column, date_column, category_column=None):
+            rows = self.conn.execute(
+                f"SELECT COALESCE({status_column}, 'pending') AS status, "
+                f"COUNT(*) AS count FROM papers "
+                f"WHERE {date_column} >= ? GROUP BY status",
+                (started_text,),
+            ).fetchall()
+            status_counts = {
+                "success": 0, "failed": 0, "skipped": 0, "pending": 0,
+            }
+            for row in rows:
+                status_counts[row["status"]] = row["count"]
+
+            category_counts = {category: 0 for category in ("A", "B", "C", "D")}
+            if category_column:
+                category_rows = self.conn.execute(
+                    f"SELECT {category_column} AS category, COUNT(*) AS count "
+                    f"FROM papers WHERE {date_column} >= ? "
+                    f"AND {status_column} IN ('success', 'skipped') "
+                    f"AND {category_column} IN ('A', 'B', 'C', 'D') "
+                    f"GROUP BY {category_column}",
+                    (started_text,),
+                ).fetchall()
+                for row in category_rows:
+                    category_counts[row["category"]] = row["count"]
+            return {
+                "status_counts": status_counts,
+                "category_counts": category_counts,
+            }
+
+        metrics = {
+            "relevance_screen": collect(
+                "relevance_screen_status", "relevance_screen_date",
+                "relevance_screen_category",
+            ),
+            "final_relevance": collect(
+                "llm_relevance_status", "llm_relevance_date",
+                "llm_relevance_category",
+            ),
+            "summary": collect("llm_summary_status", "llm_summary_date"),
+        }
+
+        error_columns = [
+            ("B", "cr_metadata_fetched_error", "cr_metadata_fetched_date"),
+            ("C", "publisher_page_fetched_error", "publisher_page_fetched_date"),
+            ("E", "relevance_screen_error", "relevance_screen_date"),
+            ("E2", "mineru_parse_error", "mineru_parse_date"),
+            ("E3", "llm_relevance_error", "llm_relevance_date"),
+            ("F", "llm_summary_error", "llm_summary_date"),
+        ]
+        error_samples = []
+        for stage, error_column, date_column in error_columns:
+            rows = self.conn.execute(
+                f"SELECT {error_column} AS error FROM papers "
+                f"WHERE {date_column} >= ? AND {error_column} IS NOT NULL "
+                f"AND {error_column} != '' ORDER BY {date_column} LIMIT 20",
+                (started_text,),
+            ).fetchall()
+            for row in rows:
+                error_samples.append({"stage": stage, "message": row["error"]})
+        metrics["error_samples"] = error_samples
+        return metrics
+
     # ── Phase stats (用于 WebUI Pipeline 看板) ────────────────────────────
 
     def get_phase_stats(self):

@@ -5,6 +5,8 @@ Provides run_pipeline() for full execution and run_phases() for selective runs.
 """
 
 import logging
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 
 from config import (
     CFG, load_publishers, load_keywords,
@@ -12,6 +14,62 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PhaseRunResult:
+    """Outcome and elapsed time for one pipeline phase."""
+
+    name: str
+    status: str
+    duration_seconds: float
+    error: str | None = None
+
+    def as_dict(self) -> dict:
+        """Return a JSON-serializable representation."""
+        return asdict(self)
+
+
+@dataclass
+class PipelineRunResult:
+    """Complete outcome of one pipeline invocation."""
+
+    mode: str
+    started_at: datetime
+    finished_at: datetime
+    phase_results: list[PhaseRunResult] = field(default_factory=list)
+    metrics: dict = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        """Return success, partial, or failed based on recorded outcomes."""
+        if not self.phase_results and self.errors:
+            return "failed"
+        failed = self.errors or [
+            phase.error for phase in self.phase_results
+            if phase.status == "failed" and phase.error
+        ]
+        if not failed:
+            return "success"
+        if any(phase.status == "success" for phase in self.phase_results):
+            return "partial"
+        return "failed"
+
+    @classmethod
+    def failed_run(cls, mode: str, error: object) -> "PipelineRunResult":
+        """Create a result for an exception outside the runner."""
+        now = datetime.now()
+        return cls(mode=mode, started_at=now, finished_at=now,
+                   errors=[str(error)])
+
+    def as_dict(self) -> dict:
+        """Return a JSON-serializable representation."""
+        data = asdict(self)
+        data["status"] = self.status
+        data["started_at"] = self.started_at.isoformat()
+        data["finished_at"] = self.finished_at.isoformat()
+        return data
 
 
 # Phase short key → CFG attribute mapping used for effective-skip resolution.
@@ -36,7 +94,7 @@ from pipeline.phase_g import phase_g_report
 from pipeline.phase_h import phase_h_email
 
 
-def run_phases(phase_list=None, force=False):
+def run_phases(phase_list=None, force=False, mode="custom"):
     """Run selected phases of the pipeline.
 
     Parameters
@@ -46,52 +104,99 @@ def run_phases(phase_list=None, force=False):
         If None, runs all non-skipped phases.
     force : bool, optional
         If True, run every phase regardless of SKIP_PHASE_* settings.
+    mode : str, optional
+        Human-readable invocation mode included in the final summary.
     """
-    publishers = load_publishers()
-    keywords = load_keywords()
-    logger.info(f"Loaded {len(publishers)} publishers")
-    logger.info(f"Scope definition: {len(keywords.get('scope_definition', {}))} sub-domains")
+    started_at = datetime.now()
+    result = PipelineRunResult(mode=mode, started_at=started_at,
+                               finished_at=started_at)
+    db = None
+    try:
+        publishers = load_publishers()
+        keywords = load_keywords()
+        logger.info("Loaded %d publishers", len(publishers))
+        logger.info("Scope definition: %d sub-domains",
+                    len(keywords.get("scope_definition", {})))
 
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    AUTO_REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    USER_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        AUTO_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        USER_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-    db = DatabaseClient(DB_PATH)
-    db.init_db_papers()
-    logger.info(f"Database ready: {DB_PATH}")
+        db = DatabaseClient(DB_PATH)
+        db.init_db_papers()
+        logger.info("Database ready: %s", DB_PATH)
 
-    effective_skip = {key: getattr(CFG, _PHASE_KEY_MAP[key]) for key in _PHASE_KEY_MAP}
-    phase_map = {
-        "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A-RSS"]),
-        "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A-CR"]),
-        "B": (phase_b_crossref, [db], not effective_skip["B"]),
-        "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
-        "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
-        "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
-        "E3": (phase_e3_fulltext_relevance, [db], not effective_skip["E3"]),
-        "F": (phase_f_llm_summary, [db], not effective_skip["F"]),
-        "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], not effective_skip["G"]),
-        "H": (phase_h_email, [db, AUTO_REPORT_DIR], not effective_skip["H"]),
-    }
+        effective_skip = {
+            key: getattr(CFG, _PHASE_KEY_MAP[key]) for key in _PHASE_KEY_MAP
+        }
+        phase_map = {
+            "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A-RSS"]),
+            "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A-CR"]),
+            "B": (phase_b_crossref, [db], not effective_skip["B"]),
+            "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
+            "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
+            "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
+            "E3": (phase_e3_fulltext_relevance, [db], not effective_skip["E3"]),
+            "F": (phase_f_llm_summary, [db], not effective_skip["F"]),
+            "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], not effective_skip["G"]),
+            "H": (phase_h_email, [db, AUTO_REPORT_DIR], not effective_skip["H"]),
+        }
 
-    if phase_list is None:
-        if force:
-            phase_list = list(phase_map.keys())
-        else:
-            phase_list = [k for k, (_, _, enabled) in phase_map.items() if enabled]
+        if phase_list is None:
+            if force:
+                phase_list = list(phase_map.keys())
+            else:
+                phase_list = [k for k, (_, _, enabled) in phase_map.items() if enabled]
 
-    for key in phase_list:
-        func, args, enabled = phase_map[key]
-        if not enabled:
-            logger.info(f"Phase {key}: skipped by config/override")
-            continue
+        for key in phase_list:
+            phase_started = datetime.now()
+            if key not in phase_map:
+                error = f"Unknown phase: {key}"
+                result.phase_results.append(PhaseRunResult(
+                    key, "failed", 0.0, error,
+                ))
+                result.errors.append(error)
+                continue
+            func, args, enabled = phase_map[key]
+            if not enabled:
+                logger.info("Phase %s: skipped by config/override", key)
+                result.phase_results.append(PhaseRunResult(
+                    key, "skipped", 0.0, "disabled by configuration",
+                ))
+                continue
+            try:
+                func(*args)
+            except Exception as error:
+                logger.error("Phase %s crashed — continuing to next phase", key,
+                             exc_info=True)
+                result.phase_results.append(PhaseRunResult(
+                    key, "failed", (datetime.now() - phase_started).total_seconds(),
+                    str(error),
+                ))
+                result.errors.append(f"Phase {key}: {error}")
+            else:
+                result.phase_results.append(PhaseRunResult(
+                    key, "success", (datetime.now() - phase_started).total_seconds(),
+                ))
+
         try:
-            func(*args)
-        except Exception:
-            logger.error(f"Phase {key} crashed — continuing to next phase",
-                         exc_info=True)
-
-    logger.info("Pipeline finished")
+            result.metrics = db.get_run_metrics(started_at)
+        except Exception as error:
+            logger.error("Could not collect run metrics", exc_info=True)
+            result.errors.append(f"统计: {error}")
+    except Exception as error:
+        logger.error("Pipeline setup crashed", exc_info=True)
+        result.errors.append(f"初始化: {error}")
+        result.phase_results.append(PhaseRunResult(
+            "初始化", "failed", (datetime.now() - started_at).total_seconds(),
+            str(error),
+        ))
+    finally:
+        if db is not None:
+            db.close()
+        result.finished_at = datetime.now()
+    logger.info("Pipeline finished with status: %s", result.status)
+    return result
 
  
 def run_pipeline(force=False, run_all=False):
@@ -104,7 +209,7 @@ def run_pipeline(force=False, run_all=False):
     run_all : bool, optional
         If True, run ALL phases regardless of SKIP_PHASE_* config.
     """
-    run_phases(force=force or run_all)
+    return run_phases(force=force or run_all, mode="all")
 
 
 # ── 便捷方法：每日/每周调度 ─────────────────────────────────────────
@@ -124,7 +229,7 @@ def run_daily():
         # 每天 2:00
         0 2 * * * cd /path/to/PapersCrawler && python tools/schedule_daily.py
     """
-    run_phases(phase_list=DAILY_PHASES)
+    return run_phases(phase_list=DAILY_PHASES, mode="daily")
 
 
 def run_weekly():
@@ -138,7 +243,7 @@ def run_weekly():
         # 每周日 20:00（Asia/Shanghai）
         0 20 * * 7 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
     """
-    run_phases(phase_list=WEEKLY_PHASES)
+    return run_phases(phase_list=WEEKLY_PHASES, mode="weekly")
 
 
 if __name__ == "__main__":

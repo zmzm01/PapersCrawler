@@ -71,6 +71,9 @@ USER_REPORT_DIR = DATA_DIR / "reports" / "user"  # 用户自选报告目录 (Web
 EMAIL_TEMPLATE_DIR = BASE_DIR / "templates" / "email"
 # 报告模板目录（Markdown/HTML，paper_report_generator.py 加载）
 REPORT_TEMPLATE_DIR = BASE_DIR / "templates" / "report"
+PUBLIC_EXPORT_DIR = Path(
+    os.getenv("PUBLIC_REPORT_EXPORT_DIR", str(BASE_DIR.parent / "MySite" / ".generated" / "reports"))
+)
 MINERU_OUTPUT_DIR = DATA_DIR / "mineru_output"   # MinerU PDF 解析输出目录
 
 # Web UI journal enable/disable 覆写文件
@@ -150,6 +153,17 @@ CFG.CROSSREF_MAILTO = os.getenv("CROSSREF_MAILTO", "your_email@example.com")
 
 # ---------- MinerU ----------
 CFG.MINERU_TOKEN = os.getenv("MINERU_TOKEN", "")
+
+# ---------- ntfy final run summary ----------
+# The endpoint, topic, and token remain environment-only. The topic acts like
+# a password on public ntfy servers and must not be placed in YAML.
+CFG.NTFY_BASE_URL = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
+CFG.NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+CFG.NTFY_TOKEN = os.getenv("NTFY_TOKEN", "")
+CFG.NTFY_ENABLED = False
+CFG.NTFY_TIMEOUT = 10
+CFG.NTFY_TITLE = "PapersCrawler 运行汇总"
+CFG.NTFY_PRIORITY = "default"
 
 # ---------- OpenAI-compatible LLM API ----------
 CFG.LLM_BASE_URL = "https://api.deepseek.com"
@@ -354,6 +368,13 @@ def _apply_settings(settings):
     CFG.SKIP_PHASE_F = skip.get("F", CFG.SKIP_PHASE_F)
     CFG.SKIP_PHASE_G = skip.get("G", CFG.SKIP_PHASE_G)
     CFG.SKIP_PHASE_H = skip.get("H", CFG.SKIP_PHASE_H)
+
+    # ntfy only publishes the one final summary assembled by the CLI.
+    ntfy_cfg = settings.get("ntfy", {})
+    CFG.NTFY_ENABLED = bool(ntfy_cfg.get("enabled", CFG.NTFY_ENABLED))
+    CFG.NTFY_TIMEOUT = ntfy_cfg.get("timeout_seconds", CFG.NTFY_TIMEOUT)
+    CFG.NTFY_TITLE = str(ntfy_cfg.get("title", CFG.NTFY_TITLE))
+    CFG.NTFY_PRIORITY = str(ntfy_cfg.get("priority", CFG.NTFY_PRIORITY))
 
     # 流水线参数
     pp = settings.get("pipeline", {})
