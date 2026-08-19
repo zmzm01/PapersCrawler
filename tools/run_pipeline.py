@@ -54,6 +54,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config import CFG, LOG_FILE_PATH, DATA_DIR, DB_PATH, _check_mineru_token  # noqa: E402
 from db.database import DatabaseClient  # noqa: E402
 from pipeline.runner import (  # noqa: E402
+    PipelineRunResult,
     run_daily,
     run_weekly,
     run_pipeline,
@@ -61,6 +62,10 @@ from pipeline.runner import (  # noqa: E402
     DAILY_PHASES,
     WEEKLY_PHASES,
     _PHASE_KEY_MAP,
+)
+from processors.ntfy_notifier import (  # noqa: E402
+    NtfyNotifier,
+    format_pipeline_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -277,6 +282,27 @@ def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru, reset_rel
     )
 
 
+def _send_final_notification(result: PipelineRunResult) -> None:
+    """Send exactly one final Markdown summary when ntfy is enabled."""
+    if not CFG.NTFY_ENABLED:
+        logger.debug("ntfy final summary is disabled")
+        return
+    if not isinstance(result, PipelineRunResult):
+        logger.warning("Skipping ntfy summary: pipeline returned no run result")
+        return
+    notifier = NtfyNotifier(
+        enabled=CFG.NTFY_ENABLED,
+        base_url=CFG.NTFY_BASE_URL,
+        topic=CFG.NTFY_TOPIC,
+        token=CFG.NTFY_TOKEN,
+        timeout=CFG.NTFY_TIMEOUT,
+        title=CFG.NTFY_TITLE,
+        priority=CFG.NTFY_PRIORITY,
+    )
+    message = format_pipeline_summary(result, token=CFG.NTFY_TOKEN)
+    notifier.send(message)
+
+
 def main(argv=None) -> None:
     """CLI 入口：解析参数并执行对应的流水线操作。
 
@@ -335,21 +361,40 @@ def main(argv=None) -> None:
         logger.info("Dry-run mode — no changes were made")
         return
 
-    # 自动重置
-    _run_auto_reset(args.reset_publisher, args.reset_mineru, args.reset_relevance, dry_run=False)
+    result = None
+    try:
+        # 自动重置
+        _run_auto_reset(
+            args.reset_publisher, args.reset_mineru, args.reset_relevance,
+            dry_run=False,
+        )
 
-    # 实际运行
-    if args.daily:
-        run_daily()
-    elif args.weekly:
-        run_weekly()
-    elif args.all:
-        run_pipeline(force=True)
-    elif args.phases is not None:
-        run_phases(phase_list=phase_list, force=False)
-    else:
-        # 默认：全流程强制
-        run_pipeline(force=True)
+        # 实际运行
+        if args.daily:
+            result = run_daily()
+        elif args.weekly:
+            result = run_weekly()
+        elif args.all:
+            result = run_pipeline(force=True)
+        elif args.phases is not None:
+            result = run_phases(phase_list=phase_list, force=False)
+        else:
+            # 默认：全流程强制
+            result = run_pipeline(force=True)
+    except Exception as error:
+        logger.error("Pipeline entrypoint crashed", exc_info=True)
+        if args.daily:
+            mode = "daily"
+        elif args.weekly:
+            mode = "weekly"
+        else:
+            mode = "custom"
+        result = PipelineRunResult.failed_run(mode, error)
+    finally:
+        # A notifier outage is contained by NtfyNotifier. This is the only
+        # notification call in the automatic execution path.
+        if result is not None:
+            _send_final_notification(result)
 
 
 if __name__ == "__main__":

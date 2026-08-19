@@ -139,6 +139,14 @@ def test_run_pipeline_dry_run_all_does_not_call_run_pipeline():
             mock_run_phases.assert_not_called()
 
 
+def test_run_pipeline_dry_run_does_not_send_ntfy():
+    """Dry-run must not publish a final ntfy notification."""
+    with patch("tools.run_pipeline._send_final_notification") as mock_notify:
+        import tools.run_pipeline
+        tools.run_pipeline.main(["--daily", "--dry-run"])
+        mock_notify.assert_not_called()
+
+
 def test_run_pipeline_reset_relevance_flagged_off():
     """--no-reset-relevance 应使 _run_auto_reset 收到 reset_relevance=False."""
     with patch("tools.run_pipeline.run_phases") as mock_run_phases:
