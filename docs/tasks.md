@@ -1,5 +1,11 @@
 > 此文档记录执行步骤、关键决策和经验教训。是精炼的上下文。
 
+## 2026-08-18：Cron 包装脚本切换统一流水线入口
+
+- 将 `run_daily.sh` 从 `tools/schedule_daily.py` 切换为 `tools/run_pipeline.py --daily`。
+- 将 `run_weekly.sh` 从 `tools/schedule_weekly.py` 切换为 `tools/run_pipeline.py --weekly`；weekly 后续 Hugo 部署步骤保持不变。
+- 原入口继续保留用于向后兼容，但不再由生产 shell/Cron 调用；统一入口负责最终 ntfy 单条运行汇总。
+
 ## 2026-08-16：周报 Markdown 结构与解释页日期修复
 
 - 根因：`templates/report/markdown/document.md.j2` 在相邻引用块、决策摘要循环和 `# 文献报告` 边界使用 Jinja `-%}`，配合 `trim_blocks=True` 吞掉必要换行，导致多条条目和一级标题粘连，Hugo 转换器因此报告一级标题为 0。
@@ -2366,3 +2372,30 @@ tools/schedule_weekly.py                 |  28 +++---
 - **模块级副作用 = 隐藏 bug**：`schedule_weekly.py` (#7) 与早期 `config.py` 的 `_check_mineru_token()` 同根——**任何 `tools/*.py` 入口脚本**都应在 `if __name__ == "__main__":` 块内执行 I/O / logging
 - **线程安全是契约问题，不是类型问题**：`phase_e.py` (#11) 的注释是给未来维护者的提示，比加锁更实际
 - **copy-on-write 优于 in-place mutation**：`generate_report()` (#12) 修了一个易被忽视的接口污染，调用方再无需担心传入 list 被改写
+
+## 2026-08-18 — ntfy 单条 Markdown 运行汇总
+
+### 2026-08-19 — ntfy 通知改用兼容 Markdown 布局
+
+- **问题**：ntfy 请求虽已设置 `Markdown: yes` 和 `Content-Type: text/markdown`，但 ntfy 官方 Markdown 子集不支持表格，原有 `| ... |` 内容不会渲染成表格。
+- **调整**：阶段汇总改为 emoji + 粗体标签 + 行内代码 + 列表；运行元信息改为引用块；各区块用标题和水平线分隔，保留单条通知、错误脱敏、3500 UTF-8 bytes 限制和无公网链接约束。
+- **兼容性**：不再依赖表格；文档注明 ntfy Web App 的 Markdown 支持范围，以及部分移动端客户端可能按纯文本展示。
+
+### 需求与决策
+
+- 自动运行每次只发送一条最终汇总，不发送开始、逐 Phase 或即时错误通知。
+- 汇总包含运行状态、阶段结果与耗时、Phase E 初筛、Phase E3 正文终审、Phase F 总结和本次错误摘要。
+- 不添加 Dashboard、Click action 或任何公网链接；dry-run 不发送。
+
+### 实现
+
+- 新增 `src/processors/ntfy_notifier.py`，使用 requests、Markdown header/Content-Type 和 Bearer token；失败只记录日志。
+- `run_phases()` 返回 `PipelineRunResult`，阶段异常隔离并继续后续阶段；CLI 最外层兜底生成最终结果。
+- 新增 `DatabaseClient.get_run_metrics()`，按本次运行开始时间过滤 E/E3/F 的状态日期，避免混入历史累计数据。
+- `.env.example` 保存 ntfy endpoint/topic/token；`settings.yaml.example` 保存启用开关、标题、优先级和超时。
+- 通知正文保守限制为 3500 UTF-8 bytes，错误摘要限量并移除 token、Bearer 值、URL 和本地路径。
+
+### 验收记录
+
+- `python3 -m compileall -q src tools` 通过。
+- 当前父环境缺少 `python-dotenv`，未运行全量 pytest；新增离线测试覆盖请求头、发送失败隔离、脱敏截断、单次运行统计。
