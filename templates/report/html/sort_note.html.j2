@@ -4,8 +4,9 @@
    报告头部的「报告排序」说明（HTML blockquote 形式）。
    视觉样式由 html/style.css 中的 blockquote.sort-note 块控制。
    ========================================================================== #}
-{% macro sort_note() -%}
+{% macro sort_note(presentation=None) -%}
+{% set presentation = presentation or build_report_presentation() -%}
   <blockquote class="sort-note">
-    <p><strong>报告排序：</strong>按相关性等级 A → B → C → D 排列，同等级内按日期倒序（最新在前）。</p>
+    <p><strong>报告排序：</strong>{{ presentation.sortNote }}</p>
   </blockquote>
 {%- endmacro %}

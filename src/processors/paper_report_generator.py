@@ -43,6 +43,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from config import REPORT_TEMPLATE_DIR
+from processors.report_presentation import build_report_presentation
 
 
 # 多领域报告分组（当前未使用，保留供后续扩展）
@@ -398,6 +399,7 @@ def _get_template_env() -> Environment:
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    _template_env_cache.globals["build_report_presentation"] = build_report_presentation
     return _template_env_cache
 
 
@@ -571,7 +573,7 @@ def _relevance_legend_md() -> str:
     """
     env = _get_template_env()
     template = env.get_template('markdown/legend.md.j2')
-    return template.module.legend()
+    return template.module.legend(build_report_presentation())
 
 
 def _relevance_legend_html() -> str:
@@ -588,7 +590,7 @@ def _relevance_legend_html() -> str:
     """
     env = _get_template_env()
     template = env.get_template('html/legend.html.j2')
-    return template.module.legend()
+    return template.module.legend(build_report_presentation())
 
 
 # ======================================================================
@@ -639,7 +641,8 @@ def _sort_papers(papers: List[Dict]) -> List[Dict]:
 
 def generate_markdown(papers: Union[Dict, List[Dict]], toc: bool = False,
                       results_heading_base: int = 4,
-                      scope_definition: Optional[Dict] = None) -> str:
+                      scope_definition: Optional[Dict] = None,
+                      presentation: Optional[Dict] = None) -> str:
     """生成 Markdown 格式的报告。
 
     渲染 ``templates/report/markdown/document.md.j2``，模板负责：
@@ -671,7 +674,8 @@ def generate_markdown(papers: Union[Dict, List[Dict]], toc: bool = False,
     ]
     env = _get_template_env()
     template = env.get_template('markdown/document.md.j2')
-    return template.render(papers=payloads, toc=toc)
+    presentation = presentation or build_report_presentation(scope_definition, papers)
+    return template.render(papers=payloads, toc=toc, presentation=presentation)
 
 
 # ======================================================================
@@ -680,7 +684,8 @@ def generate_markdown(papers: Union[Dict, List[Dict]], toc: bool = False,
 
 
 def generate_html(papers: Union[Dict, List[Dict]], full_document: bool = True,
-                  scope_definition: Optional[Dict] = None) -> str:
+                  scope_definition: Optional[Dict] = None,
+                  presentation: Optional[Dict] = None) -> str:
     """生成 HTML 格式的报告。
 
     渲染 ``templates/report/html/document.html.j2``：
@@ -710,8 +715,9 @@ def generate_html(papers: Union[Dict, List[Dict]], full_document: bool = True,
     style_css = _load_style_css() if full_document else ""
     env = _get_template_env()
     template = env.get_template('html/document.html.j2')
+    presentation = presentation or build_report_presentation(scope_definition, papers)
     return template.render(papers=payloads, full_document=full_document,
-                           style_css=style_css)
+                           style_css=style_css, presentation=presentation)
 
 
 # ======================================================================
@@ -722,7 +728,8 @@ def generate_html(papers: Union[Dict, List[Dict]], full_document: bool = True,
 def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
                     toc: bool = False, full_html: bool = True,
                     results_heading_base: int = 4,
-                    scope_definition: Optional[Dict] = None) -> str:
+                    scope_definition: Optional[Dict] = None,
+                    presentation: Optional[Dict] = None) -> str:
     """统一的报告生成接口。
 
     根据 ``format`` 参数自动路由到 Markdown 或 HTML 生成函数。
@@ -749,11 +756,13 @@ def generate_report(papers: Union[Dict, List[Dict]], format: str = 'markdown',
             papers, toc=toc,
             results_heading_base=results_heading_base,
             scope_definition=scope_definition,
+            presentation=presentation,
         )
     elif fmt == 'html':
         return generate_html(
             papers, full_document=full_html,
             scope_definition=scope_definition,
+            presentation=presentation,
         )
     else:
         raise ValueError(f"不支持的格式: {format}，可选 'markdown' 或 'html'")
