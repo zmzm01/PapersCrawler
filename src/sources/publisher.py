@@ -136,6 +136,9 @@ class BasePublisherScraper:
         self.user_data_dir = user_data_dir
         self.context = None
         self.page = None
+        # Keep the latest HTML available even when navigation fails before
+        # ``fetch_page`` can capture page.content().
+        self.html = ""
 
     def start_browser(self, proxy=None):
         """启动 Chromium 浏览器（通过 cloakbrowser）。
@@ -534,7 +537,7 @@ class BasePublisherScraper:
         """
         # 优先使用 self.html（fetch_page 设置的、与 parse_page 解析的同一份），
         # 保证在线/离线模式下保存的内容一致；浏览器存在时兜底读取 page.content()。
-        html = self.html or (
+        html = getattr(self, "html", "") or (
             self.page.content() if self.page is not None else ""
         )
         with open(path, "w", encoding="utf-8") as f:
@@ -563,7 +566,7 @@ class BasePublisherScraper:
         error_dir.mkdir(parents=True, exist_ok=True)
         save_path = error_dir / filename
         try:
-            html = self.html or (
+            html = getattr(self, "html", "") or (
                 self.page.content() if self.page is not None else ""
             )
             save_path.write_text(html, encoding="utf-8")
