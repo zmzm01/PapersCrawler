@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from common import clean_extracted_text
 from processors.report_presentation import build_report_presentation
+from processors.summary_schema import SUMMARY_SCHEMA_VERSION, normalize_summary
+
+PUBLIC_REPORT_SCHEMA_VERSION = 2
 
 
 def report_id(report_date: str) -> str:
@@ -31,6 +35,8 @@ def build_public_report(
     report_date: str,
     scope_definition: dict[str, dict[str, Any]] | None = None,
     presentation: dict[str, Any] | None = None,
+    report_identifier: str | None = None,
+    scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a public-safe, versioned report payload.
 
@@ -44,6 +50,11 @@ def build_public_report(
         Configured subfield definitions used for display labels.
     presentation : dict, optional
         Precomputed shared presentation metadata.
+    report_identifier : str, optional
+        Explicit public ID. Defaults to the date-based ID used by automatic
+        reports.
+    scope : dict, optional
+        Structured description of the report selection.
 
     Returns
     -------
@@ -61,6 +72,14 @@ def build_public_report(
     labels = presentation.get("subfieldLabels", {})
     items = []
     for index, paper in enumerate(ordered, start=1):
+        summary = normalize_summary(paper.get("summary", {
+            "one_sentence": paper.get("one_sentence"),
+            "motivation_and_goal": paper.get("motivation_and_goal"),
+            "key_setup_and_method": paper.get("key_setup_and_method"),
+            "main_results_and_physics": paper.get("main_results_and_physics"),
+            "limitations": paper.get("limitations"),
+            "take_home_message": paper.get("take_home_message"),
+        }))
         items.append({
             "rank": index,
             "title": paper.get("title") or "",
@@ -75,26 +94,32 @@ def build_public_report(
             "subfieldLabels": [labels.get(field, field) for field in paper.get("matched_subdomains") or []],
             "relevanceReason": paper.get("relevance_reason") or "",
             "relevanceBasis": paper.get("relevance_basis") or "",
-            "abstract": paper.get("abstract") or "",
-            "oneSentence": paper.get("one_sentence") or "",
+            "abstract": clean_extracted_text(paper.get("abstract")) or "",
+            "oneSentence": summary["one_sentence"],
+            # ``summary`` is the canonical machine-readable analysis. Keep
+            # the legacy ``sections`` projection for existing site consumers.
+            "summary": summary,
             "sections": {
-                "motivation": paper.get("motivation_and_goal") or "",
-                "method": paper.get("key_setup_and_method") or "",
-                "results": paper.get("main_results_and_physics") or "",
-                "takeaway": paper.get("take_home_message") or "",
+                "motivation": summary["motivation_and_goal"],
+                "method": summary["key_setup_and_method"],
+                "results": summary["main_results_and_physics"],
+                "limitations": summary["limitations"],
+                "takeaway": summary["take_home_message"],
             },
         })
     core = sum(item["relevanceCategory"] == "A" for item in items)
     watch = sum(item["relevanceCategory"] == "B" for item in items)
     return {
-        "schemaVersion": 1,
-        "id": report_id(report_date),
+        "schemaVersion": PUBLIC_REPORT_SCHEMA_VERSION,
+        "summarySchemaVersion": SUMMARY_SCHEMA_VERSION,
+        "id": report_identifier or report_id(report_date),
         "source": "papers",
         "title": "文献报告",
         "publishedAt": f"{report_date[:4]}-{report_date[4:6]}-{report_date[6:]}T00:00:00+00:00",
         "generatedAt": datetime.now(UTC).isoformat(),
         "summary": f"核心推荐（A）{core} 篇；邻近观察（B）{watch} 篇。",
         "tags": ["论文", "文献"],
+        "scope": scope or {},
         "content": {
             "header": {key: value for key, value in presentation.items() if key != "subfieldLabels"},
             "papers": items,
@@ -108,6 +133,8 @@ def write_public_report(
     report_date: str,
     scope_definition: dict[str, dict[str, Any]] | None = None,
     presentation: dict[str, Any] | None = None,
+    report_identifier: str | None = None,
+    scope: dict[str, Any] | None = None,
 ) -> Path:
     """Atomically write a public report payload to disk.
 
@@ -123,13 +150,25 @@ def write_public_report(
         Configured subfield definitions used for display labels.
     presentation : dict, optional
         Precomputed shared presentation metadata.
+    report_identifier : str, optional
+        Explicit public ID. Defaults to the date-based ID used by automatic
+        reports.
+    scope : dict, optional
+        Structured description of the report selection.
 
     Returns
     -------
     Path
         Written sidecar path.
     """
-    payload = build_public_report(papers, report_date, scope_definition, presentation)
+    payload = build_public_report(
+        papers,
+        report_date,
+        scope_definition,
+        presentation,
+        report_identifier,
+        scope,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

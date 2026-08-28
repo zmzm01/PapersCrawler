@@ -16,7 +16,7 @@ paper_report_generator.py (v3)
 - _process_text_for_markdown: 处理普通文本字段，修复 LaTeX 并将 \\n 转为 Markdown 强制换行（行尾两个空格 + 换行）。
 - _process_text_for_html: 处理普通文本字段用于 HTML 输出（修复 LaTeX → HTML 转义 → \\n 替换为 <br>）。
 - _adjust_headings: 标题重定级算法——将 Markdown 文本中的内部标题上移/下移若干级别。
-- _process_results_markdown: 综合处理所有 LLM 总结字段（修复 LaTeX + 标题重定级 + 换行转换）。
+- _structured_section_markdown/html: 将 schema v3 的固定 key 和结果数组渲染为列表，避免嵌套标题。
 - _authors_str: 将作者列表（List[str]）转换为逗号分隔的字符串。
 - _build_subdomain_labels: 子领域 key → 中文短标签固定映射。
 
@@ -44,6 +44,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from config import REPORT_TEMPLATE_DIR
 from processors.report_presentation import build_report_presentation
+from processors.summary_schema import normalize_summary, summary_section_labels
 
 
 # 多领域报告分组（当前未使用，保留供后续扩展）
@@ -116,6 +117,13 @@ def _process_text_for_markdown(text: str) -> str:
     text = _convert_literal_newlines(text)
     lines = text.split('\n')
     return '  \n'.join(lines)
+
+
+def _has_displayable_summary_text(value: object) -> bool:
+    """Return whether a summary value is useful for human report output."""
+    if not isinstance(value, str):
+        return bool(value)
+    return value.strip() not in {"", "未提供", "暂无", "无"}
 
 
 def _adjust_headings(markdown_text: str, base_level: int = 4) -> str:
@@ -423,6 +431,101 @@ def _load_style_css() -> str:
 # ======================================================================
 
 
+def _structured_section_markdown(value, section_name: str) -> str:
+    """Render a canonical summary section without nested Markdown headings."""
+    section = normalize_summary({section_name: value})[section_name]
+    labels = summary_section_labels(section_name)
+    if section_name == "main_results_and_physics":
+        lines = []
+        for index, item in enumerate(section, start=1):
+            lines.append(
+                f"- **结果 {index}："
+                f"{_process_text_for_markdown(item['title'])}**"
+            )
+            for key, label in (
+                ("finding", "发现"),
+                ("evidence", "证据"),
+                ("physical_interpretation", "物理内涵"),
+            ):
+                lines.append(
+                    f"  - **{label}**: "
+                    f"{_process_text_for_markdown(item[key])}"
+                )
+        return "\n".join(lines)
+
+    if section_name == "limitations":
+        lines = []
+        for index, item in enumerate(section, start=1):
+            limitation = item["limitation"]
+            if not _has_displayable_summary_text(limitation):
+                continue
+            line = (
+                f"- **局限 {index}**: "
+                f"{_process_text_for_markdown(limitation)}"
+            )
+            impact = item.get("impact", "")
+            if _has_displayable_summary_text(impact):
+                line += f"；影响：{_process_text_for_markdown(impact)}"
+            lines.append(line)
+        return "\n".join(lines) or "正文未提供可归纳的局限性。"
+
+    return "\n".join(
+        f"- **{label}**: {_process_text_for_markdown(section[key])}"
+        for key, label in labels.items()
+    )
+
+
+def _structured_section_html(value, section_name: str) -> str:
+    """Render a canonical summary section as safe nested HTML lists."""
+    section = normalize_summary({section_name: value})[section_name]
+    labels = summary_section_labels(section_name)
+    if section_name == "main_results_and_physics":
+        items = []
+        for index, item in enumerate(section, start=1):
+            details = "".join(
+                f"<li><strong>{label}:</strong> "
+                f"{_process_text_for_html(item[key])}</li>"
+                for key, label in (
+                    ("finding", "发现"),
+                    ("evidence", "证据"),
+                    ("physical_interpretation", "物理内涵"),
+                )
+            )
+            items.append(
+                f"<li><strong>结果 {index}："
+                f"{_process_text_for_html(item['title'])}</strong>"
+                f"<ul>{details}</ul></li>"
+            )
+        return "<ul>" + "".join(items) + "</ul>"
+
+    if section_name == "limitations":
+        items = []
+        for index, item in enumerate(section, start=1):
+            limitation = item["limitation"]
+            if not _has_displayable_summary_text(limitation):
+                continue
+            text = (
+                f"<strong>局限 {index}：</strong>"
+                f"{_process_text_for_html(limitation)}"
+            )
+            impact = item.get("impact", "")
+            if _has_displayable_summary_text(impact):
+                text += (
+                    f"；影响：{_process_text_for_html(impact)}"
+                )
+            items.append(f"<li>{text}</li>")
+        if not items:
+            return "<p>正文未提供可归纳的局限性。</p>"
+        return "<ul>" + "".join(items) + "</ul>"
+
+    items = "".join(
+        f"<li><strong>{label}:</strong> "
+        f"{_process_text_for_html(section[key])}</li>"
+        for key, label in labels.items()
+    )
+    return f"<ul>{items}</ul>"
+
+
 def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
                            heading_base: int = 4) -> Dict:
     """为 Markdown 模板准备干净的论文字典。
@@ -483,14 +586,16 @@ def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
         'pdf_url': paper.get('pdf_url', ''),
         'abstract': _process_text_for_markdown(paper.get('abstract', '')),
         'one_sentence': _process_text_for_markdown(paper.get('one_sentence', '')),
-        'motivation_and_goal': _process_results_markdown(
-            paper.get('motivation_and_goal', ''), heading_base),
-        'key_setup_and_method': _process_results_markdown(
-            paper.get('key_setup_and_method', ''), heading_base),
-        'main_results_and_physics': _process_results_markdown(
-            paper.get('main_results_and_physics', ''), heading_base),
-        'take_home_message': _process_results_markdown(
-            paper.get('take_home_message', ''), heading_base),
+        'motivation_and_goal': _structured_section_markdown(
+            paper.get('motivation_and_goal', ''), 'motivation_and_goal'),
+        'key_setup_and_method': _structured_section_markdown(
+            paper.get('key_setup_and_method', ''), 'key_setup_and_method'),
+        'main_results_and_physics': _structured_section_markdown(
+            paper.get('main_results_and_physics', ''), 'main_results_and_physics'),
+        'limitations': _structured_section_markdown(
+            paper.get('limitations', ''), 'limitations'),
+        'take_home_message': _structured_section_markdown(
+            paper.get('take_home_message', ''), 'take_home_message'),
         'has_full_summary': paper.get('has_full_summary', True),
     }
 
@@ -543,14 +648,16 @@ def _make_paper_payload_html(paper: Dict, scope_definition: Optional[Dict] = Non
         'pdf_url': _safe_url(paper.get('pdf_url', '')),
         'abstract': _process_text_for_html(paper.get('abstract', '')),
         'one_sentence': _process_text_for_html(paper.get('one_sentence', '')),
-        'motivation_and_goal': _process_text_for_html(
-            paper.get('motivation_and_goal', '')),
-        'key_setup_and_method': _process_text_for_html(
-            paper.get('key_setup_and_method', '')),
-        'main_results_and_physics': _process_text_for_html(
-            paper.get('main_results_and_physics', '')),
-        'take_home_message': _process_text_for_html(
-            paper.get('take_home_message', '')),
+        'motivation_and_goal': _structured_section_html(
+            paper.get('motivation_and_goal', ''), 'motivation_and_goal'),
+        'key_setup_and_method': _structured_section_html(
+            paper.get('key_setup_and_method', ''), 'key_setup_and_method'),
+        'main_results_and_physics': _structured_section_html(
+            paper.get('main_results_and_physics', ''), 'main_results_and_physics'),
+        'limitations': _structured_section_html(
+            paper.get('limitations', ''), 'limitations'),
+        'take_home_message': _structured_section_html(
+            paper.get('take_home_message', ''), 'take_home_message'),
         'has_full_summary': paper.get('has_full_summary', True),
     }
 

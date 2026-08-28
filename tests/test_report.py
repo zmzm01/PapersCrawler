@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from processors.paper_report_generator import (
     generate_report,
-    generate_markdown,
     generate_html,
     _build_subdomain_labels,
     _fix_latex_backslashes_for_display,
@@ -391,14 +390,44 @@ def test_report_html_metadata_new_order():
         f"DOI={doi_i} 页面={page_i} 相关性等级={cat_i} 判断理由={reason_i}"
 
 
+def test_report_hides_internal_summary_metadata_and_flattens_limitations():
+    """Human reports omit type/basis labels and keep limitations single-level."""
+    paper = _sample_paper(
+        key_setup_and_method={
+            "study_type": "mixed",
+            "method": "实验与模拟相结合",
+            "setup_and_parameters": "参数见正文",
+            "analysis_or_model": "贝叶斯反演",
+            "key_equations": "未提供",
+        },
+        limitations=[{
+            "key": "scope",
+            "limitation": "样本范围有限",
+            "impact": "外推性受到限制",
+            "basis": "explicit",
+        }],
+    )
+
+    markdown = generate_report([paper], format="markdown", toc=False)
+    html = generate_report([paper], format="html", full_html=False)
+
+    assert "**研究类型**" not in markdown
+    assert "**依据**" not in markdown
+    assert "- **影响**" not in markdown
+    assert "；影响：外推性受到限制" in markdown
+    assert "研究类型" not in html
+    assert "依据:" not in html
+    assert "<ul><li><strong>影响" not in html
+
+
 def test_report_later_sections_unchanged():
     """H3 子节（研究动机/方法/结果/要点）顺序与文本保持不变。"""
     md = generate_report([_sample_paper()], format="markdown", toc=False)
     sections = ["### 研究动机与目标", "### 关键方法与设置",
                 "### 主要结果与物理内涵", "### 要点总结"]
     indices = [md.find(s) for s in sections]
-    assert all(i > 0 for i in indices), f"子节缺失: {dict(zip(sections, indices))}"
-    assert indices == sorted(indices), f"子节顺序错乱: {dict(zip(sections, indices))}"
+    assert all(i > 0 for i in indices), f"子节缺失: {dict(zip(sections, indices, strict=True))}"
+    assert indices == sorted(indices), f"子节顺序错乱: {dict(zip(sections, indices, strict=True))}"
 
 
 # ---- 排序（2026-07-25 起：相关性等级 A 先 → 同级日期倒序）----
@@ -635,7 +664,6 @@ def test_generate_report_invalid_format():
 
 def test_template_files_exist():
     """12 个外置模板文件必须全部存在（Markdown/HTML 各 5 个 + style.css + explained.html）。"""
-    from pathlib import Path
     from config import REPORT_TEMPLATE_DIR
     expected = [
         "markdown/legend.md.j2",
