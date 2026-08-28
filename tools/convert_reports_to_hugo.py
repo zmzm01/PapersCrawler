@@ -115,7 +115,6 @@ def _validate_heading_structure(content: str, src_name: str) -> list:
     lines = content.splitlines()
     h1_count = 0
     h2_since_separator = False  # True once a ## has been seen without a following ---
-    last_h2_line = -1
 
     for idx, line in enumerate(lines, start=1):
         stripped = line.strip()
@@ -133,7 +132,6 @@ def _validate_heading_structure(content: str, src_name: str) -> list:
                     f"(缺少 --- 分隔符): {title_text!r}"
                 )
             h2_since_separator = True
-            last_h2_line = idx
         elif stripped == "---":
             h2_since_separator = False
 

@@ -6,16 +6,15 @@ Two modes:
   - User (doi_list provided): Web UI custom selection, writes to user_dir, no mark
 """
 
-import json
 import logging
 from datetime import datetime
 from pathlib import Path
 
 from config import CFG, DB_PATH, PUBLIC_EXPORT_DIR, load_keywords
-from db.database import DatabaseClient
 from processors.paper_report_generator import generate_report
 from processors.public_report import write_public_report
 from processors.report_presentation import build_report_presentation
+from processors.report_snapshot import build_report_papers, make_report_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -66,58 +65,8 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
 
     logger.info(f"Phase G: {len(papers)} papers for report")
 
-    paper_list = []
-    reported_dois = []
-    for p in papers:
-        summary = {}
-        try:
-            summary = json.loads(p["llm_summary_result"] or "{}")
-        except json.JSONDecodeError:
-            pass
-
-        authors = []
-        try:
-            authors = json.loads(p["authors_json"] or "[]")
-        except json.JSONDecodeError:
-            pass
-
-        if isinstance(authors, list) and authors and isinstance(authors[0], dict):
-            authors = [a.get("name", "") for a in authors if a.get("name")]
-
-        subfields = []
-        try:
-            subfields = json.loads(p["llm_relevance_subfields"] or "[]")
-        except json.JSONDecodeError:
-            pass
-
-        paper_dict = {
-            "title": p["title"] or "",
-            "authors": authors,
-            "date": (
-                p["paperdate_crossref"]
-                or p["paperdate_page"]
-                or p["paperdate_rss"]
-                or ""
-            ),
-            "doi": p["doi"] or "",
-            "journal": p["journal"] or "",
-            "publisher": p["publisher"] or "",
-            "matched_subdomains": subfields,
-            "relevance_category": p["llm_relevance_category"] or "",
-            "relevance_reason": p["llm_relevance_reason"] or "",
-            "relevance_basis": p["llm_relevance_basis"] or "",
-            "page_url": p["page_url"] or "",
-            "pdf_url": p["pdf_url"] or "",
-            "abstract": p["abstract"] or "",
-            "one_sentence": summary.get("one_sentence", ""),
-            "motivation_and_goal": summary.get("motivation_and_goal", ""),
-            "key_setup_and_method": summary.get("key_setup_and_method", ""),
-            "main_results_and_physics": summary.get("main_results_and_physics", ""),
-            "take_home_message": summary.get("take_home_message", ""),
-            "has_full_summary": p["llm_summary_status"] == "success",
-        }
-        paper_list.append(paper_dict)
-        reported_dois.append(p["doi"])
+    paper_list = build_report_papers(papers)
+    reported_dois = [paper["doi"] for paper in paper_list]
 
     # 排序统一交给 paper_report_generator._sort_papers()（2026-07-25 起）：
     # 规则 = 相关性等级 A 先 → 同级日期倒序。这里不再 pre-sort。
@@ -137,6 +86,22 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
     # 加载子领域定义用于分组报告；无 scope_definition 时回退平铺模式
     scope_definition = load_keywords().get("scope_definition")
     presentation = build_report_presentation(scope_definition, paper_list)
+    # JSON is the canonical report snapshot; Markdown is rendered from the
+    # same in-memory paper list after the snapshot has been written.
+    public_path = md_path.with_suffix(".public.json")
+    write_public_report(
+        public_path,
+        paper_list,
+        date_str if is_auto else timestamp_str[:8],
+        scope_definition=scope_definition,
+        presentation=presentation,
+        report_identifier=(
+            None if is_auto else make_report_identifier(md_path.stem)
+        ),
+        scope={"kind": "automatic" if is_auto else "selected"},
+    )
+    logger.info(f"Public report snapshot saved: {public_path}")
+
     md_report = generate_report(
         paper_list, format="markdown", toc=True,
         scope_definition=scope_definition,
@@ -147,18 +112,6 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
     tmp_path.write_text(md_report, encoding="utf-8")
     tmp_path.replace(md_path)
     logger.info(f"Report saved: {md_path}")
-
-    # Keep a structured, public-safe snapshot next to the Markdown report.
-    # The later publishing step copies this sidecar; it never parses Markdown.
-    public_path = md_path.with_suffix(".public.json")
-    write_public_report(
-        public_path,
-        paper_list,
-        date_str if is_auto else timestamp_str[:8],
-        scope_definition=scope_definition,
-        presentation=presentation,
-    )
-    logger.info(f"Public report snapshot saved: {public_path}")
 
     # Keep the static-site export in sync with the newly generated sidecar.
     # Export failures must not invalidate the canonical report.

@@ -2,7 +2,7 @@
    templates/report/markdown/paper.md.j2
    --------------------------------------------------------------------------
    单篇论文的 Markdown 片段宏。Python 端已完成所有文本处理
-   （LaTeX 修复、字面量换行、HTML 转义、标题重定级、强制换行转换等），
+   （LaTeX 修复、字面量换行、HTML 转义、结构化字段渲染、强制换行转换等），
    模板仅负责排版输出。
 
    可用字段（paper dict，键不存在时用 default 过滤器兜底）：
@@ -11,7 +11,7 @@
      - page_url
      - abstract, one_sentence
      - motivation_and_goal, key_setup_and_method,
-       main_results_and_physics, take_home_message (均已 _process_results_markdown 处理)
+       main_results_and_physics, take_home_message (均已结构化为列表文本)
 
    2026-07-25 元数据重排：原顺序 作者/日期/期刊/出版社/相关性等级/判断理由/DOI/相关方向/页面/PDF
    改为 期刊/作者/日期/DOI/页面/相关性等级/判断理由/原文摘要/一句话。
@@ -48,6 +48,10 @@
 ### 主要结果与物理内涵
 
 {{ p.main_results_and_physics|default('') }}
+
+### 局限性
+
+{{ p.limitations|default('') }}
 
 ### 要点总结
 

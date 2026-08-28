@@ -33,13 +33,15 @@
 {% if p.has_full_summary %}
   <p><strong>一句话:</strong> {{ p.one_sentence|default('') }}</p>
   <h3>研究动机与目标</h3>
-  <p>{{ p.motivation_and_goal|default('') }}</p>
+  <div class="summary-section">{{ p.motivation_and_goal|default('') }}</div>
   <h3>关键方法与设置</h3>
-  <p>{{ p.key_setup_and_method|default('') }}</p>
+  <div class="summary-section">{{ p.key_setup_and_method|default('') }}</div>
   <h3>主要结果与物理内涵</h3>
-  <p>{{ p.main_results_and_physics|default('') }}</p>
+  <div class="summary-section">{{ p.main_results_and_physics|default('') }}</div>
+  <h3>局限性</h3>
+  <div class="summary-section">{{ p.limitations|default('') }}</div>
   <h3>要点总结</h3>
-  <p>{{ p.take_home_message|default('') }}</p>
+  <div class="summary-section">{{ p.take_home_message|default('') }}</div>
 {% else %}
   <p><strong>说明:</strong> 无正文，无法生成详细总结。</p>
 {% endif %}

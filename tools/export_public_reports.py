@@ -9,6 +9,7 @@ import re
 import sqlite3
 import warnings
 from pathlib import Path
+from collections.abc import Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALID_ID = re.compile(r"^[a-z0-9-]+$")
@@ -37,7 +38,10 @@ def enrich_from_database(payload: dict, database_path: Path) -> dict:
     try:
         conn = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
     except sqlite3.Error as exc:
-        warnings.warn(f"Cannot read {database_path}; exporting sidecar without historical enrichment: {exc}")
+        warnings.warn(
+            f"Cannot read {database_path}; exporting sidecar without historical enrichment: {exc}",
+            stacklevel=2,
+        )
         return payload
     conn.row_factory = sqlite3.Row
     try:
@@ -55,21 +59,30 @@ def enrich_from_database(payload: dict, database_path: Path) -> dict:
             paper["relevanceBasis"] = paper.get("relevanceBasis") or row["llm_relevance_basis"] or ""
         return payload
     except sqlite3.Error as exc:
-        warnings.warn(f"Cannot enrich public report from {database_path}: {exc}")
+        warnings.warn(
+            f"Cannot enrich public report from {database_path}: {exc}",
+            stacklevel=2,
+        )
         return payload
     finally:
         conn.close()
 
 
-def export_reports(output_root: Path, source_dir: Path, database_path: Path) -> int:
+def export_reports(
+    output_root: Path,
+    source_dir: Path | Iterable[Path],
+    database_path: Path,
+) -> int:
     """Synchronize generated public sidecars into a static-site export root.
 
     Parameters
     ----------
     output_root : Path
         Static-site generated-data root.
-    source_dir : Path
-        Directory containing public report sidecars.
+    source_dir : Path or iterable of Path
+        One or more directories containing public report sidecars. Multiple
+        directories allow automatic and explicitly published preview reports
+        to be synchronized without deleting either set.
     database_path : Path
         SQLite database used for optional historical enrichment.
 
@@ -79,9 +92,14 @@ def export_reports(output_root: Path, source_dir: Path, database_path: Path) -> 
         Number of exported reports.
     """
     destination = output_root / "papers"
+    source_dirs = [source_dir] if isinstance(source_dir, Path) else list(source_dir)
+    sidecars = []
+    for directory in source_dirs:
+        sidecars.extend(directory.glob("*.public.json"))
+
     reports = []
     exported_ids = set()
-    for source in sorted(source_dir.glob("report_*.public.json"), reverse=True):
+    for source in sorted(sidecars, key=lambda path: str(path), reverse=True):
         payload = json.loads(source.read_text(encoding="utf-8"))
         if payload.get("source") != "papers" or not isinstance(payload.get("id"), str) or not VALID_ID.fullmatch(payload["id"]):
             raise ValueError(f"Invalid public report sidecar: {source}")
@@ -105,8 +123,10 @@ def main() -> None:
     parser.add_argument(
         "--source",
         type=Path,
-        default=PROJECT_ROOT / "data" / "reports" / "auto",
-        help="Directory containing report_*.public.json sidecars",
+        action="append",
+        dest="sources",
+        default=None,
+        help="Directory containing *.public.json sidecars (repeatable)",
     )
     parser.add_argument(
         "--database",
@@ -115,7 +135,8 @@ def main() -> None:
         help="Optional database used to enrich historical sidecars",
     )
     args = parser.parse_args()
-    count = export_reports(args.out, args.source, args.database)
+    sources = args.sources or [PROJECT_ROOT / "data" / "reports" / "auto"]
+    count = export_reports(args.out, sources, args.database)
     print(f"Exported {count} PapersCrawler public report(s).")
 
 
