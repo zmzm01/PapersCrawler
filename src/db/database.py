@@ -40,9 +40,11 @@ db.py
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from enum import Enum
+
+from common import clean_extracted_text
 
 
 # ------------------------------------------------------------------
@@ -323,6 +325,24 @@ class DatabaseClient:
             "CREATE INDEX IF NOT EXISTS idx_download_events_date_publisher "
             "ON fulltext_download_events(local_date, publisher)"
         )
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS relevance_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doi TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK (
+                decision IN ('A', 'B', 'C', 'D', 'uncertain')
+            ),
+            notes TEXT NOT NULL DEFAULT '',
+            reviewer TEXT NOT NULL DEFAULT '',
+            source_final_category TEXT,
+            source_final_confidence TEXT,
+            created_date TEXT NOT NULL
+        )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relevance_reviews_doi_id "
+            "ON relevance_reviews(doi, id DESC)"
+        )
         self.conn.commit()
 
         # ---- 迁移: 为旧数据库添加 MinerU 列 (如果不存在) ----
@@ -335,11 +355,7 @@ class DatabaseClient:
             "mineru_output_dir TEXT",
         ]
         for col_def in mineru_columns:
-            col_name = col_def.split()[0]
-            try:
-                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # 列已存在则跳过
+            self._add_column_if_missing(col_def)
 
         # ---- 迁移: 为旧数据库添加报告状态列 ----
         report_columns = [
@@ -347,27 +363,17 @@ class DatabaseClient:
             "report_date TEXT",
         ]
         for col_def in report_columns:
-            col_name = col_def.split()[0]
-            try:
-                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # 列已存在则跳过
+            self._add_column_if_missing(col_def)
 
         # ---- 迁移: 为旧数据库添加发现来源列 ----
-        try:
-            self.conn.execute("ALTER TABLE papers ADD COLUMN discovery_source TEXT")
-        except sqlite3.OperationalError:
-            pass  # 列已存在则跳过
+        self._add_column_if_missing("discovery_source TEXT")
 
         # ---- 迁移: 为旧数据库添加 LLM 相关性分类列 ----
         for col_def in [
             "llm_relevance_category TEXT",
             "llm_relevance_subfields TEXT",
         ]:
-            try:
-                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # 列已存在则跳过
+            self._add_column_if_missing(col_def)
 
         # ---- 迁移：摘要初筛与最终判定依据列 ----
         for col_def in [
@@ -381,19 +387,66 @@ class DatabaseClient:
             "relevance_screen_date TEXT",
             "relevance_screen_is_backfill INTEGER DEFAULT 0",
         ]:
-            try:
-                self.conn.execute(f"ALTER TABLE papers ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass
+            self._add_column_if_missing(col_def)
         self.conn.commit()
 
         # Existing databases keep their final judgement as a screening
         # snapshot; this does not trigger an LLM call or a PDF download.
         self.migrate_relevance_screen_snapshot()
+        self.normalize_metadata_text()
+
+    def _add_column_if_missing(self, column_definition):
+        """Add a schema column, ignoring only duplicate-column errors.
+
+        Parameters
+        ----------
+        column_definition : str
+            Column name followed by its SQLite type/default declaration.
+
+        Raises
+        ------
+        sqlite3.OperationalError
+            If the migration fails for a reason other than the column already
+            existing.
+        """
+        try:
+            self.conn.execute(
+                f"ALTER TABLE papers ADD COLUMN {column_definition}"
+            )
+        except sqlite3.OperationalError as error:
+            if "duplicate column name" not in str(error).lower():
+                raise
 
         # ==================================================================
     # 基本查询方法
     # ==================================================================
+
+    def normalize_metadata_text(self) -> int:
+        """Repair legacy encoded title/abstract values in the local database.
+
+        Returns
+        -------
+        int
+            Number of paper rows changed.  This lightweight migration is
+            idempotent and makes existing rows follow the same contract as
+            newly fetched metadata.
+        """
+        rows = self.conn.execute(
+            "SELECT id, title, abstract FROM papers"
+        ).fetchall()
+        updates = []
+        for row in rows:
+            title = clean_extracted_text(row["title"]) or ""
+            abstract = clean_extracted_text(row["abstract"]) or ""
+            if title != (row["title"] or "") or abstract != (row["abstract"] or ""):
+                updates.append((title, abstract, row["id"]))
+        if updates:
+            self.conn.executemany(
+                "UPDATE papers SET title = ?, abstract = ? WHERE id = ?",
+                updates,
+            )
+            self.conn.commit()
+        return len(updates)
 
     def paper_doi_exists(self, doi):
         """
@@ -690,6 +743,8 @@ class DatabaseClient:
             raise DataBaseDOINotExists(
                 f"DOI {doi} not found in DB, cannot update CrossRef metadata."
             )
+        title = clean_extracted_text(title) or ""
+        abstract = clean_extracted_text(abstract) or ""
         self.conn.execute(
             """
             UPDATE papers
@@ -731,6 +786,7 @@ class DatabaseClient:
             raise DataBaseDOINotExists(
                 f"DOI {doi} not found in DB, cannot update publisher page."
             )
+        abstract = clean_extracted_text(abstract) or ""
         self.conn.execute(
             """
             UPDATE papers
@@ -854,6 +910,239 @@ class DatabaseClient:
             return self.conn.execute(query, (limit,)).fetchall()
         return self.conn.execute(query).fetchall()
 
+    # ==================================================================
+    # 人工相关性审核
+    # ==================================================================
+
+    def get_relevance_review_queue(
+            self, status_filter="pending", category_filter="all",
+            confidence_filter="all", disagreement_only=False,
+            search_text="", limit=100, offset=0):
+        """Return the full-text relevance papers for manual review.
+
+        Parameters
+        ----------
+        status_filter : str
+            ``pending``, ``reviewed`` or ``all``.
+        category_filter : str
+            Final LLM category, ``all`` or one of A/B/C/D.
+        confidence_filter : str
+            LLM confidence, ``all`` or high/medium/low.
+        disagreement_only : bool
+            Restrict results to papers whose screen and final categories differ.
+        search_text : str
+            Case-insensitive substring matched against DOI and title.
+        limit : int
+            Maximum number of rows.
+        offset : int
+            Number of rows to skip.
+
+        Returns
+        -------
+        list[sqlite3.Row]
+            Papers with the latest manual review, if any, attached.
+        """
+        allowed_status = {"pending", "reviewed", "all"}
+        allowed_categories = {"all", "A", "B", "C", "D"}
+        allowed_confidence = {"all", "high", "medium", "low"}
+        if status_filter not in allowed_status:
+            status_filter = "pending"
+        if category_filter not in allowed_categories:
+            category_filter = "all"
+        if confidence_filter not in allowed_confidence:
+            confidence_filter = "all"
+
+        conditions = [
+            "p.llm_relevance_status = 'success'",
+            "p.llm_relevance_basis = 'fulltext'",
+        ]
+        params = []
+        if status_filter == "pending":
+            conditions.append("latest_review.id IS NULL")
+        elif status_filter == "reviewed":
+            conditions.append("latest_review.id IS NOT NULL")
+        if category_filter != "all":
+            conditions.append("p.llm_relevance_category = ?")
+            params.append(category_filter)
+        if confidence_filter != "all":
+            conditions.append("p.llm_relevance_confidence = ?")
+            params.append(confidence_filter)
+        if disagreement_only:
+            conditions.append(
+                "p.relevance_screen_category IS NOT NULL "
+                "AND p.relevance_screen_category != p.llm_relevance_category"
+            )
+        if search_text.strip():
+            conditions.append("(LOWER(p.doi) LIKE ? OR LOWER(p.title) LIKE ?)")
+            search_pattern = f"%{search_text.strip().lower()}%"
+            params.extend([search_pattern, search_pattern])
+
+        where_clause = " AND ".join(conditions)
+        query = f"""
+            WITH latest_review AS (
+                SELECT review.*
+                FROM relevance_reviews AS review
+                INNER JOIN (
+                    SELECT doi, MAX(id) AS latest_id
+                    FROM relevance_reviews
+                    GROUP BY doi
+                ) AS latest
+                  ON latest.doi = review.doi
+                 AND latest.latest_id = review.id
+            )
+            SELECT p.id, p.doi, p.title, p.abstract, p.journal, p.publisher,
+                   p.page_url, p.pdf_url, p.mineru_output_dir,
+                   p.relevance_screen_category,
+                   p.relevance_screen_confidence,
+                   p.relevance_screen_reason,
+                   p.llm_relevance_category,
+                   p.llm_relevance_subfields,
+                   p.llm_relevance_confidence,
+                   p.llm_relevance_reason,
+                   p.llm_relevance_basis,
+                   p.llm_relevance_date,
+                   latest_review.id AS review_id,
+                   latest_review.decision AS review_decision,
+                   latest_review.notes AS review_notes,
+                   latest_review.reviewer AS review_reviewer,
+                   latest_review.created_date AS review_date,
+                   CASE
+                     WHEN latest_review.id IS NULL THEN 0
+                     ELSE 1
+                   END AS is_reviewed,
+                   CASE
+                     WHEN p.llm_relevance_category = 'B'
+                          AND p.llm_relevance_confidence = 'medium'
+                       THEN 0
+                     WHEN p.relevance_screen_category != p.llm_relevance_category
+                       THEN 1
+                     WHEN p.llm_relevance_category = 'A'
+                          AND p.llm_relevance_confidence = 'medium'
+                       THEN 2
+                     ELSE 3
+                   END AS review_priority
+            FROM papers AS p
+            LEFT JOIN latest_review
+              ON latest_review.doi = p.doi
+            WHERE {where_clause}
+            ORDER BY is_reviewed ASC, review_priority ASC,
+                     p.llm_relevance_date DESC, p.id DESC
+            LIMIT ? OFFSET ?
+        """
+        params.extend([max(1, min(int(limit), 200)), max(0, int(offset))])
+        return self.conn.execute(query, tuple(params)).fetchall()
+
+    def count_relevance_review_queue(
+            self, status_filter="pending", category_filter="all",
+            confidence_filter="all", disagreement_only=False,
+            search_text=""):
+        """Count papers matching the manual relevance review filters."""
+        # Reuse the same filter semantics without loading the queue rows.
+        allowed_status = {"pending", "reviewed", "all"}
+        allowed_categories = {"all", "A", "B", "C", "D"}
+        allowed_confidence = {"all", "high", "medium", "low"}
+        if status_filter not in allowed_status:
+            status_filter = "pending"
+        if category_filter not in allowed_categories:
+            category_filter = "all"
+        if confidence_filter not in allowed_confidence:
+            confidence_filter = "all"
+        conditions = [
+            "p.llm_relevance_status = 'success'",
+            "p.llm_relevance_basis = 'fulltext'",
+        ]
+        params = []
+        if status_filter == "pending":
+            conditions.append("r.latest_id IS NULL")
+        elif status_filter == "reviewed":
+            conditions.append("r.latest_id IS NOT NULL")
+        if category_filter != "all":
+            conditions.append("p.llm_relevance_category = ?")
+            params.append(category_filter)
+        if confidence_filter != "all":
+            conditions.append("p.llm_relevance_confidence = ?")
+            params.append(confidence_filter)
+        if disagreement_only:
+            conditions.append(
+                "p.relevance_screen_category IS NOT NULL "
+                "AND p.relevance_screen_category != p.llm_relevance_category"
+            )
+        if search_text.strip():
+            conditions.append("(LOWER(p.doi) LIKE ? OR LOWER(p.title) LIKE ?)")
+            search_pattern = f"%{search_text.strip().lower()}%"
+            params.extend([search_pattern, search_pattern])
+        where_clause = " AND ".join(conditions)
+        query = f"""
+            WITH latest_review AS (
+                SELECT doi, MAX(id) AS latest_id
+                FROM relevance_reviews
+                GROUP BY doi
+            )
+            SELECT COUNT(*)
+            FROM papers AS p
+            LEFT JOIN latest_review AS r ON r.doi = p.doi
+            WHERE {where_clause}
+        """
+        return self.conn.execute(query, tuple(params)).fetchone()[0]
+
+    def save_relevance_review(
+            self, doi, decision, notes="", reviewer=""):
+        """Append a manual relevance review and return its database id.
+
+        Parameters
+        ----------
+        doi : str
+            DOI of an existing paper.
+        decision : str
+            One of A/B/C/D/uncertain.
+        notes : str
+            Human evidence and reasoning.
+        reviewer : str
+            Optional reviewer name or initials.
+
+        Returns
+        -------
+        int
+            Newly created review id.
+        """
+        normalized_doi = (doi or "").strip().lower()
+        normalized_decision = (decision or "").strip().lower()
+        if normalized_decision not in {"a", "b", "c", "d", "uncertain"}:
+            raise ValueError("decision must be A, B, C, D or uncertain")
+        if not self.paper_doi_exists(normalized_doi):
+            raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
+        paper = self.conn.execute(
+            """SELECT llm_relevance_status, llm_relevance_basis,
+                      llm_relevance_category, llm_relevance_confidence
+               FROM papers WHERE LOWER(doi) = LOWER(?)""",
+            (normalized_doi,),
+        ).fetchone()
+        if (
+            paper["llm_relevance_status"] != FetchStatus.SUCCESS.value
+            or paper["llm_relevance_basis"] != "fulltext"
+        ):
+            raise ValueError(
+                "manual review requires a successful full-text relevance result"
+            )
+        stored_decision = (
+            normalized_decision
+            if normalized_decision == "uncertain"
+            else normalized_decision.upper()
+        )
+        timestamp = str(datetime.now())
+        cursor = self.conn.execute(
+            """INSERT INTO relevance_reviews
+               (doi, decision, notes, reviewer, source_final_category,
+                source_final_confidence, created_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (normalized_doi, stored_decision,
+             (notes or "").strip(), (reviewer or "").strip(),
+             paper["llm_relevance_category"],
+             paper["llm_relevance_confidence"], timestamp),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
     @staticmethod
     def _local_date():
         """Return the project-local calendar date (Asia/Shanghai)."""
@@ -917,6 +1206,39 @@ class DatabaseClient:
             (status, error, doi),
         )
         self.conn.commit()
+
+    def get_fulltext_download_failures(self, since_date=None):
+        """Return failed PDF/MinerU attempts grouped by their audit dates.
+
+        Parameters
+        ----------
+        since_date : str, optional
+            Inclusive local date in ``YYYY-MM-DD`` format. If omitted, all
+            recorded failed attempts are returned.
+
+        Returns
+        -------
+        list of dict
+            Each item contains ``doi``, ``local_date`` and ``error``.
+        """
+        where = "WHERE status = 'failed'"
+        params = []
+        if since_date:
+            where += " AND local_date >= ?"
+            params.append(str(since_date))
+        rows = self.conn.execute(
+            "SELECT doi, local_date, error FROM fulltext_download_events "
+            f"{where} ORDER BY local_date, doi, id",
+            params,
+        ).fetchall()
+        return [
+            {
+                "doi": row["doi"],
+                "local_date": row["local_date"],
+                "error": row["error"] or "",
+            }
+            for row in rows
+        ]
 
     def migrate_relevance_screen_snapshot(self):
         """Backfill screen columns from existing final relevance results."""
@@ -1087,6 +1409,33 @@ class DatabaseClient:
         )
         self.conn.commit()
 
+    def get_pending_summary_papers(self, limit=0):
+        """Return only full-text A/B papers eligible for Phase F.
+
+        Parameters
+        ----------
+        limit : int, optional
+            Maximum number of papers. ``0`` means no limit.
+
+        Returns
+        -------
+        list[sqlite3.Row]
+            Pending summary records ordered from oldest to newest.
+        """
+        query = """
+            SELECT * FROM papers
+            WHERE llm_summary_status = 'pending'
+              AND llm_relevance_status = 'success'
+              AND llm_relevance_category IN ('A', 'B')
+              AND llm_relevance_basis = 'fulltext'
+            ORDER BY created_date
+        """
+        parameters = ()
+        if limit:
+            query += " LIMIT ?"
+            parameters = (limit,)
+        return self.conn.execute(query, parameters).fetchall()
+
     # ==================================================================
     # Phase E2: MinerU PDF 全文解析
     # ==================================================================
@@ -1246,7 +1595,10 @@ class DatabaseClient:
         """)
         return cur.fetchall()
 
-    def get_papers(self, limit=100, offset=0, sort_by="created", category_filter=None):
+    def get_papers(
+        self, limit=100, offset=0, sort_by="created", category_filter=None,
+        has_summary=False,
+    ):
         """
         返回论文列表，支持按入库日期或发表日期排序。
 
@@ -1265,6 +1617,8 @@ class DatabaseClient:
             "a" = 仅 LLM 判定为 A（直接相关）的论文
             "b" = 仅 LLM 判定为 B（方法相关）的论文
             "ab" = A 和 B 全部
+        has_summary : bool
+            If True, return only papers with a successful LLM summary.
 
         Returns
         -------
@@ -1285,8 +1639,13 @@ class DatabaseClient:
             "b":  ("llm_relevance_status = 'success' "
                    "AND llm_relevance_category = 'B'"),
         }
+        conditions = []
         cond = category_where.get(category_filter)
-        where_clause = f"WHERE {cond}" if cond else ""
+        if cond:
+            conditions.append(cond)
+        if has_summary:
+            conditions.append("llm_summary_status = 'success'")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         cur = self.conn.execute(f"""
         SELECT doi, title, abstract, journal, publisher,
                paperdate_rss, paperdate_crossref, paperdate_page,
@@ -1304,7 +1663,7 @@ class DatabaseClient:
         """, (limit, offset))
         return cur.fetchall()
 
-    def get_papers_count(self, category_filter=None):
+    def get_papers_count(self, category_filter=None, has_summary=False):
         """
         统计满足分类筛选的论文总数（不受 limit/offset 影响），用于分页。
 
@@ -1312,6 +1671,8 @@ class DatabaseClient:
         ----------
         category_filter : str | None
             同 get_papers()。注意 sort_by 不影响计数。
+        has_summary : bool
+            If True, count only papers with a successful LLM summary.
 
         Returns
         -------
@@ -1325,8 +1686,13 @@ class DatabaseClient:
             "b":  ("llm_relevance_status = 'success' "
                    "AND llm_relevance_category = 'B'"),
         }
+        conditions = []
         cond = category_where.get(category_filter)
-        where_clause = f"WHERE {cond}" if cond else ""
+        if cond:
+            conditions.append(cond)
+        if has_summary:
+            conditions.append("llm_summary_status = 'success'")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         cur = self.conn.execute(f"SELECT COUNT(*) FROM papers {where_clause}")
         return cur.fetchone()[0]
 
@@ -1344,7 +1710,7 @@ class DatabaseClient:
         result = {}
         for col, cond in columns_where:
             self._validate_column(col)
-            sql = f"SELECT COUNT(*) FROM papers WHERE {cond}" if cond else f"SELECT COUNT(*) FROM papers"
+            sql = f"SELECT COUNT(*) FROM papers WHERE {cond}" if cond else "SELECT COUNT(*) FROM papers"
             cur = self.conn.execute(sql)
             result[col] = cur.fetchone()[0]
         return result
@@ -1397,8 +1763,9 @@ class DatabaseClient:
         Returns
         -------
         dict
-            Counts for E screening, E3 final relevance, F summaries, and a
-            bounded list of database error samples from this run.
+            Counts for E screening, E3 final relevance, F summaries, a
+            bounded list of database error samples from this run, and the
+            recent DOI-level failed PDF/MinerU download history.
         """
         started_text = str(run_started_at)
 
@@ -1455,14 +1822,25 @@ class DatabaseClient:
         error_samples = []
         for stage, error_column, date_column in error_columns:
             rows = self.conn.execute(
-                f"SELECT {error_column} AS error FROM papers "
+                f"SELECT doi, {error_column} AS error FROM papers "
                 f"WHERE {date_column} >= ? AND {error_column} IS NOT NULL "
                 f"AND {error_column} != '' ORDER BY {date_column} LIMIT 20",
                 (started_text,),
             ).fetchall()
             for row in rows:
-                error_samples.append({"stage": stage, "message": row["error"]})
+                error_samples.append({
+                    "stage": stage,
+                    "doi": row["doi"],
+                    "message": row["error"],
+                })
         metrics["error_samples"] = error_samples
+        if isinstance(run_started_at, datetime):
+            run_date = run_started_at.date()
+        else:
+            run_date = datetime.fromisoformat(str(run_started_at)[:19]).date()
+        metrics["mineru_download_failures"] = self.get_fulltext_download_failures(
+            (run_date - timedelta(days=13)).isoformat()
+        )
         return metrics
 
     # ── Phase stats (用于 WebUI Pipeline 看板) ────────────────────────────
@@ -1479,10 +1857,12 @@ class DatabaseClient:
         """
         phase_configs = [
             ("cr_metadata_fetched", "cr_metadata_fetched_status", "cr_metadata_fetched_error"),
-            ("publisher_page",      "publisher_page_fetched_status", "publisher_page_fetched_error"),
-            ("llm_relevance",       "llm_relevance_status", "llm_relevance_error"),
-            ("mineru_parse",        "mineru_parse_status", "mineru_parse_error"),
-            ("llm_summary",         "llm_summary_status", "llm_summary_error"),
+            ("publisher_page", "publisher_page_fetched_status", "publisher_page_fetched_error"),
+            ("relevance_screen", "relevance_screen_status", "relevance_screen_error"),
+            ("mineru_parse", "mineru_parse_status", "mineru_parse_error"),
+            ("llm_relevance", "llm_relevance_status", "llm_relevance_error"),
+            ("llm_summary", "llm_summary_status", "llm_summary_error"),
+            ("report", "report_status", None),
         ]
         results = []
         for label, status_col, error_col in phase_configs:
@@ -1493,17 +1873,22 @@ class DatabaseClient:
             ).fetchall()
             counts = {"success": 0, "failed": 0, "skipped": 0, "pending": 0}
             for r in rows:
-                counts[r["status"]] = r["cnt"]
+                status = r["status"]
+                if label == "report" and status == "reported":
+                    status = "success"
+                counts[status] = counts.get(status, 0) + r["cnt"]
 
-            # Error texts for failed/skipped papers
+            # Error texts for failed/skipped papers. Report status has no
+            # dedicated error column, so it contributes an empty list.
             error_texts: list[str] = []
-            err_rows = self.conn.execute(
-                f"SELECT {error_col} FROM papers "
-                f"WHERE {status_col} IN ('failed','skipped') "
-                f"AND {error_col} IS NOT NULL AND {error_col} != ''"
-            ).fetchall()
-            for r in err_rows:
-                error_texts.append(r[error_col])
+            if error_col:
+                err_rows = self.conn.execute(
+                    f"SELECT {error_col} FROM papers "
+                    f"WHERE {status_col} IN ('failed','skipped') "
+                    f"AND {error_col} IS NOT NULL AND {error_col} != ''"
+                ).fetchall()
+                for r in err_rows:
+                    error_texts.append(r[error_col])
 
             results.append({
                 "label": label,

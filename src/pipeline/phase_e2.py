@@ -6,15 +6,25 @@ import logging
 import random
 import time
 from datetime import datetime
-from pathlib import Path
 
 from config import CFG, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR
-from db.database import DatabaseClient, FetchStatus
+from db.database import FetchStatus
 from pipeline.base import SCRAPER_MAP
 from processors.mineru_paper_parser import MinerUParser
 from sources.publisher import BasePublisherScraper
 
 logger = logging.getLogger(__name__)
+
+
+def _is_valid_pdf_file(file_path):
+    """Return whether ``file_path`` exists and starts with a PDF signature."""
+    try:
+        if not file_path.is_file() or file_path.stat().st_size <= 0:
+            return False
+        with file_path.open("rb") as stream:
+            return stream.read(5) == b"%PDF-"
+    except OSError:
+        return False
 
 
 def phase_e2_mineru(db):
@@ -50,15 +60,9 @@ def phase_e2_mineru(db):
     for paper in papers_with_pdf:
         safe_doi = paper["doi"].replace("/", "_").replace("\\", "_").replace("..", "_")
         local_pdf = MINERU_OUTPUT_DIR / safe_doi / "paper.pdf"
-        if local_pdf.exists() and local_pdf.stat().st_size > 0:
-            try:
-                with local_pdf.open("rb") as stream:
-                    header = stream.read(5)
-                if header == b"%PDF-":
-                    reserved.append(dict(paper, _quota_reserved=False))
-                    continue
-            except OSError:
-                pass
+        if _is_valid_pdf_file(local_pdf):
+            reserved.append(dict(paper, _quota_reserved=False))
+            continue
         if not paper["pdf_url"] and paper["publisher"] != "optica":
             db.update_mineru_error(
                 paper["doi"], "No PDF URL available",
@@ -132,7 +136,16 @@ def phase_e2_mineru(db):
         # ── 延迟页面访问：补齐 Phase C 跳过导致的缺失 pdf_url ──
         # 仅对启用了 skip_phase_c_if_crossref_abstract 的 publisher 执行：
         # 浏览器已启动，用 parse_page() 提取 citation_pdf_url 后写回 DB。
-        lazy_pending = [p for p in group if not p["pdf_url"]] if has_parse else []
+        lazy_pending = [
+            p for p in group
+            if not p["pdf_url"]
+            and not _is_valid_pdf_file(
+                MINERU_OUTPUT_DIR
+                / p["doi"].replace("/", "_").replace("\\", "_")
+                .replace("..", "_")
+                / "paper.pdf"
+            )
+        ] if has_parse else []
         if lazy_pending:
             logger.info(
                 f"{publisher}: lazy page fetch for {len(lazy_pending)} papers"
@@ -168,8 +181,19 @@ def phase_e2_mineru(db):
                 page_url = paper["page_url"]
                 timestamp = str(datetime.now())
 
-                # Lazy fetch 后仍无 pdf_url（Optica 页面解析失败等）→ 跳过
-                if not pdf_url:
+                safe_doi = (
+                    doi.replace("/", "_")
+                    .replace("\\", "_")
+                    .replace("..", "_")
+                )
+                mineru_output_dir = MINERU_OUTPUT_DIR / safe_doi
+                mineru_output_dir.mkdir(parents=True, exist_ok=True)
+                pdf_save_path = mineru_output_dir / "paper.pdf"
+                local_pdf_is_valid = _is_valid_pdf_file(pdf_save_path)
+
+                # A valid manually imported PDF is sufficient; only network
+                # downloads require a URL.
+                if not pdf_url and not local_pdf_is_valid:
                     logger.warning(f"Phase E2: no pdf_url for {doi}, skipping")
                     db.update_mineru_error(
                         doi, "No PDF URL available (lazy fetch failed or Phase C returned empty)",
@@ -181,20 +205,15 @@ def phase_e2_mineru(db):
                     continue
 
                 try:
-                    safe_doi = doi.replace("/", "_").replace("\\", "_").replace("..", "_")
-                    mineru_output_dir = MINERU_OUTPUT_DIR / safe_doi
-                    mineru_output_dir.mkdir(parents=True, exist_ok=True)
-                    pdf_save_path = mineru_output_dir / "paper.pdf"
-
                     # Reuse existing PDF if already downloaded and valid
-                    if pdf_save_path.exists() and pdf_save_path.stat().st_size > 0:
-                        with open(pdf_save_path, "rb") as f:
-                            header = f.read(5)
-                        if header == b'%PDF-':
-                            logger.info(f"PDF already exists, reusing: {pdf_save_path}")
-                        else:
-                            logger.warning(f"Existing PDF invalid (header: {header!r}), re-downloading")
-                            pdf_save_path.unlink()
+                    if local_pdf_is_valid:
+                        logger.info(f"PDF already exists, reusing: {pdf_save_path}")
+                    elif pdf_save_path.exists():
+                        logger.warning(
+                            "Existing PDF is invalid, re-downloading: %s",
+                            pdf_save_path,
+                        )
+                        pdf_save_path.unlink()
                     if not pdf_save_path.exists():
                         logger.info(f"Downloading PDF: {doi} ← {pdf_url}")
                         pdf_bytes = downloader.download_pdf(pdf_url, page_url=page_url)

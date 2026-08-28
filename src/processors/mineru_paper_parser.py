@@ -19,7 +19,6 @@ MinerU PDF 论文解析模块
 """
 
 import os
-import sys
 import time
 import logging
 import zipfile

@@ -408,13 +408,44 @@ SUMMARY_RESET = [
 ]
 
 
-def cmd_reset_summary(publisher=None, reset_all=False):
+def cmd_reset_summary(publisher=None, reset_all=False, dois=None):
     """重置 LLM 总结状态。
 
     默认只重置 failed + skipped 的论文。
     使用 --all 时重置全部论文（包括 success）。
+
+    Parameters
+    ----------
+    publisher : str, optional
+        仅重置指定出版社。
+    reset_all : bool
+        重置全部论文（含 success）。
+    dois : str, optional
+        逗号分隔的精确 DOI 筛选；匹配不区分大小写，可与 publisher 组合。
     """
-    if reset_all:
+    if reset_all and dois is not None:
+        print("--all 与 --dois 互斥，只能指定其中一个")
+        return
+
+    normalized_dois = []
+    if dois is not None:
+        normalized_dois = list(dict.fromkeys(
+            value.strip().lower() for value in dois.split(",") if value.strip()
+        ))
+        if not normalized_dois:
+            print("--dois 必须包含至少一个非空 DOI")
+            return
+        doi_clause = "LOWER(TRIM(doi)) IN (" + ",".join(
+            "?" for _ in normalized_dois
+        ) + ")"
+        clauses = [doi_clause]
+        params_list = list(normalized_dois)
+        if publisher:
+            clauses.insert(0, "publisher = ?")
+            params_list.insert(0, publisher)
+        where = "WHERE " + " AND ".join(clauses)
+        params = tuple(params_list)
+    elif reset_all:
         if publisher:
             where = "WHERE publisher = ?"
             params = (publisher,)
@@ -442,7 +473,10 @@ def cmd_reset_summary(publisher=None, reset_all=False):
     set_clause = ",\n            ".join(SUMMARY_RESET)
     sql = f"UPDATE papers SET\n            {set_clause}\n          {where}"
 
-    mode = "--all，全部" if reset_all else "仅失败/跳过"
+    mode = (
+        "--all，全部" if reset_all else
+        (f"精确 DOI（{len(normalized_dois)} 个）" if dois is not None else "仅失败/跳过")
+    )
     print(f"\n将重置 {count} 篇论文的 LLM 总结状态（{mode}，publisher={publisher or '全部'}）")
     print()
     print("  受影响的状态列:")
@@ -653,6 +687,7 @@ if __name__ == "__main__":
             "默认只重置 failed + skipped 的论文。"
             "使用 --all 可重置全部论文（包括 success 状态的），"
             "适用于 prompt 修改后重新生成所有总结。"
+            "使用 --dois 可只重置指定 DOI，适用于单篇异常总结重跑。"
             "\n\n受影响的状态列:"
             "\n  llm_summary_status   → pending"
             "\n  llm_summary_error    → NULL"
@@ -665,12 +700,16 @@ if __name__ == "__main__":
             "\n    → 仅重置失败/跳过的论文"
             "\n  python tools/reset_pipeline.py reset-summary --all"
             "\n    → 重置全部论文（含 success），重新生成所有总结"
+            "\n  python tools/reset_pipeline.py reset-summary --dois 10.1063/5.0335213"
+            "\n    → 只重置指定 DOI，修复单篇异常总结"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_sum.add_argument("--publisher", help="仅重置指定出版社")
     p_sum.add_argument("--all", action="store_true",
         help="重置全部论文（含 success），修改 prompt 后重新生成总结时使用")
+    p_sum.add_argument("--dois",
+        help="按精确 DOI 重置，逗号分隔且不区分大小写；与 --all 互斥")
 
     p_rpt = sub.add_parser("reset-report",
         help="重置报告状态，使已报告论文重新出现在下次报告中",
@@ -724,6 +763,6 @@ if __name__ == "__main__":
             dois=args.dois,
         )
     elif args.command == "reset-summary":
-        cmd_reset_summary(args.publisher, reset_all=args.all)
+        cmd_reset_summary(args.publisher, reset_all=args.all, dois=args.dois)
     elif args.command == "reset-report":
         cmd_reset_report(args.publisher, days=args.days, today=args.today)

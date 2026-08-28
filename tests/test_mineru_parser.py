@@ -9,8 +9,6 @@ is required when uploading files", and the official example uses
 
 import sys
 import os
-import json
-import time
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -51,8 +49,6 @@ def test_upload_file_no_custom_content_type(parser, sample_pdf):
 
     def _capture_put(url, **kwargs):
         sent_headers.update(kwargs.get("headers", {}))
-        # Infer Content-Type from data if not explicitly set
-        data = kwargs.get("data", b"")
         resp = mock.MagicMock(spec=requests.Response)
         resp.status_code = 200
         return resp

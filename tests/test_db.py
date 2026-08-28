@@ -167,6 +167,98 @@ def test_update_llm_relevance_error(db):
     assert papers[0]["llm_relevance_status"] == "failed"
 
 
+def _insert_review_candidate(db, doi, category, confidence, screen_category=None):
+    """Insert a full-text relevance paper for manual review tests."""
+    db.insert_rss_basicinfo(doi, doi, "http://example.com", "J", "pub", "2025")
+    db.update_llm_relevance(
+        doi, category, "[]", confidence, "model reason",
+        FetchStatus.SUCCESS.value, "2025", basis="fulltext",
+    )
+    if screen_category:
+        db.update_relevance_screen(
+            doi, screen_category, "[]", "medium", "screen reason",
+            FetchStatus.SUCCESS.value, "2025",
+        )
+
+
+def test_relevance_review_queue_prioritizes_unreviewed_medium_b(db):
+    """Manual queue should put unreviewed B/medium papers first."""
+    _insert_review_candidate(db, "10.0000/review-c", "C", "high", "C")
+    _insert_review_candidate(db, "10.0000/review-b", "B", "medium", "B")
+    _insert_review_candidate(db, "10.0000/review-a", "A", "medium", "C")
+
+    rows = db.get_relevance_review_queue(status_filter="pending")
+    assert [row["doi"] for row in rows] == [
+        "10.0000/review-b",
+        "10.0000/review-a",
+        "10.0000/review-c",
+    ]
+    assert db.count_relevance_review_queue(status_filter="pending") == 3
+    assert db.count_relevance_review_queue(
+        status_filter="pending", disagreement_only=True,
+    ) == 1
+
+
+def test_save_relevance_review_preserves_history_and_snapshot(db):
+    """Repeated submissions append audit rows without changing LLM output."""
+    _insert_review_candidate(db, "10.0000/review-history", "B", "medium", "A")
+
+    first_id = db.save_relevance_review(
+        "10.0000/REVIEW-HISTORY", "B", "具体算法可迁移", "alice",
+    )
+    second_id = db.save_relevance_review(
+        "10.0000/review-history", "C", "全文显示主贡献并不相关", "bob",
+    )
+    assert second_id > first_id
+
+    rows = db.get_relevance_review_queue(status_filter="reviewed")
+    assert len(rows) == 1
+    assert rows[0]["review_decision"] == "C"
+    assert rows[0]["review_reviewer"] == "bob"
+    assert rows[0]["llm_relevance_category"] == "B"
+    history = db.conn.execute(
+        "SELECT COUNT(*) FROM relevance_reviews WHERE doi = ?",
+        ("10.0000/review-history",),
+    ).fetchone()[0]
+    assert history == 2
+
+
+def test_save_relevance_review_rejects_invalid_decision(db):
+    """Only A/B/C/D/uncertain are accepted as human decisions."""
+    _insert_review_candidate(db, "10.0000/review-invalid", "D", "high", "D")
+    with pytest.raises(ValueError, match="decision"):
+        db.save_relevance_review("10.0000/review-invalid", "maybe")
+
+
+def test_save_relevance_review_stores_uncertain_in_schema_case(db):
+    """The lowercase uncertain decision is accepted by the SQLite CHECK."""
+    _insert_review_candidate(db, "10.0000/review-uncertain", "C", "low", "C")
+
+    review_id = db.save_relevance_review(
+        "10.0000/review-uncertain", "UNCERTAIN", "需要进一步核对", "alice",
+    )
+
+    row = db.conn.execute(
+        "SELECT id, decision FROM relevance_reviews WHERE id = ?",
+        (review_id,),
+    ).fetchone()
+    assert row["decision"] == "uncertain"
+
+
+def test_save_relevance_review_requires_fulltext_result(db):
+    """Manual review cannot be attached to an abstract-only paper."""
+    db.insert_rss_basicinfo(
+        "10.0000/review-abstract", "T", "http://x", "J", "pub", "2025",
+    )
+    db.update_llm_relevance(
+        "10.0000/review-abstract", "B", "[]", "medium", "reason",
+        FetchStatus.SUCCESS.value, "2025", basis="abstract_clear_reject",
+    )
+
+    with pytest.raises(ValueError, match="full-text"):
+        db.save_relevance_review("10.0000/review-abstract", "B")
+
+
 # ---- Phase F: LLM 总结 ----
 
 def test_update_llm_summary(db):
@@ -205,6 +297,24 @@ def test_get_relevant_papers(db):
     relevant = db.get_relevant_papers()
     assert len(relevant) == 1
     assert relevant[0]["doi"] == "10.0000/r1"
+
+
+def test_get_pending_summary_papers_excludes_non_ab_and_non_fulltext(db):
+    """Phase F's queue contains only eligible full-text A/B papers."""
+    for doi, category, basis in (
+        ("10.0000/f-pending-a", "A", "fulltext"),
+        ("10.0000/f-pending-c", "C", "fulltext"),
+        ("10.0000/f-pending-b-abstract", "B", "abstract_clear_reject"),
+    ):
+        db.insert_rss_basicinfo(doi, doi, "http://x", "J", "pub", "2025")
+        db.update_llm_relevance(
+            doi, category, "[]", "high", "reason",
+            FetchStatus.SUCCESS.value, "2025", basis=basis,
+        )
+
+    pending = db.get_pending_summary_papers()
+
+    assert [row["doi"] for row in pending] == ["10.0000/f-pending-a"]
 
 
 def test_get_papers_for_report(db):
@@ -561,3 +671,36 @@ def test_get_papers_count_matches_get_papers_total(db):
         papers_cf = db.get_papers(limit=1000, category_filter=cf)
         assert count_cf == len(papers_cf), \
             f"category_filter={cf}: count={count_cf} != len={len(papers_cf)}"
+
+
+def test_get_papers_summary_filter_matches_count(db):
+    """Summary filtering must happen before pagination and count calculation."""
+    _insert_sort_papers(db)
+
+    papers = db.get_papers(limit=100, has_summary=True)
+
+    assert [paper["doi"] for paper in papers] == [
+        "10.9999/sort_a", "10.9999/sort_b",
+    ]
+    assert db.get_papers_count(has_summary=True) == 2
+
+
+def test_normalize_metadata_text_repairs_legacy_entities(db):
+    """Legacy encoded abstract entities are repaired by the metadata migration."""
+    db.insert_rss_basicinfo(
+        "10.0000/encoded", "Title&#xD;Part", "https://example.com",
+        "Journal", "Publisher", "2026-08-23",
+    )
+    db.conn.execute(
+        "UPDATE papers SET abstract = ? WHERE doi = ?",
+        ("first&#xD;second", "10.0000/encoded"),
+    )
+    db.conn.commit()
+
+    assert db.normalize_metadata_text() == 1
+    paper = db.conn.execute(
+        "SELECT title, abstract FROM papers WHERE doi = ?",
+        ("10.0000/encoded",),
+    ).fetchone()
+    assert paper["title"] == "Title Part"
+    assert paper["abstract"] == "first second"

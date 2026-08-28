@@ -19,11 +19,18 @@ paper_relevance.py
 import re
 import json
 import logging
-from typing import List, Dict, Any
+from typing import Dict, Any
 
-from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError
+from common import LLMAPICallError, LLMResponseParseError
+
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "PaperRelevanceChecker",
+    "LLMAPICallError",
+    "LLMResponseParseError",
+]
 
 
 class PaperRelevanceChecker:
@@ -47,6 +54,7 @@ class PaperRelevanceChecker:
         self.context_gates = keywords.get("context_gates", [])
         self.irrelevant_fields = keywords.get("irrelevant_fields", {})
         self.core_anchors = keywords.get("core_anchors", [])
+        self.keyword_catalog = keywords.get("keyword_catalog", [])
 
         # 从所有 topics 中自动提取关键词列表，用于传统关键词匹配
         all_keywords = []
@@ -94,6 +102,33 @@ class PaperRelevanceChecker:
             if pattern.search(text):
                 matched.add(pattern.pattern)
         return len(matched)
+
+    def keyword_catalog_matches(self, title: str, abstract: str) -> list[dict]:
+        """Return structured literal-term matches for audit and diagnostics.
+
+        This method is intentionally not used as the relevance decision.  It
+        exposes which catalog concepts were visible in title/abstract text so
+        benchmark and coverage tools can distinguish missing vocabulary from
+        an LLM classification error.
+
+        Parameters
+        ----------
+        title : str
+            Paper title.
+        abstract : str
+            Paper abstract.
+
+        Returns
+        -------
+        list[dict]
+            Matched catalog concepts with aliases and mapped sub-domains.
+        """
+        from keyword_catalog import match_catalog
+
+        return match_catalog(f"{title} {abstract}", {
+            "keyword_catalog": self.keyword_catalog,
+            "scope_definition": self.scope_definition,
+        })
 
     # ------------------------------------------------------------------
     # 方法2：通过 LLM API 判断相关性
@@ -169,6 +204,7 @@ class PaperRelevanceChecker:
             context_gates=self.context_gates,
             irrelevant_fields=self.irrelevant_fields,
             core_anchors=self.core_anchors,
+            keyword_catalog=self.keyword_catalog,
         )
         # 从 scope_definition 中提取合法的子领域 key 列表供 LLM 参考
         known_keys = list(self.scope_definition.keys()) if self.scope_definition else []

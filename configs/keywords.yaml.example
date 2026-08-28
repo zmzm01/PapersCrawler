@@ -11,6 +11,41 @@ core_anchors:
 - 激光驱动粒子的紧凑输运、聚焦及实验束线
 - 束流辐照效应与明确下游应用（材料、辐射生物、成像等）
 
+# Literal terms are maintained separately from the natural-language topics.
+# They support coverage audits and evidence extraction; a hit alone is not a
+# relevance decision.  Every entry should point to one or more scope keys.
+keyword_catalog:
+  - id: plasma_lens_and_focusing
+    terms: [plasma lens, active plasma lens, active plasma focusing]
+    subdomains: [high_gradient_beam_transport]
+    note: 等离子体透镜和主动等离子体聚焦
+  - id: capillary_plasma_channel
+    terms: [discharged capillary, capillary discharge, plasma channel]
+    subdomains: [plasma_waveguide_and_channel]
+    note: 放电毛细管与等离子体通道
+  - id: bunch_plasma_wakefield
+    terms: [bunch plasma wakefield, beam-plasma wakefield]
+    subdomains: [high_gradient_beam_transport]
+    note: 仅在束流传输、通道耦合或诊断语境中纳入
+  - id: ablation_plasma_diagnostics
+    terms: [烧蚀等离子体诊断, ablation plasma diagnostics]
+    subdomains: [laser_plasma_physics_and_diagnostics]
+  - id: capillary_diagnostics
+    terms: [毛细管诊断, 等离子体通道诊断, plasma channel diagnostics]
+    subdomains: [plasma_waveguide_and_channel, laser_plasma_physics_and_diagnostics]
+  - id: flash_hydrodynamics
+    terms: [FLASH流体动力学程序, FLASH hydrodynamics]
+    subdomains: [laser_plasma_physics_and_diagnostics]
+  - id: scintillator_detectors
+    terms: [闪烁体探测器, 塑料闪烁体, scintillator detector, plastic scintillator]
+    subdomains: [beam_irradiation_and_applications]
+  - id: beam_optics_and_diagnostics
+    terms: [可变形镜, 库仑力, 发射度, 电光晶体, deformable mirror, Coulomb force, emittance, electro-optic crystal]
+    subdomains: [high_gradient_beam_transport]
+  - id: acceleration_simulation_and_fields
+    terms: [EMP, electromagnetic pulse, post-acceleration, PIC simulation]
+    subdomains: [laser_driven_ion_acceleration, laser_plasma_physics_and_diagnostics]
+
 scope_definition:
   laser_driven_ion_acceleration:
     display_name: 激光驱动离子/质子加速
