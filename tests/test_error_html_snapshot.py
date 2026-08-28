@@ -28,6 +28,18 @@ class _FailingPage:
         return "<html><title>Chrome error</title></html>"
 
 
+class _ClosedPage:
+    """模拟浏览器上下文已关闭且无法再读取 HTML 的页面。"""
+
+    def is_closed(self):
+        """报告页面已关闭。"""
+        return True
+
+    def content(self):
+        """如果被错误调用则暴露生命周期回归。"""
+        raise AssertionError("closed pages must not be queried for content")
+
+
 def test_navigation_failure_saves_error_html_without_masking_original_error(
     tmp_path, monkeypatch,
 ):
@@ -43,3 +55,21 @@ def test_navigation_failure_saves_error_html_without_masking_original_error(
     error_files = list((tmp_path / "raw" / "error").glob("*.html"))
     assert len(error_files) == 1
     assert "Chrome error" in error_files[0].read_text(encoding="utf-8")
+
+
+def test_closed_page_does_not_emit_secondary_snapshot_failure(
+    tmp_path, monkeypatch, caplog,
+):
+    """关闭页面上的诊断保存应安全返回，不遮蔽原始错误。"""
+    monkeypatch.setattr(publisher_module, "RAW_PAGE_DIR", tmp_path / "raw")
+
+    scraper = BasePublisherScraper(tmp_path)
+    scraper.page = _ClosedPage()
+
+    with caplog.at_level("WARNING"):
+        assert not scraper._save_error_html(
+            "https://example.test/paper", "phaseC_fail",
+        )
+
+    assert "Event loop is closed" not in caplog.text
+    assert not list((tmp_path / "raw" / "error").glob("*.html"))
