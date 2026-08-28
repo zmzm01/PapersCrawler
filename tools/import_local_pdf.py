@@ -140,6 +140,7 @@ def reset_mineru_status(doi: str) -> int:
             " WHERE doi = ?",
             ('pending', doi),
         )
+        db.conn.commit()
         return cur.rowcount
 
 
