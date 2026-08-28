@@ -14,7 +14,6 @@ import json
 import os
 import sys
 from datetime import date, timedelta
-from unittest.mock import patch
 
 import pytest
 
@@ -92,7 +91,7 @@ def test_save_and_reload_roundtrip(tmp_last_run):
 
 def test_save_creates_state_dir(tmp_last_run):
     """写入时自动创建 STATE_DIR。"""
-    from pipeline.phase_a import _save_last_run_date, LAST_RUN_PATH
+    from pipeline.phase_a import _save_last_run_date
     nested = tmp_last_run / "deeper" / "nested"
     # 重新指向不存在的子目录
     import pipeline.phase_a as phase_a_module

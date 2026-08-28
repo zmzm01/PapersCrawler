@@ -22,7 +22,7 @@ skip_phases:
   H: true           # 邮件推送
 
 # ---------------------------------------------------------------------------
-# ntfy 最终运行汇总（不发送开始/逐阶段/即时错误通知）
+# ntfy 最终运行汇总（面向 Web App 的 Markdown；不发送开始/逐阶段/即时错误通知）
 # ---------------------------------------------------------------------------
 ntfy:
   enabled: false
@@ -34,24 +34,31 @@ ntfy:
 # LLM API 配置
 # ---------------------------------------------------------------------------
 llm:
-  # OpenAI 兼容服务的基础地址；程序自动追加 /chat/completions。
-  # 切换 OpenCode Go 等网关时，仅修改此项（可保留 /v1 路径前缀）。
+  # 服务基础地址；各角色可选择 openai_chat、openai_responses 或
+  # anthropic_messages 协议。
+  # 可保留 /v1 路径前缀，程序会自动追加对应端点。
   base_url: https://api.deepseek.com
 
   # 相关性判断（Phase E）— 快速模型，不需深度思考
   relevance:
+    protocol: openai_chat
     model: deepseek-v4-flash
     thinking: disabled
     timeout: 300
 
   # 论文总结（Phase F）— 更强模型，开启深度思考
   summary:
+    # Responses API 示例；若使用 OpenCode Muse Spark Contributor，使用该协议。
+    # protocol: openai_responses
+    # model: muse-spark-1.2-contributor
+    protocol: openai_chat
     model: deepseek-v4-pro
     thinking: enabled
     timeout: 300
 
   # 正文相关性终审（Phase E3）— 强模型
   fulltext_relevance:
+    protocol: openai_chat
     model: deepseek-v4-pro
     thinking: enabled
     timeout: 300
@@ -100,6 +107,10 @@ publisher:
     optica:
       server: "http://proxy.example.com:8080"
 
+  # 所有常规重试失败后，使用该代理新建浏览器上下文再尝试一次。
+  # 留空表示关闭；代理 URL 只用于 Phase C 的末级 fallback。
+  fallback_proxy_url: ""
+
 # ---------------------------------------------------------------------------
 # FormulaFixer 公式修复
 # ---------------------------------------------------------------------------
@@ -108,3 +119,11 @@ formula_fix:
   skip: false
   # true = 跳过 needs_fix() 检测，所有字段强制送修
   force: false
+  # FormulaFixer 独立并发上限，不占用 Phase E/F 的总结并发池
+  concurrent_max: 10
+  llm:
+    protocol: openai_chat
+    model: deepseek-v4-flash
+    thinking: disabled
+    max_tokens: 4096
+    timeout: 120

@@ -59,6 +59,7 @@ def render_relevance_prompt() -> str:
     scope_definition = keywords.get("scope_definition", {})
     context_gates = keywords.get("context_gates", [])
     irrelevant_fields = keywords.get("irrelevant_fields", {})
+    keyword_catalog = keywords.get("keyword_catalog", [])
 
     # --- 替换 {scope_block} ---
     replace_scope = bool(scope_definition)
@@ -68,6 +69,7 @@ def render_relevance_prompt() -> str:
                 scope_definition,
                 context_gates=context_gates,
                 irrelevant_fields=irrelevant_fields,
+                keyword_catalog=keyword_catalog,
             )
             template = template.replace("{scope_block}", scope_block)
         except Exception as exc:

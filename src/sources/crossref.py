@@ -24,6 +24,8 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
+from common import clean_extracted_text
+
 
 # =========================================================
 # 自定义异常
@@ -237,7 +239,6 @@ class CrossrefClient:
 
         url = f"{self.BASE_URL}/journals/{issn}/works"
 
-        last_error = None
         while True:
             params = {
                 "filter": (
@@ -256,8 +257,7 @@ class CrossrefClient:
                     response.raise_for_status()
                     data = response.json()
                     break
-                except requests.RequestException as e:
-                    last_error = e
+                except requests.RequestException:
                     if attempt == self.max_retries - 1:
                         raise
                     time.sleep(2 ** attempt)
@@ -316,14 +316,19 @@ class CrossrefClient:
         if not abstract:
             return None
 
+        # Decode entities before parsing.  CrossRef records occasionally
+        # contain an entity-encoded control character in an otherwise plain
+        # abstract (for example ``&#xD;``).
+        decoded_abstract = clean_extracted_text(abstract)
+        if not decoded_abstract:
+            return None
+
         # 使用 lxml 解析器处理 JATS XML 片段
-        soup = BeautifulSoup(abstract, "lxml")
+        soup = BeautifulSoup(decoded_abstract, "lxml")
         # get_text(" ") 用空格连接各文本节点，避免单词粘连
         text = soup.get_text(" ")
         # 将连续的空白字符（空格、换行、制表符）压缩为单个空格
-        text = " ".join(text.split())
-
-        return text
+        return clean_extracted_text(text)
 
     # ---------------------------------------------------------
     # 元数据解析

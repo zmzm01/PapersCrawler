@@ -10,7 +10,6 @@ import logging
 from config import (
     CFG, RAW_RSS_DIR, LAST_RUN_PATH, STATE_DIR,
 )
-from db.database import DatabaseClient, FetchStatus
 from pipeline.base import load_journal_overrides, journal_effective
 from sources.rss import RSSProcessor
 from sources.crossref import CrossrefClient

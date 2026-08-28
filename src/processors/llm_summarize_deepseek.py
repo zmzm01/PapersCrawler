@@ -19,13 +19,13 @@ llm_summarize_deepseek.py
 
 import os
 from pathlib import Path
-import json
 import re
 import logging
 import requests
 from typing import Dict, Any
 
-from common import LLMConfigurationError, LLMAPICallError, LLMResponseParseError, LLMContextLengthExceed
+from common import LLMCircuitBreaker, LLMContextLengthExceed
+from processors.summary_schema import repair_llm_text_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +208,8 @@ class FormulaFixer:
         "3. 修复缺少反斜杠的分隔符\n\n"
         "【修正规则】\n"
         "- 行内公式必须用 \\(...\\) 包裹，独立公式必须用 \\[...\\] 包裹\n"
+        "- 严禁使用 $...$ 或 $$...$$；将其转换为上述分隔符\n"
+        "- 严禁使用 \\begin{...} / \\end{...}；将 cases、矩阵等改写为纯文本条件或行内公式\n"
         "- 不要改变文本内容、语序、标点\n"
         "- 输出中不应保留任何数学类 Unicode 字符\n\n"
         "只输出修正后的文本，不要包含任何额外解释："
@@ -230,7 +232,6 @@ class FormulaFixer:
         self.force = force
         self._session = requests.Session()
         self._session.headers.update({
-            "Authorization": f"Bearer {self.config['api_key']}",
             "Content-Type": "application/json",
         })
 
@@ -256,6 +257,10 @@ class FormulaFixer:
         """
         if force:
             return True
+        if repair_llm_text_artifacts(text) != text:
+            return True
+        if "$" in text or r"\begin{" in text or r"\end{" in text:
+            return True
         cleaned = re.sub(r'\\\(.*?\\\)|\\\[.*?\\\]', '', text, flags=re.DOTALL)
         # Unicode 数学字符范围：希腊字母、上下标、箭头、运算符、字母类符号
         unicode_math = (
@@ -275,7 +280,12 @@ class FormulaFixer:
             cleaned,
         ))
 
-    def fix_text(self, text: str, field_name: str = "") -> str:
+    def fix_text(
+        self,
+        text: str,
+        field_name: str = "",
+        circuit_breaker: LLMCircuitBreaker | None = None,
+    ) -> str:
         """修正单段文本中的 LaTeX 公式格式问题。
 
         Parameters
@@ -284,6 +294,8 @@ class FormulaFixer:
             需要修复的文本字符串（纯文本，单反斜杠）
         field_name : str
             字段名（用于日志）
+        circuit_breaker : LLMCircuitBreaker | None
+            FormulaFixer 专用的共享熔断器。
 
         Returns
         -------
@@ -294,32 +306,45 @@ class FormulaFixer:
         if not text or text == "未提供":
             logger.debug(f"{tag}跳过修复: 空字段或未提供")
             return text
-        if not self.needs_fix(text, force=self.force):
+        locally_repaired = repair_llm_text_artifacts(text)
+        if not self.needs_fix(locally_repaired, force=self.force):
             logger.debug(f"{tag}跳过修复: 无需修复")
-            return text
-        logger.info(f"{tag}正在修复公式格式 ({len(text)} 字符)")
+            return locally_repaired
+        logger.info(f"{tag}正在修复公式格式 ({len(locally_repaired)} 字符)")
         # 模型和 api_url 均来自 self.config（由调用方从 config.py 传入），
         # 因此 FormulaFixer 的模型配置与 settings.yaml 保持一致。
         payload = {
             "model": self.config.get("model", "deepseek-v4-flash"),
             "messages": [
-                {"role": "user", "content": self._get_fix_prompt() + "\n\n" + text},
+                {"role": "user", "content": self._get_fix_prompt() + "\n\n" + locally_repaired},
             ],
             "thinking": {"type": "disabled"},
         }
+        configured_max_tokens = self.config.get(
+            "max_output_tokens", self.config.get("max_tokens"),
+        )
+        if configured_max_tokens is not None:
+            payload["max_tokens"] = configured_max_tokens
         try:
-            resp = self._session.post(
-                self.config["api_url"],
-                json=payload,
-                timeout=self.config.get("timeout", 60),
+            from common import call_llm_api_with_retry
+
+            fixed = call_llm_api_with_retry(
+                self.config,
+                {
+                    "Authorization": f"Bearer {self.config['api_key']}",
+                    "Content-Type": "application/json",
+                },
+                payload,
+                session=self._session,
+                circuit_breaker=circuit_breaker,
+                expect_json=False,
             )
-            resp.raise_for_status()
-            fixed = resp.json()["choices"][0]["message"]["content"]
-            logger.info(f"{tag}公式修复成功 ({len(text)}→{len(fixed)} 字符)")
+            fixed = repair_llm_text_artifacts(fixed)
+            logger.info(f"{tag}公式修复成功 ({len(locally_repaired)}→{len(fixed)} 字符)")
             return fixed
         except Exception as e:
-            logger.warning(f"{tag}公式修复失败，回退原内容: {e}")
-            return text
+            logger.warning(f"{tag}公式修复失败，回退本地修复内容: {e}")
+            return locally_repaired
 
 
 if __name__ == "__main__":

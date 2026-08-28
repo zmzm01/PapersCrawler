@@ -18,7 +18,7 @@ import feedparser
 from pathlib import Path
 from dateutil import parser
 
-from common import Paper
+from common import Paper, clean_extracted_text
 
 # dateutil.parser.parse() 无法识别 "EST" 等时区缩写时会发出 UnknownTimezoneWarning。
 # 由于 RSS 日期只用于生成 YYYY-MM-DD（时区信息在 strftime 时被丢弃），
@@ -154,8 +154,8 @@ class RSSProcessor:
 
             paper = Paper(
                 doi=doi,
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
+                title=clean_extracted_text(entry.get("title", "")) or "",
+                url=clean_extracted_text(entry.get("link", "")) or "",
                 date=dt,
             )
             papers.append(paper)
