@@ -1,221 +1,113 @@
 # 使用手册
 
-> 本文档详细记录 PapersCrawler 所有**入口**、**工具**与**配置**的用法。
-> 面向需要运行、调试、扩展本项目的开发者与用户。
->
-> 架构设计请见 [`docs/design.md`](design.md)，变更记录请见 [`docs/tasks.md`](tasks.md)。
+> 本文面向实际使用者。架构细节见 [`docs/design.md`](design.md)，历史记录见 [`docs/archive/`](archive/)。
 
 ## 目录
 
-- [运行模式总览](#运行模式总览)
-- [CLI 模式](#cli-模式)
-- [Web UI 模式](#web-ui-模式)
+- [安装与首次运行](#安装与首次运行)
+- [CLI 与调度](#cli-与调度)
+- [WebUI](#webui)
 - [典型工作流](#典型工作流)
-- [配置详解](#配置详解)
+- [关键词管理与效果评估](#关键词管理与效果评估)
+- [配置](#配置)
 - [工具索引](#工具索引)
-- [Publisher 与爬虫](#publisher-与爬虫)
-- [数据流与架构](#数据流与架构)
-- [测试](#测试)
-- [故障排查速查](#故障排查速查)
+- [输出与数据](#输出与数据)
+- [测试与故障排查](#测试与故障排查)
 
----
-
-## 运行模式总览
-
-本项目支持两种互补的运行方式：
-
-| 维度 | CLI 模式 | Web UI 模式 |
-|------|---------|------------|
-| **定位** | 自动化、定时任务、深度调试 | 只读监控仪表盘与报告档案馆 |
-| **入口** | `python tools/run_pipeline.py` **（推荐，替代旧 `src/main.py`）** | `uvicorn src.web.app:app` |
-| **典型用户** | cron 调度、批量全流程 | 日常用户检查、阅览已有报告 |
-| **配置来源** | `src/config.py` 的 `SKIP_PHASE_*` 开关 | `src/config.py` 的 `SKIP_PHASE_*` 开关（WebUI 不覆写） |
-| **典型环境** | 无头服务器（需 Xvfb 跑 Phase C） | 桌面或局域网（推荐） |
-| **并发** | 单进程 | FastAPI 只读请求 |
-
-**注意**：阶段开关（`SKIP_PHASE_*`）在 CLI 和 WebUI 间保持一致，均读取 `src/config.py` > `settings.yaml` 的配置。不再存在独立的运行时覆写层（P2 合并配置层后 `skip_overrides.json` 已移除）。
-
----
-
-## CLI 模式
-
-所有 CLI 命令通过 `PYTHONPATH=src python <脚本>` 形式调用，详见各子节。
-
-### 全流程入口
-
-#### `python tools/run_pipeline.py` **（推荐）**
-
-统一流水线入口，替代 `src/main.py` / `schedule_daily.py` / `schedule_weekly.py`。
-
-支持四种互斥模式：
-
-| 模式 | 说明 | 等效旧入口 |
-|------|------|-----------|
-| `--daily` | 每日调度：Phase A-RSS/A-CR/B/C/E/E2/E3/F | `schedule_daily.py` |
-| `--weekly` | 每周调度：Phase G/H | `schedule_weekly.py` |
-| `--all` | 全流程强制：忽略 SKIP 配置执行全部阶段 | `src/main.py` |
-| `--phases A,B,C` | 自定义阶段列表 | — |
+## 安装与首次运行
 
 ```bash
-# 每日调度（cron 用）
-python tools/run_pipeline.py --daily
+python -m pip install -r requirements.txt
+cp .env.example .env
 
-# 每周调度（cron 用）
-python tools/run_pipeline.py --weekly
+# 编辑 .env，至少填写：
+# CROSSREF_MAILTO / MINERU_TOKEN / DEEPSEEK_API_KEY
+vim configs/keywords.yaml
 
-# 全流程强制（调试用）
+# 桌面环境
 python tools/run_pipeline.py --all
 
-# 选定阶段
-python tools/run_pipeline.py --phases A-RSS,B,C,F
+# 无头服务器（Phase C 需要显示器）
+xvfb-run -a python tools/run_pipeline.py --all
 ```
 
-默认行为（不传任何模式）等效 `--all`。
+报告默认写入 `data/reports/auto/`。如果只想查看执行计划，增加 `--dry-run`；dry-run 不重置数据库、不运行阶段、不发送 ntfy。
 
-**其他参数**：
+## CLI 与调度
 
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `--dry-run` | 关闭 | 只打印执行计划，不实际运行 |
-| `--reset-publisher` / `--no-reset-publisher` | reset | 运行前重置失败 Publisher 抓取 |
-| `--reset-mineru` / `--no-reset-mineru` | reset | 运行前重置失败 MinerU 解析 |
-| `--reset-relevance` / `--no-reset-relevance` | reset | 运行前重置失败 LLM 相关性判断 |
-| `--log-level DEBUG\|INFO\|WARNING\|ERROR` | `LOG_LEVEL` env | 日志级别 |
+### 推荐入口
 
-自动重置逻辑与 `schedule_daily.py` 一致：
-- `publisher_page_fetched_status = 'failed'` → `pending`
-- `mineru_parse_status IN ('failed', 'skipped')` → `pending`
-- `relevance_screen_status = 'failed'` → `pending`（Phase E 初筛）
-- `llm_relevance_status = 'failed'` → `pending`（Phase E3 终审）
+`python tools/run_pipeline.py` 是统一入口：
 
-**典型 cron**：
-```bash
-# 每天 2:00
-0 2 * * * cd /path/to/PapersCrawler && python tools/run_pipeline.py --daily
+| 参数 | 阶段 | 说明 |
+|---|---|---|
+| `--daily` | A-RSS/A-CR/B/C/E/E2/E3/F | 日常发现、抓取、全文判断和总结 |
+| `--weekly` | G/H | 报告生成和邮件推送 |
+| `--all` | A-RSS/A-CR/B/C/E/E2/E3/F/G/H | 忽略 `skip_phases` 全流程执行 |
+| `--phases A,B,C` | 指定阶段 | 只运行列出的阶段 |
 
-# 每周日 20:00（Asia/Shanghai；Phase G/H 无需浏览器）
-0 20 * * 7 cd /path/to/PapersCrawler && python tools/run_pipeline.py --weekly
-```
+不传模式时等效于 `--all`。`--all` 会临时覆盖阶段 skip flag，执行所有阶段；发生阶段错误或初始化错误时返回退出码 1，成功返回 0。旧的 `src/main.py` 仅保留兼容用途；生产调度统一使用此入口。
 
-> **⚠️ `src/main.py` / `schedule_daily.py` / `schedule_weekly.py` 已弃用** —— 请迁移到 `tools/run_pipeline.py`。旧入口保留向后兼容，不再主动维护。
+### 常用参数
 
-### 阶段开关（SKIP_PHASE）
+| 参数 | 作用 |
+|---|---|
+| `--dry-run` | 只显示计划 |
+| `--reset-publisher` / `--no-reset-publisher` | 是否自动重置 Publisher failed |
+| `--reset-mineru` / `--no-reset-mineru` | 是否自动重置 MinerU failed/skipped |
+| `--reset-relevance` / `--no-reset-relevance` | 是否自动重置 E/E3 failed |
+| `--log-level LEVEL` | DEBUG/INFO/WARNING/ERROR |
 
-通过 `configs/settings.yaml` 的 `skip_phases` 配置：
+### 阶段开关
+
+在 `configs/settings.yaml` 中设置：
 
 ```yaml
 skip_phases:
-  A_RSS: false       # Phase A RSS 发现
-  A_CR: false        # Phase A CrossRef 发现
-  B: false           # CrossRef 元数据
-  C: false           # Publisher 页面爬取
-  E: false           # LLM 相关性
-  E2: false          # MinerU PDF
-  E3: false          # 正文相关性终审
-  F: false           # LLM 总结
-  G: false           # 报告生成
-  H: true            # 邮件推送（默认关闭，需配 SMTP）
+  A_RSS: false
+  A_CR: false
+  B: false
+  C: false
+  E: false
+  E2: false
+  E3: false
+  F: false
+  G: false
+  H: true
 ```
 
-阶段跳过统一通过 `settings.yaml` 的 `skip_phases` 节控制。不再有独立的运行时覆写文件。
+`--daily` 和 `--weekly` 遵守这些开关；`--all` 忽略它们。每阶段处理上限由 `pipeline.max_papers_per_phase` 控制，按整个阶段计算而不是按 Publisher 重置，0 表示不限制。
 
-### 日志
-
-日志文件：`data/PaperCrawler.log`（RotatingFileHandler，10MB × 5 backup）。
-
-通过环境变量控制级别：
-
-```bash
-LOG_LEVEL=DEBUG python tools/run_pipeline.py --daily
-LOG_LEVEL=INFO  python tools/run_pipeline.py --daily  # 生产默认
-LOG_LEVEL=WARNING python tools/run_pipeline.py --daily
-```
-
----
-
-## Web UI 模式
-
-```bash
-# 桌面环境
-PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080
-
-# 无头服务器（Phase C 需要虚拟显示）
-xvfb-run -a bash -c 'PYTHONPATH=src uvicorn src.web.app:app --host 0.0.0.0 --port 8080'
-```
-
-打开 http://localhost:8080。
-
-### 页面索引
-
-| 路由 | 页面 | 核心功能 |
-|------|------|---------|
-| `/` | Dashboard（302 重定向） | 自动跳转到 Dashboard |
-| `/dashboard` | Dashboard | 3 统计卡片（论文总数/待报告/出版社）+ Pipeline 阶段柱状图（pending 合并到 skipped）+ 7 天采集趋势图（3 桶：reportable/total_failed/other） |
-| `/papers` | Papers | 论文列表（按日期排序），默认仅显示 A/B 论文，可切 A Only / B Only / A/B / All |
-| `/report` | Report | 报告查看 + 下载（只读） |
-
-> Home / Pipeline / Logs 页面已在 2026-07-26 瘦身中删除。`/` 根路径 302 重定向到 `/dashboard`。
-
-### Papers 页
-
-默认查询：`llm_relevance_status='success' AND llm_relevance_category IN ('A','B')`。
-
-参数：
-- `?sort=created|published|summary` — 排序键（默认 created）
-  - `created`：按 `created_date`（入库时间）
-  - `published`：按 `paperdate_rss/crossref/page`（发表日期，精度受 RSS Feed 限制）
-  - `summary`：按 `llm_summary_date DESC`（最近生成总结的论文）
-- `?category=a|b|ab|all` — LLM 相关性筛选（默认 `ab`）
-  - `a`：仅 A 级
-  - `b`：仅 B 级
-  - `ab`：A 或 B（默认）
-  - `all`：全部（含 C/D）
-
-### Email 收件人配置
-
-收件人列表通过 `data/email.yaml` 管理（详见 [data/email.yaml](#-dataemail.yaml--邮件收件人配置)），`enabled: true` 的收件人会被 Phase H 使用。文件不存在或为空时回退到 `.env SMTP_TO_ADDRS`。
-
----
-
-## 典型工作流
-
-### 1. 从零开始的第一次运行
-
-```bash
-# 1) 安装
-pip install -r requirements.txt
-
-# 2) 复制密钥模板
-cp .env.example .env
-# 编辑 .env 填入 CROSSREF_MAILTO / MINERU_TOKEN / DEEPSEEK_API_KEY
-
-# 3) 编辑研究领域定义
-vim configs/keywords.yaml   # 填写 scope_definition
-
-# 4) 全流程跑一次
-python src/main.py          # 耗时取决于论文数量
-
-# 5) 查看结果
-ls data/reports/auto/        # 自动日报 Markdown
-```
-
-### 2. 日常维护（cron）
+### Cron
 
 ```cron
-# crontab
-0 10 * * * /path/to/PapersCrawler/run_daily.sh   >> /path/to/crawler_daily.log  2>&1
-0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh  >> /path/to/crawler_weekly.log 2>&1
+0 2 * * * cd /path/to/PapersCrawler && ./run_daily.sh >> /var/log/paperscrawler-daily.log 2>&1
+0 20 * * 7 cd /path/to/PapersCrawler && ./run_weekly.sh >> /var/log/paperscrawler-weekly.log 2>&1
 ```
 
-每天早上检查邮件，周日晚上查汇总报告；服务器时区应为 `Asia/Shanghai`。
+服务器建议使用 `Asia/Shanghai` 时区。包装脚本已经设置项目目录、PYTHONPATH 和 cron 所需的 PATH。
 
-### ntfy 单条运行汇总
+### 日志和 ntfy
 
-`tools/run_pipeline.py` 在一次非 dry-run 自动运行结束时最多发送一条 ntfy 通知。通知包括运行状态、起止时间、总耗时、各阶段结果与耗时、Phase E/E3 相关性统计、Phase F 总结统计和有限错误摘要。
+日志按自然日写入 `data/logs/PaperCrawler-YYYY-MM-DD.log`，单日文件达到 10MB
+后最多保留一个 `.1` 备份，默认保留最近 14 天。旧的 `data/PaperCrawler.log`
+是历史聚合日志，不再作为新入口的写入目标。设置 `LOG_LEVEL=INFO` 可减少输出。
 
-通知使用 Markdown 请求头/内容类型和 Bearer token。正文采用 ntfy 官方支持的兼容子集：标题、粗体、行内代码、引用块、列表、emoji 和分隔线；**不使用 Markdown 表格**，因为 ntfy 的 Markdown 子集不支持表格。Web App 可渲染这些格式，部分移动端客户端可能仍按纯文本展示。正文保守限制在 3500 UTF-8 bytes；错误最多展示有限条，并移除 token、Bearer 值、URL 和本地路径。发送失败只写日志，不改变流水线结果。通知中不设置 `Click`、Dashboard 或任何公网链接。
+不需要手工 `cat`/`grep` 时，直接运行日志统计工具：
 
-敏感配置放在 `.env`：
+```bash
+python tools/log_report.py                         # 今天的 WARNING/ERROR
+python tools/log_report.py --days 7                 # 最近 7 天汇总
+python tools/log_report.py --level ERROR --limit 50 # 只看错误明细
+python tools/log_report.py --contains "MinerU"      # 按关键词筛选
+python tools/log_report.py --summary-only           # 只看总数、来源和高频消息
+python tools/log_report.py --json > /tmp/log.json   # 给脚本继续处理
+```
+
+默认输出包括级别总数、产生问题最多的模块、重复消息和最近明细；终端会自动使用
+颜色突出错误，重定向或 `--json` 时不会混入颜色控制符。
+
+ntfy 敏感项位于 `.env`：
 
 ```dotenv
 NTFY_BASE_URL=https://ntfy.sh
@@ -223,7 +115,7 @@ NTFY_TOPIC=your_private_topic
 NTFY_TOKEN=tk_your_access_token
 ```
 
-非敏感配置放在 `configs/settings.yaml`：
+非敏感项位于 `configs/settings.yaml`：
 
 ```yaml
 ntfy:
@@ -233,811 +125,592 @@ ntfy:
   priority: default
 ```
 
-`NTFY_TOPIC` 在公共 ntfy 服务上具有类似密码的作用，应保持难以猜测。`--dry-run` 不执行重置、不运行阶段，也不会发送通知。
+每次非 dry-run 运行最多发送一条通知，正文面向 ntfy Web App 使用较宽松的 Markdown 布局，依次展示运行概览、阶段执行、E 初筛/E3 正文终审的状态与 A/B/C/D 分类统计、F 总结状态，以及问题和连续失败提醒。问题会按
+`C 抓取失败`、`E2 PDF/MinerU失败`、`LLM失败`、`通知失败`、`其他问题` 等类别合并计数，并展示脱敏示例。连续失败提醒只针对下载审计表中同一个 DOI 的 E2 PDF/MinerU 失败：连续 2 天提示关注，连续 3 天标记“需人工干预”；不同 DOI 不会合并计算。通知正文使用 ntfy Web App 支持的标题、粗体/斜体、列表、引用块、行内代码和分隔线，不使用表格或 `<details>` 等扩展语法。通知不发送原始长错误堆栈；详细信息仍查看 `python tools/log_report.py` 和 `data/raw/page/error/`。通知失败不会改变流水线结果。
 
-### 3. 修改领域定义后重新筛选
+## WebUI
+
+启动：
 
 ```bash
-# 1) 修改 configs/keywords.yaml 的 scope_definition
-# 2) 重置 LLM 相关性判断
+LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 8080
+```
+
+上述命令适合临时调试。日常运行推荐使用 systemd，使 WebUI 脱离终端、开机启动并在异常退出后自动重启。
+WebUI 本身不启动浏览器或流水线，因此不需要 `xvfb-run`；无头服务器只有运行包含 Phase C 的流水线时才需要虚拟显示器。
+
+### systemd 管理 WebUI
+
+项目提供了用户级 service 模板：
+[`deploy/systemd/paperscrawler-web.service`](../deploy/systemd/paperscrawler-web.service)。
+它默认使用 `/path/to/paperscrawler-venv/bin/python`，安装前请按实际环境修改
+`ExecStart` 的 Python 解释器路径。模板默认监听 `127.0.0.1:8080`、使用单 worker、`INFO` 日志，
+并在进程异常退出后 5 秒重启。
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/paperscrawler-web.service ~/.config/systemd/user/
+
+# 如果 Python 环境路径不同，编辑 ExecStart 后再执行以下命令
+systemctl --user daemon-reload
+systemctl --user enable --now paperscrawler-web.service
+systemctl --user status paperscrawler-web.service
+```
+
+查看实时日志：
+
+```bash
+journalctl --user -u paperscrawler-web.service -f
+```
+
+应用仍会将日志写入 `data/logs/PaperCrawler-YYYY-MM-DD.log`；systemd/journald 额外保存标准输出，
+适合查看启动失败和进程重启原因。常用维护命令：
+
+```bash
+systemctl --user restart paperscrawler-web.service
+systemctl --user stop paperscrawler-web.service
+systemctl --user disable paperscrawler-web.service
+```
+
+如果希望用户未登录时也自动启动，需要在主机上启用 lingering：
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+局域网访问建议让 Nginx 等反向代理监听外部地址，再转发到 `127.0.0.1:8080`，并由代理层提供
+TLS、认证、限速和访问源限制。临时调试才可将 uvicorn 改为 `--host 0.0.0.0`；当前 WebUI
+不适合直接暴露公网。systemd 只管理 WebUI 进程，日常/每周流水线仍由下面的 cron 任务负责。
+
+| 路由 | 功能 |
+|---|---|
+| `/` | 302 跳转到 Dashboard |
+| `/dashboard` | 阶段状态、统计卡片和 7 日趋势 |
+| `/papers` | 论文列表、A/B 分类、已总结筛选、排序和分页 |
+| `/report` | 查看和下载已有报告 |
+| `/relevance-review` | 人工审核队列 |
+| `/relevance-review/{doi}` | 单篇审核详情 |
+
+审核队列只显示 E3 已完成全文终审的论文：`llm_relevance_status=success` 且 `llm_relevance_basis=fulltext`。默认优先未审核 B/中置信度、初筛/终审分歧和 A/中置信度记录。
+
+审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照，不覆盖 `papers` 原始结果。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
+
+## 典型工作流
+
+### 修改研究范围后重判
+
+```bash
+vim configs/keywords.yaml
 python tools/reset_pipeline.py reset-relevance --all
-# 仅重判指定论文（DOI 不区分大小写，可与 --publisher 组合）
-python tools/reset_pipeline.py reset-relevance --dois 10.1017/hpl.2025.10094,10.1088/1361-6587/ae99fd,10.1088/1361-6587/ae97b7
-# 3) 重跑后续阶段（自动从断点继续）
 python tools/run_pipeline.py --phases E,E2,E3,F
 ```
 
-### 4. Phase C 被 Cloudflare 拦截后重试
+只重判指定 DOI：
 
 ```bash
-# 仅重置某个 publisher
+python tools/reset_pipeline.py reset-relevance --dois DOI1,DOI2
+```
+
+### Publisher 抓取失败后重试
+
+```bash
 python tools/reset_pipeline.py reset-publisher --publisher aps
-# 重跑 Phase C→G
-python src/main.py
+python tools/run_pipeline.py --all
 ```
 
-### 5. WebUI 中快速生成特定论文的报告
+Cloudflare/Radware 或早期导航失败时先查看 `data/raw/page/error/` 和同一时间段的 `data/logs/PaperCrawler-YYYY-MM-DD.log`，再调整 `publisher.page_delay_*`、`publisher.proxy` 或挑战页 reload 参数。错误快照是诊断辅助；即使浏览器在页面 HTML 生成前失败，日志也应保留原始导航异常，而不是被快照保存错误覆盖。若 fallback 浏览器已经关闭，快照保存会只使用此前缓存的 HTML，不再调用已关闭页面的 `content()`。
 
-1. 打开 `/report` 页
-2. 用 Publisher 下拉筛选，勾选需要的论文
-3. 点击 Generate → 浏览器预览 → 下载 Markdown
-
-`report` 页生成的报告写入 `data/reports/user/`（精确到秒命名），**不**标记数据库，
-不影响下次 Phase G 自动报告。
-
-### 6. 给团队发送日报
-
-1. `/subscriptions` 页 → 添加成员邮箱
-2. 点击 "Send Report" → 勾选收件人 → 确认发送
-
-也可通过 CLI：
-
-```bash
-python tools/run_pipeline.py --weekly     # 完整 G→H
-```
-
-### 7. 修改报告模板/字段后预览
-
-不写数据库、不影响下次 Phase G：
-
-```bash
-# 全部 A/B 论文
-python tools/preview_report.py --scope all --output /tmp/preview.md
-
-# 本周（ref_date 前 7 天）
-python tools/preview_report.py --scope week --date 2026-07-26 --output /tmp/p.md
-
-# 当天
-python tools/preview_report.py --scope today --output /tmp/p.md
-
-# 仅 Markdown，跳过 explainer
-python tools/preview_report.py --scope all --output /tmp/p.md --no-explainer
-```
-
-详见 [`tools/preview_report.py` 文档](#报告预览)。
-
----
-
-## 配置详解
-
-### `.env` — 密钥（必须，gitignored）
-
-```ini
-# CrossRef API 联系邮箱（API 政策要求）
-CROSSREF_MAILTO=your_email@example.com
-
-# MinerU API Token（可解码 JWT 查过期时间）
-MINERU_TOKEN=your_mineru_token_here
-
-# DeepSeek API 密钥
-DEEPSEEK_API_KEY=sk-your-deepseek-key
-
-# SMTP 邮件推送（可选，不配则跳过 Phase H）
-SMTP_HOST=smtp.qq.com
-SMTP_PORT=587
-SMTP_USE_TLS=true
-SMTP_USERNAME=your_email@qq.com
-SMTP_PASSWORD=your_auth_code
-SMTP_FROM_ADDR=your_email@qq.com
-SMTP_TO_ADDRS=colleague1@example.com,colleague2@example.com
-```
-
-> 推荐迁移到 `data/email.yaml`（支持 per-user 开关，详见下文 `data/email.yaml` 节）。
-
-`src/config.py` 通过 `os.getenv()` 读取，缺失时留空（对应功能跳过）。
-
-### `configs/settings.yaml` — 运行参数
-
-完整结构：
+Phase C 的常规浏览器重试全部失败后，还可以配置一个末级代理 fallback。该 fallback 会用新浏览器上下文重试当前论文一次；成功会写入正常成功状态，失败仍按原错误流程落库。代理 URL 为空时关闭：
 
 ```yaml
-skip_phases:                     # 阶段开关
-  A_RSS: false
-  A_CR: false
-  B: false
-  C: false
-  E: false
-  E2: false
-  F: false
-  G: false
-  H: true                        # 邮件默认跳过
-
-llm:
-  # OpenAI 兼容服务基础地址；程序自动追加 /chat/completions。
-  # 例如网关地址可保留 /v1 路径前缀。
-  base_url: https://api.deepseek.com
-  relevance:                     # Phase E 相关性判断
-    model: deepseek-v4-flash
-    thinking: disabled
-    timeout: 300
-  summary:                       # Phase F 总结
-    model: deepseek-v4-pro
-    thinking: enabled
-    timeout: 300
-  concurrent_max: 100            # Phase E/F 并发上限
-
-pipeline:
-  crossref_lookback_days: 1      # A-CR 日常回溯
-  crossref_lookback_days_max: 7  # A-CR 故障补漏上限
-  max_papers_per_phase: 0        # 0 = 不限制
-  skip_nature_news: true
-  prefetch_non_research: true    # 浏览器前过滤非论文
-  postfetch_non_research: true   # 抓取后再检测（兜底）
-  non_research_keywords:         # 标题前缀列表（大小写不敏感）
-    - "erratum"
-    - "corrigendum"
-    - "author correction:"
-    - "publisher correction:"
-    - "comment on"
-    - "response to"
-    - "publisher's note"
-
 publisher:
-  page_delay_min: 3              # 页面间隔（秒）
-  page_delay_max: 5
-  max_consecutive_failures: 3    # 连续失败 N 篇后熔断
-  proxy:                         # 部分 publisher 需代理
-    optica:
-      server: "http://127.0.0.1:10808"
-
-email:
-  template: "detailed"           # 邮件模板名（templates/email/<name>.html）
-  # 可选: default / funny / detailed
-
-formula_fix:
-  skip: false                    # FormulaFixer 是否启用
-  force: false                   # 强制修复所有字段
-
-report:
-  generate_explained_html: true  # 是否生成 report_<date>_explained.html 解释页
+  fallback_proxy_url: "http://127.0.0.1:7890"
 ```
 
-`llm.base_url` 用于切换 OpenAI Chat Completions 兼容服务。程序会将其规范化为
-`<base_url>/chat/completions`：`https://gateway.example/v1` 会请求
-`https://gateway.example/v1/chat/completions`。因此使用 OpenCode Go 时，将该项替换为其提供的
-OpenAI 兼容基础地址，并按该服务要求同步调整 `model` 和 `.env` 中的 API Key；不要填写完整的
-`/chat/completions` URL（即使填写，当前版本也会兼容处理）。
+该配置只影响 Phase C，不改变正常抓取路径；代理失效时会增加一次失败尝试，但不会阻塞其他论文。
 
-### `configs/publishers.yaml` — 期刊配置
+### PDF 下载失败或需要手动导入
 
-```yaml
-publishers:
-  - id: nature              # 唯一标识
-    name: Nature            # 显示名
-    publisher: nature       # 出版社 key（映射到 SCRAPER_MAP）
-    rss: "https://..."      # RSS Feed URL
-    issn: "0028-0836"       # CrossRef 期刊标识（可选）
-    enabled: true           # 全局启用
-    cr_enabled: true        # A-CR 单独开关（可选，默认 true）
-    rss_enabled: true       # A-RSS 单独开关（可选，默认 true）
+```bash
+python tools/import_local_pdf.py --doi <DOI> --pdf /path/to/paper.pdf
+python tools/run_pipeline.py --phases E2,E3,F
 ```
 
-**25 个期刊**当前配置，分布：
+导入工具会先校验并复制 PDF，再将对应 DOI 的 `mineru_parse_status` 设为 `pending`、清空旧错误和日期，并立即提交事务；正常输出应包含 `数据库状态已更新 ... 影响行数=1`。导入的 PDF 会被 E2 校验并直接复用，即使数据库中的 `pdf_url` 为空也不再触发下载失败；只有没有合法本地 PDF 时才要求网络 PDF URL。
+Optica 通常需要代理；APS 会尝试改写跨域 PDF 链接。失败尝试会消耗当日 E2 配额。
 
-| 出版社 | 期刊数 | 示例 |
-|--------|--------|------|
-| APS | 9 | PRL, PRA, PRB, PRC, PRD, PRE, PRS, RMP, ... |
-| AIP | 6 | PoP, APL, JAP, ... |
-| Nature | 4 | Nature, Nature Physics, Nature Photonics, Nature Communications |
-| Science | 2 | Science, Science Advances |
-| Optica | 2 | Optica, Optics Express |
-| Cambridge | 1 | Journal of Plasma Physics |
-| IOP | 1 | New Journal of Physics |
+### 预览报告
 
-### `configs/keywords.yaml` — 研究领域定义
-
-使用结构化字典格式（`scope_definition` + `irrelevant_fields` + `context_gates`）：
-
-```yaml
-scope_definition:
-  laser_wakefield_acceleration:
-    description: "本方向关注基于等离子体的尾场加速技术..."
-    topics:
-      - "Laser Wakefield Acceleration (LWFA) — ..."
-      - "Plasma Wakefield Acceleration (PWFA) — ..."
-  laser_driven_ion_acceleration:
-    ...
-irrelevant_fields:
-  description: "以下领域即使出现相关关键词，通常也不应视为相关..."
-  topics:
-    - "Collider physics: high-energy hadron colliders..."
-context_gates:
-  - term: "fusion target / cryogenic target / target injection"
-    description: "聚变靶送靶不能判 A；只有实际展示高重复频率激光聚焦条件下可迁移的靶输运/注入才可判 B"
-  - term: "wakefield acceleration"
-    description: "纯电子 LWFA 的波导/通道形成、演化或表征仍可判 A；仅纯电子加速且无通道贡献才在范围外"
+```bash
+python tools/preview_report.py --scope all --output /tmp/preview.md
+python tools/preview_report.py --scope week --date 2026-08-20 --output /tmp/week.md
+python tools/preview_report.py --scope today --output /tmp/today.md --no-explainer
+# 只生成截止日期以前入库的论文（不含 2026-08-17 当天）
+python tools/preview_report.py --scope all --before-date 2026-08-17 \
+  --output data/reports/user/report_before_20260817.md
+# 同时同步到公开站点（默认不公开预览报告）
+python tools/preview_report.py --scope all --before-date 2026-08-17 \
+  --output data/reports/user/report_before_20260817.md --export-public
 ```
 
-| 字段 | 用途 | 语种 |
-|------|------|------|
-| `scope_definition` | Phase E LLM prompt — 完整领域定义 | 中文 |
-| `irrelevant_fields` | Phase E LLM prompt — topic 级黑名单 | 中文 |
-| `context_gates` | Phase E LLM prompt — per-term 消歧规则 | 中文 |
+`--before-date` 使用论文的 `created_date`（入库日期）做严格上限，格式为
+`YYYY-MM-DD`，截止日当天及之后的论文都会排除。它可以与 `--scope week` 或
+`--scope today` 组合使用。每次预览都会在 Markdown 旁生成同名的
+`.public.json` 结构化快照；只有指定 `--export-public` 才会同步到公开站点。
+预览不标记数据库，不影响下次 Phase G。
 
-**`scope_definition` 的子域可独立注释**，不关注的域直接 YAML 注释即可（Phase E 自动跳过）。
+### 发送指定报告
 
-### `configs/prompts/*.yaml` — LLM 提示词
-
-| 文件 | 用途 |
-|------|------|
-| `relevance.yaml` | Phase E 相关性判断（含 `{scope_block}` 占位符） |
-| `summary.yaml` | Phase F 论文总结（中文，JSON 输出） |
-| `fix.yaml` | FormulaFixer LaTeX 修复（JSON in/out） |
-
-文件不存在时自动回退到 `src/config.py` 内嵌后备值。
-
-### `data/email.yaml` — 邮件收件人配置
-
-```yaml
-# PapersCrawler 邮件收件人配置
-#
-# 字段说明:
-#   - email:   收件人邮箱地址（必填）
-#   - name:    显示名（可选，邮件正文中使用）
-#   - enabled: 是否启用（true=发送，false=跳过；默认 true）
-#
-# 行为:
-#   - 文件存在但解析失败/为空 → 回退 .env SMTP_TO_ADDRS
-#   - 文件不存在 → 回退 .env SMTP_TO_ADDRS
-#   - enabled=false 的收件人会被过滤掉
-#   - Phase H 按此列表发送；空列表则跳过 Phase H
-
-recipients:
-  - email: user1@example.com
-    name: "User 1"
-    enabled: true
-  - email: user2@example.com
-    name: "User 2"
-    enabled: false
+```bash
+python tools/send_report.py --report report_YYYYMMDD.md
+python tools/send_report.py --report report_YYYYMMDD.md --recipients a@example.com,b@example.com
+python tools/send_report.py --report report_YYYYMMDD.md --dry-run
 ```
 
-### `data/journal_overrides.json` — 期刊启用覆写
+## 关键词管理与效果评估
+
+`configs/keywords.yaml` 将研究范围拆成四层：`context_gates` 做多义词语境消歧，
+`irrelevant_fields` 做主题级排除，`scope_definition` 描述领域化分类，
+`keyword_catalog` 独立维护术语、别名和目标子域。关键词目录只提供召回提示和审计
+证据，单个字符串命中不会直接把论文判为相关。
+
+当前目录覆盖 plasma lens、discharged capillary、plasma channel、bunch plasma
+wakefield、烧蚀/毛细管/等离子体通道诊断、FLASH 流体动力学、闪烁体/塑料闪烁体、
+可变形镜、库仑力、发射度、电光晶体、active plasma focusing、EMP、
+post-acceleration 和 PIC simulation 等兴趣点。新增兴趣点时添加一个稳定 `id`，
+填写 `terms` 别名，并映射到现有 `scope_definition` 子域。
+
+先检查目录本身：
+
+```bash
+python3 tools/keyword_audit.py
+python3 tools/keyword_audit.py --json
+```
+
+也可以用抓取出的标题/摘要 JSONL 观察实际覆盖。每行至少包含 `title` 和 `abstract`：
+
+```bash
+python3 tools/keyword_audit.py --corpus /path/to/title_abstract.jsonl
+```
+
+### Relevance benchmark
+
+仓库提供 `benchmarks/relevance_gold.jsonl` 作为可扩展的人工标注样本，包含明确相关
+的 A/B、邻近的 C 和困难负例 D。预测文件使用同样的 JSONL 格式，但将
+`gold_category` 换成 `predicted_category`，并保留相同的 `id`：
 
 ```json
-{
-  "journals": {
-    "nature": { "enabled": true, "rss_enabled": true, "cr_enabled": true },
-    "nphys": { "enabled": false }
-  }
-}
+{"id":"plasma-lens-001","predicted_category":"A"}
 ```
 
-Data Sources 页设置。CLI 模式（`force=False`）**不**读取此文件，只读 `publishers.yaml`。
+评分同时输出四分类准确率、混淆矩阵以及 A/B（报告保留）对 C/D 的 precision、recall
+和 F1：
 
----
+```bash
+python3 tools/evaluate_relevance.py \
+  --gold benchmarks/relevance_gold.jsonl \
+  --predictions /path/to/predictions.jsonl
+```
+
+已有人工审核记录时，可直接评估最新审核结论与最终 LLM 分类：
+
+```bash
+python3 tools/evaluate_relevance.py --db data/papers.db
+```
+
+建议每次修改研究范围后重跑固定 benchmark，并定期从 WebUI 人工审核队列补充边界案例。
+重点关注 A/B recall（不要漏掉真正想看的论文）、A/B precision（不要浪费全文配额）
+和 B↔D、A↔B 错误；当前数据库没有人工审核样本时，工具会显示样本数为 0。
+
+## 配置
+
+完整可复制模板：[`configs/settings.yaml.example`](../configs/settings.yaml.example)。
+
+### `.env`
+
+| 变量 | 用途 |
+|---|---|
+| `CROSSREF_MAILTO` | CrossRef API 联系邮箱 |
+| `MINERU_TOKEN` | MinerU Token |
+| `DEEPSEEK_API_KEY` | 默认 LLM API Key |
+| `SMTP_HOST/PORT/USE_TLS` | SMTP 连接 |
+| `SMTP_USERNAME/PASSWORD` | SMTP 凭据 |
+| `SMTP_FROM_ADDR` | 发件人 |
+| `SMTP_TO_ADDRS` | 逗号分隔的回退收件人 |
+| `NTFY_BASE_URL/TOPIC/TOKEN` | ntfy 连接和凭据 |
+
+### `configs/settings.yaml`
+
+主要配置组：
+
+| 组 | 关键字段 |
+|---|---|
+| `skip_phases` | A_RSS、A_CR、B、C、E、E2、E3、F、G、H |
+| `llm` | base_url、relevance、fulltext_relevance、summary、concurrent_max、retry |
+| `fulltext_download` | daily_max、publisher_daily_max、delay_min/max_seconds |
+| `pipeline` | CrossRef 回溯、处理上限、Nature 过滤、非研究过滤、解释页开关 |
+| `publisher` | 页面延迟、失败熔断、challenge reload、常规 proxy、末级 fallback proxy URL |
+| `email` | 模板名 |
+| `formula_fix` | skip、force、concurrent_max、llm |
+| `ntfy` | enabled、timeout、title、priority |
+
+#### LLM 协议与模型配置
+
+`llm.base_url` 是服务基础地址；每个角色可以通过 `protocol` 选择请求协议：
+
+- `openai_chat`：发送到 `/chat/completions`，兼容 OpenAI、DeepSeek 及多数网关。
+- `openai_responses`：发送到 `/responses`，使用 Responses API 的 `instructions`、`input`、`text.format` 和 `output` 响应结构；适用于 OpenCode Zen 的 Muse Spark Contributor。
+- `anthropic_messages`：发送到 `/messages`，使用 `x-api-key`、`anthropic-version` 和 Anthropic Messages 响应格式。
+
+配置支持全局 `llm.protocol`，也支持在 `relevance`、`fulltext_relevance`、`summary` 中分别覆写。下面是 OpenCode Go 使用 MiniMax M3 的示例：
+
+```yaml
+llm:
+  base_url: https://opencode.ai/zen/go/v1
+  relevance:
+    protocol: openai_chat
+    model: mimo-v2.5
+  summary:
+    protocol: openai_chat
+    model: minimax-m3
+    thinking: disabled
+    max_tokens: 65536
+
+formula_fix:
+  skip: false
+  force: false
+  concurrent_max: 10
+  llm:
+    protocol: openai_chat
+    model: mimo-v2.5
+    thinking: disabled
+    max_tokens: 4096
+    timeout: 120
+```
+
+程序内部先构造统一的 `model/messages/thinking` 请求，再由协议适配层转换。Responses 协议会把 system prompt 放到 `instructions`，把用户消息放到 `input`，并将 JSON 模式转换为 `text.format.type=json_object`；返回结果从 `output_text` 或 `output` 文本块读取。Messages 协议不发送 OpenAI 专用的 `response_format`，结构化输出依靠 Prompt 中的“只输出合法 JSON”约束。对于需要严格 JSON 的总结，建议使用 `thinking: disabled`，避免思考内容与 JSON 混在同一输出中；Responses 如需控制推理，可配置 `reasoning_effort: low|medium|high`。
+
+FormulaFixer 使用 `formula_fix.llm` 的独立配置，不会自动使用 `relevance` 或 `summary` 的模型；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。它在总结响应解析成功后异步修复各篇论文，修复失败会保留原文本。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
+
+FormulaFixer 之前的历史结果也可以单独修复，不必重新调用 Phase F：
+
+```bash
+PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
+  tools/fix_summary_formulas.py --dry-run
+
+PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
+  tools/fix_summary_formulas.py
+```
+
+第一条只检测，不调用 LLM、不写数据库；第二条会按 `formula_fix.concurrent_max` 并发处理，
+确认后写回。若只处理单篇，可加 `--doi DOI`；若要无条件重新处理非占位文本，加 `--force`。
+工具也会写回本地可确定修复的 JSON 伪转义和 `$...$`，即使 FormulaFixer 请求失败也不会丢失这部分修复。
+
+模型返回值在标准 JSON 解析前会自动提取 ` ```json ... ``` ` 围栏或前后夹杂说明中的 JSON 对象，并兼容常见的裸 LaTeX 反斜杠和字符串内英文引号。若仍解析失败，查看日志中的 `Invalid escape` 或 `LLM non-JSON response`，该篇不会污染其他论文的状态。
+
+如果使用 Muse Spark Contributor，summary 角色改为 `protocol: openai_responses`、模型 `muse-spark-1.2-contributor`；endpoint 为 `https://opencode.ai/zen/go/v1/responses`。若只写 `base_url: https://opencode.ai/zen/go/v1`，程序会按角色自动追加对应端点。若日志出现 HTTP 403，先确认当前角色、模型和 endpoint 是否匹配；若 HTTP 200 后出现 `Invalid escape`，则查看 JSON 解析兼容层日志。
+
+### 期刊和研究范围
+
+`configs/publishers.yaml` 定义期刊的 `id`、`name`、`publisher`、`rss`、`issn`、`enabled`、`rss_enabled` 和 `cr_enabled`。
+
+`configs/keywords.yaml` 使用四层结构：
+
+- `context_gates`：词义消歧。
+- `irrelevant_fields`：主题级黑名单。
+- `keyword_catalog`：可审计术语、别名和子域映射。
+- `scope_definition`：正类子域、描述和主题列表。
+
+### Prompt
+
+`configs/prompts/relevance.yaml`、`summary.yaml`、`fix.yaml` 分别对应 E/E3、F 和公式修复。文件缺失时使用 `src/config.py` 的内置后备值。
+
+`summary.yaml` 的 Phase F 输出格式为 schema v3：`main_results_and_physics` 是带稳定
+`key` 的数组，每项分别填写 `title`、`finding`、`evidence` 和
+`physical_interpretation`；`limitations` 是独立的带 key 数组，每项填写局限、影响和
+`basis`（`explicit`/`inferred`）。`study_type` 和 `basis` 仅用于 JSON 的机器分析，不会
+渲染到人读报告；报告中的每条局限把影响接在同一行，不再嵌套第二层无序列表。动机、方法
+和要点也使用固定字段 key。不要在这些字段中写 Markdown 标题或把多个结果合并成一段话。
+缺失信息写 `未提供`；没有正文依据的局限输出空数组，不要生成“局限：未提供”的占位项。
+如果 `method`、`setup_and_parameters` 和 `analysis_or_model` 全部缺少实质内容，Phase F
+会把该响应标记为失败并等待重试。
+
+### 邮件收件人
+
+`data/email.yaml`：
+
+```yaml
+recipients:
+  - email: user@example.com
+    name: "User"
+    enabled: true
+```
+
+文件缺失、为空或解析失败时回退 `.env` 的 `SMTP_TO_ADDRS`。
+
+### `journal_overrides.json`
+
+`data/journal_overrides.json` 是可选期刊覆写。每日/每周调度不读取；`tools/run_pipeline.py --all` 的 Phase A 会读取，缺少字段时回退 `publishers.yaml`。
 
 ## 工具索引
 
-所有工具位于 `tools/` 目录，按用途分类。
+| 工具 | 用途 |
+|---|---|
+| `run_pipeline.py` | 推荐流水线入口 |
+| `reset_pipeline.py` | 重置 CrossRef、Publisher、MinerU、相关性、总结或报告状态 |
+| `preview_report.py` | 生成不改数据库的 JSON + Markdown 报告预览，可选公开导出 |
+| `log_report.py` | 统计、筛选和查看 WARNING/ERROR 日志 |
+| `keyword_audit.py` | 校验关键词目录并统计语料中的术语命中 |
+| `evaluate_relevance.py` | 计算 benchmark 或人工审核集的相关性指标 |
+| `send_report.py` | 发送指定报告 |
+| `import_local_pdf.py` | 导入本地 PDF 到 E2 队列 |
+| `fix_summary_formulas.py` | 修复总结中的 LaTeX |
+| `dedup_doi_case.py` | 清理历史 DOI 大小写重复 |
+| `convert_reports_to_hugo.py` | 转换并部署 Hugo 报告 |
+| `export_public_reports.py` | 导出静态站点 JSON |
+| `deploy_report_site.py` | 构建并可选上传独立 Astro 报告站点 |
 
-#### `python tools/send_report.py`
+根目录的 `run_daily.sh` 和 `run_weekly.sh` 是 cron 包装脚本，内部调用
+`run_pipeline.py`；它们不是独立的流水线实现。已删除旧的
+`schedule_daily.py` 和 `schedule_weekly.py`，不要再使用旧路径。
+包装脚本默认调用 PATH 中的 `python`，conda/venv 环境可设置
+`PAPERSCRAWLER_PYTHON=/path/to/env/bin/python`；daily 脚本检测到 `xvfb-run` 时会自动使用它。
 
-邮件推送工具 —— 通过 Phase H 发送指定报告。
+### `run_pipeline.py`
+
+推荐的唯一流水线入口：
 
 ```bash
-# 发送今日日报
-python tools/send_report.py --report report_20260726.md
-
-# 发送自定义报告，覆盖收件人
-python tools/send_report.py --report report_20260726.md --recipients a@x.com,b@y.com
-
-# 干跑预览
-python tools/send_report.py --report report_20260726.md --dry-run
+python tools/run_pipeline.py --daily       # A-F
+python tools/run_pipeline.py --weekly      # G-H
+python tools/run_pipeline.py --all         # A-H，忽略 skip_phases
+python tools/run_pipeline.py --phases E,E2,E3,F
+python tools/run_pipeline.py --daily --dry-run
 ```
 
-**参数**：
+论文列表 `/papers?has_summary=true` 或页面上的“已生成总结”筛选会在数据库查询和分页计数阶段同时生效。
 
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `--report FILENAME` | ✅ | 报告文件名（在 `auto/` 或 `user/` 目录中查找） |
-| `--recipients a@x.com,b@y.com` | ❌ | 逗号分隔的收件人列表，覆盖默认配置 |
-| `--dry-run` | ❌ | 只打印发送计划，不实际发送 |
-| `--log-level` | ❌ | 日志级别（默认 `LOG_LEVEL` env，未设置则为 INFO） |
+### `preview_report.py`
 
-文件不存在时退出码为 2。
+生成不修改数据库的 JSON + Markdown 报告。默认只筛选已完成总结的 A/B 论文，
+也会包含已经出现在旧报告中的论文：
 
-### 调度入口
+```bash
+python tools/preview_report.py --scope all --output /tmp/report.md
+python tools/preview_report.py --scope all \
+  --before-date 2026-08-17 \
+  --output data/reports/user/report_before_20260817.md
+python tools/preview_report.py --scope all \
+  --output data/reports/user/report.md --export-public
+```
 
-| 工具 | 说明 | 典型用法 |
-|------|------|---------|
-| `run_pipeline.py` **（推荐）** | 统一流水线入口（替代以下三个） | `python tools/run_pipeline.py --daily` |
-| `schedule_daily.py` ⚠️ **deprecated** (→ `run_pipeline.py`) | 每日 A→F，含自动重置 failed | `python tools/schedule_daily.py` |
-| `schedule_weekly.py` ⚠️ **deprecated** (→ `run_pipeline.py`) | 每周 G→H | `python tools/schedule_weekly.py` |
+每次都会生成同名 `.public.json`。`--before-date` 使用 `created_date` 做严格上限，
+截止日当天不包含；`--export-public` 会把自动报告目录和当前预览目录一起同步到
+公开导出目录。可用 `--export-root PATH` 覆盖导出目录。
 
-### 邮件推送
+### `export_public_reports.py`
 
-| 工具 | 说明 | 典型用法 |
-|------|------|---------|
-| `send_report.py` | 通过 Phase H 发送指定报告 | `python tools/send_report.py --report report_20260726.md` |
-
-### 状态重置
-
-| 工具 | 说明 | 典型用法 |
-|------|------|---------|
-| `reset_pipeline.py` | 6 子命令重置各阶段状态 | `python tools/reset_pipeline.py reset-relevance --dois 10.1234/example` |
-
-**`reset_pipeline.py` 子命令**：
-
-| 子命令 | 重置列 | 级联 | 条件 |
-|--------|--------|------|------|
-| `reset-crossref` | `cr_metadata_fetched_*` | — | failed/skipped；`--all` 可含 success |
-| `reset-publisher` | `publisher_page_fetched_*` | — | failed/skipped，排除 NonResearchPageError |
-| `reset-mineru` | `mineru_parse_*` | — | failed/skipped |
-| `reset-summary` | `llm_summary_*` | — | failed/skipped；`--all` 可含 success |
-| `reset-relevance` | `llm_relevance_*` 与 `relevance_screen_*` | — | failed/skipped；`--all` 可含 success；`--categories` 或精确 `--dois` |
-| `reset-report` | `report_status` / `report_date` | — | reported |
-
-所有子命令支持 `--publisher` 过滤（如 `reset-publisher --publisher aps`），执行前交互确认。`reset-relevance --dois` 按逗号分隔 DOI 精确匹配且不区分大小写，与 `--all`/`--categories` 互斥。
-**不提供一键重置全部**，防止误操作丢失数据。
-
-### 报告生成
-
-### 导出公开报告（供 MySite 等静态站点使用）
-
-Phase G 自动报告会在 `data/reports/auto/` 旁生成同名的 `.public.json` sidecar。也可以将
-已有 sidecar 导出到站点工作区：
+将 JSON sidecar 导出到静态站点数据目录，不重新运行 LLM，也不修改数据库：
 
 ```bash
 python tools/export_public_reports.py \
   --out /path/to/MySite/.generated/reports
+
+# 多个来源目录可以重复 --source
+python tools/export_public_reports.py \
+  --out /path/to/MySite/.generated/reports \
+  --source data/reports/auto \
+  --source data/reports/user
 ```
 
-自动模式的 Phase G 在 sidecar 写入后会自动执行同等同步。目标目录默认为项目旁的
-`../MySite/.generated/reports`，也可通过环境变量 `PUBLIC_REPORT_EXPORT_DIR` 覆盖。公开导出失败
-只记录 warning，不会使 Markdown 报告或数据库标记回滚；手动命令仍可用于补导历史报告。
+输出为 `papers/index.json` 和按报告 ID 命名的 JSON 文件。默认来源是
+`data/reports/auto/`；默认导出根目录是 `PUBLIC_REPORT_EXPORT_DIR`，未设置时为
+项目同级 `MySite/.generated/reports`。
 
-默认读取 `data/reports/auto/report_*.public.json`，并写入：
+### 独立 Astro 报告站点
+
+旧 Hugo 站点暂时保留，仍可使用：
+
+```bash
+python tools/convert_reports_to_hugo.py --all --hugo
+```
+
+新站点源码位于 `report-site/`，不依赖 `../MySite`。它使用 Node.js/npm，当前服务器通过
+`/path/to/nvm` 管理 Node；非交互 shell 需要显式加载 nvm：
+
+```bash
+cd report-site
+. /path/to/nvm/nvm.sh
+nvm use default
+npm ci
+npm run check
+npm run build
+```
+
+构建前需要将公开 JSON 导出到 Astro 的生成数据目录：
+
+```bash
+cd /path/to/PapersCrawler
+python3 tools/export_public_reports.py --out report-site/src/data/reports
+```
+
+一键构建并检查 Cloudflare 上传参数，但不上传：
+
+```bash
+python3 tools/deploy_report_site.py --dry-run
+```
+
+正式 Direct Upload 需要设置以下环境变量：
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID="..."
+export CLOUDFLARE_API_TOKEN="..."
+export CLOUDFLARE_PAGES_PROJECT="paperscrawler-reports"
+python3 tools/deploy_report_site.py
+```
+
+API Token 只应授予 Cloudflare Pages 写权限，不要写入仓库或普通配置文件。部署脚本默认
+加载 `NVM_DIR=/path/to/nvm`，也可通过 `NVM_DIR` 覆盖。`--branch NAME` 用于上传预览
+分支，未指定时上传生产部署。当前该命令不会修改 Hugo 或 `gh-pages`。
+
+### `reset_pipeline.py`
+
+重置失败状态或使论文重新进入报告队列。子命令：
 
 ```text
-.generated/reports/papers/
-├── index.json
-└── papers-YYYYMMDD.json
+reset-crossref  reset-publisher  reset-mineru
+reset-relevance  reset-summary  reset-report
 ```
 
-导出器只接受 `source: "papers"` 且 ID 合法的 sidecar。它会保留 `content.papers` 中的
-论文顺序、A/B 相关性等级、摘要、LaTeX/Markdown 解读字段和 PDF/原文链接；如果历史 sidecar
-缺少 `abstract`、`pdfUrl` 或 `relevanceBasis`，会从 `--database` 指定的 SQLite 数据库补全。
-默认数据库为 `data/papers.db`。
+所有子命令都要求交互确认。`reset-report --today` 可恢复当天误标记为已报告的论文；
+`reset-relevance` 支持 `--all`、`--categories A,B,C` 或 `--dois DOI1,DOI2`；
+`reset-summary` 支持 `--dois DOI1,DOI2` 精确重置异常总结。
 
-每个文件的 `schemaVersion` 当前为 `1`，顶层包括 `id`、`source`、`title`、`publishedAt`、
-`generatedAt`、`summary`、`tags` 和 `content.papers`。导出不会重新运行论文分析，也不会修改
-数据库；重新生成报告后再次运行导出命令即可同步站点。
-
-自动报告的 Markdown 头部引用块、决策摘要和 `# 文献报告` 必须由空行分隔。若转换日志提示「一级标题为 0」，先检查是否有引用块末行与标题粘连；模板中不要在这些边界使用 Jinja `-%}`。
-
-| 工具 | 说明 | 典型用法 |
-|------|------|---------|
-| `preview_report.py` | 生成报告**不**标记数据库 | `python tools/preview_report.py --output /tmp/p.md` |
-| `convert_reports_to_hugo.py` | 报告转 Hugo 站点 + 部署 | `python tools/convert_reports_to_hugo.py --all --hugo --deploy` |
-| `md_to_pdf_katex.py` | Markdown → PDF（KaTeX + cloakbrowser） | `python src/processors/md_to_pdf_katex.py <input.md>` |
-
-#### 报告预览
-
-`tools/preview_report.py` —— 生成报告但**不**调 `db.mark_papers_reported()`，完全不污染数据库；
-已报告论文（`report_date NOT NULL`）也可再次包含，便于重看历史或生成回顾性快照。
-
-**与 Phase G auto 模式的关键差异**：
-1. **不调** `mark_papers_reported()` → 下次 Phase G 仍能拾取这些论文
-2. SQL 去掉 `report_date IS NULL` 过滤 → 允许回看已报告论文
-3. `--scope` 参数决定论文范围（`all` / `week` / `today`），按 `created_date` 过滤
-4. `--output` 必填（必须 `.md` 结尾），不写默认 `data/reports/auto/`
-5. explainer 文件名强制 `report_<ref_date>_explained.html`
-6. `--no-explainer` 跳过解释页生成
-
-**CLI**：
-```bash
-python tools/preview_report.py --scope {all,week,today} \
-                              --output PATH \
-                              [--date YYYY-MM-DD] \
-                              [--no-explainer]
-```
-
-**适用场景**：测试报告模板/字段/排序规则变更后的渲染效果、抽查时间窗口、备份报告。
-
-### LLM 总结修复
-
-| 工具 | 说明 |
-|------|------|
-| `fix_summary_formulas.py` | 批量 FormulaFixer 修复 LaTeX（不重跑 Phase F） |
+单篇总结修复/重跑示例：
 
 ```bash
-python tools/fix_summary_formulas.py                     # 修复全部
-python tools/fix_summary_formulas.py --dry-run --verbose # 预览
-python tools/fix_summary_formulas.py --doi <doi>         # 单篇
-python tools/fix_summary_formulas.py --force              # 强制修复所有字段
+PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
+  tools/reset_pipeline.py reset-summary --dois 10.1063/5.0335213
+
+PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
+  tools/run_pipeline.py --phases F
 ```
 
-### 手动 PDF 导入
+`reset-summary --dois` 只清空指定论文的 F 状态，不影响全文和相关性结果；随后 Phase F
+只会消费 pending 的目标论文。修改总结 Prompt 后确实需要全部重生成时才使用
+`reset-summary --all`，这会重新消耗所有论文的 LLM 配额。
 
-| 工具 | 说明 |
-|------|------|
-| `import_local_pdf.py` | 手动导入本地 PDF 绕过 Phase E2 反复下载 |
+### 其他工具
+
+| 工具 | 常用命令 |
+|---|---|
+| `send_report.py` | `python tools/send_report.py --report report_YYYYMMDD.md [--dry-run]` |
+| `import_local_pdf.py` | `python tools/import_local_pdf.py --doi <DOI> --pdf <PATH>` |
+| `fix_summary_formulas.py` | `python tools/fix_summary_formulas.py [--doi DOI] [--publisher NAME] [--dry-run] [--force]` |
+| `dedup_doi_case.py` | `python tools/dedup_doi_case.py --dry-run`；确认后去掉 `--dry-run` 执行一次性迁移 |
+| `convert_reports_to_hugo.py` | `python tools/convert_reports_to_hugo.py --all --hugo --deploy`；可用 `--dry-run` 预览 |
+
+## 输出与数据
+
+| 路径 | 内容 |
+|---|---|
+| `data/papers.db` | SQLite 主库 |
+| `data/logs/` | 按日期分文件的运行日志，默认保留 14 天 |
+| `data/reports/auto/` | 自动日报、解释页、public sidecar |
+| `data/reports/user/` | 历史用户报告归档及 JSON sidecar |
+| `data/mineru_output/` | PDF、MinerU 输出和 `full.md` |
+| `data/raw/` | RSS、页面和错误快照 |
+| `data/session_cached/` | Publisher 浏览器上下文 |
+
+报告资格：E3 `fulltext` + A/B + F summary success + 尚未 `report_date`。
+
+摘要清洗：RSS、CrossRef 和 Publisher 摘要进入数据库前会统一解码 HTML/XML 实体、移除
+控制字符并压缩空白；数据库初始化会幂等修复已有标题/摘要，报告快照生成时还会清洗一次历史数据。因此 IOP 摘要中的
+`&#xD;` 不应出现在新报告中。公开 JSON 的报告封装 `schemaVersion` 为 2，论文分析的
+`summarySchemaVersion` 为 3；`content.papers[].summary` 是可供程序直接消费的唯一规范总结，
+`sections` 仅保留为兼容旧消费者的同结构分节映射。
+
+## 测试与故障排查
+
+### 测试
 
 ```bash
-python tools/import_local_pdf.py --doi <DOI> --pdf <PATH_TO_PDF>
-```
-
-- 校验 `%PDF-` 头部后落盘到 `data/mineru_output/<safe_doi>/paper.pdf`
-- 重置 DB 该 DOI 的 `mineru_parse_status='pending'`，下次 daily 调度自动处理
-- 退出码：1=文件不存在/异常，2=非 PDF 头部，3=DB 无该 DOI 记录
-
-### 数据库维护
-
-| 工具 | 用途 |
-|------|------|
-| `dedup_doi_case.py` | DOI 大小写去重（存量副本清理，见下） |
-
-**`dedup_doi_case.py`**：按 `lower(doi)` 分组扫描，将 RSS/CrossRef 大小写不一致造成的重复论文合并为一条。
-成对行保留进度更完整者（report > summary > relevance > publisher_page，同进度优先 RSS 行），合并
-`discovery_source`；单例行统一为小写。`--dry-run` 默认只预览，无 `--dry-run` 时交互确认后写库。
-
-```bash
-python tools/dedup_doi_case.py            # 预览去重计划
-python tools/dedup_doi_case.py --dry-run  # 等价（默认预览）
-```
-
-> 2026-08-09 起插入路径已在 `database.py` 归一化 DOI 为小写并启用大小写不敏感匹配，此工具仅用于清理
-> 存量数据。
-
-### PDF 转换
-
-```bash
-# KaTeX + cloakbrowser（实验性，支持 \(\)/\[\] 公式）
-python src/processors/md_to_pdf_katex.py <input.md> [output.pdf]
-
-```
-
----
-
-## Publisher 与爬虫
-
-| 出版社 | 期刊数 | 爬虫类 | 反爬策略 |
-|--------|--------|--------|---------|
-| Nature | 4 | `NatureScraper` | HTTP requests 前置回退（primary） |
-| Science | 2 | `ScienceScraper` | `dc.Type` + `og:type` + `altmetric_type` 三级检测 |
-| APS | 9 | `APSScraper` | 同域 PDF 路径扫描 |
-| Cambridge | 1 | `CambridgeScraper` | `citation_abstract` meta |
-| AIP | 6 | `AIPScraper` | requests+cookie PDF 下载 |
-| IOP | 1 | `IOPScraper` | curl_cffi HTTP 回退（fallback） |
-| Optica | 2 | `OpticaScraper` | CrossRef 摘要驱动跳过浏览器 |
-
-**核心策略**：
-- **Persistent Context**：同 publisher 共用 Chromium session（`data/session_cached/<publisher>/`）
-- **Headful Chromium + cloakbrowser**：内置浏览器指纹伪装，无需手动注入 JS
-- **真人节奏**：3~5s 随机延迟（`publisher.page_delay_min/max`）
-- **失败熔断**：连续 `PUBLISHER_MAX_CONSECUTIVE_FAILURES`（默认 3）篇失败后自动中止，避免 IP 封禁
-- **Session 自动清理**：`close()` 后 `shutil.rmtree()` 清理 profile 目录
-
-**PDF 下载三级兜底**（`BasePublisherScraper.download_pdf()`）：
-
-```
-[on_page_url 同域改写（仅 APS）]  →  requests + 浏览器 cookies/UA  →  context.request.get()  →  page.goto() + expect_download
-                                      (主路径，最快，复用反爬 cookie)   (Optica 等内联渲染场景)      (最后兜底)
-```
-
-- **requests + cookies**：对所有 publisher 通用，绝大多数下载走此路径。
-- **context.request.get()**（2026-08-01 新增）：继承浏览器代理/cookie 的子资源请求，
-  解决 Optica 经代理放行后 Chrome 内联渲染 PDF 不触发 download 事件的问题。
-- **on_page_url 改写**：仅 APS 启用（跨域 `link.aps.org` → 同域 `journals.aps.org` 直链）。
-
-### Publisher 抓取错误诊断
-
-抓取失败时，HTML 快照自动保存到 `data/raw/page/error/`，命名格式 `error_<doi>_<timestamp>.html`。
-可通过 `Pipeline` 页的实时日志查看错误类型 + 页面标题 + HTML 路径。
-
-### 非研究论文检测
-
-Phase C 通过四级机制检测 Erratum / Corrigendum / Comment / Response / Publisher's Note：
-
-1. **Scraper 元数据**（精确）：Nature `dc.type != "OriginalPaper"`，Science `dc.Type != "research-article"`
-2. **altmetric_type**（Science 互补）：meta `altmetric_type=news|blog`
-3. **og:type 兜底**：无 `dc.Type` 但有 `og:type=article`（如 Careers）
-4. **关键词 + 空摘要**（通用兜底）：`settings.yaml` 的 `non_research_keywords` 前缀匹配
-
-检测到后：写入 `skipped_dois` 表 + 从 `papers` 删除（防反复发现→删除→再发现）。
-
-### Accepted Paper 跳过
-
-- **APS**：`/accepted/` URL 路径检测
-- **Optica**：`#articleBody` 内 `<em>accepted for publication</em>` 检测
-
-Accepted Paper 仅从 `papers` 删除，**不**写入 `skipped_dois`（同 DOI 正式版会重新出现）。
-
-### Nature News 过滤
-
-`SKIP_NATURE_NEWS=True`（默认开）通过检测 DOI 中 `/d41586-` 前缀过滤 Nature 新闻类内容，
-覆盖 Nature 全系列期刊的 News、News & Views、Editorials 等非研究内容。
-
----
-
-## 数据流与架构
-
-### 9 阶段流水线
-
-```text
-Phase A (RSS + CrossRef) ── 发现论文
-       ↓
-Phase B (CrossRef) ──────── 补充元数据（作者、日期、摘要）
-       ↓
-Phase C (Publisher) ─────── 爬取页面 + PDF 链接（cloakbrowser）
-       ↓
-Phase E (DeepSeek) ──────── 标题/摘要高召回初筛 → A/B/C/低置信 D 候选
-       ↓                          (高/中置信 D 直接终止)
-Phase E2 (MinerU) ───────── 每日限额下载 PDF + 全文解析
-       ↓
-Phase E3 (DeepSeek) ─────── 正文相关性终审 → A/B/C/D
-       ↓                          (仅终审 A/B 进入下游)
-       ↓
-Phase F (DeepSeek) ──────── LLM 结构化总结
-       ↓
-Phase G ─────────────────── Markdown 报告 + explained.html 解释页
-       ↓
-Phase H (SMTP) ──────────── 邮件推送（email.yaml → .env SMTP_TO_ADDRS 回退）
-```
-
-### 数据库 Schema
-
-单表 `papers`，每阶段三态列（`status` / `error` / `date`）。每篇论文一行的全部状态：
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ papers 表                                                    │
-├──────────────────────────────────────────────────────────────┤
-│ 核心标识: id, doi (UNIQUE)                                    │
-│ 基础元数据: title, abstract, journal, publisher,              │
-│            paperdate_rss/crossref/page, authors_json,        │
-│            page_url, pdf_url                                 │
-│ 发现来源: discovery_source (rss / crossref / rss,crossref)   │
-│                                                              │
-│ 流水线状态（每阶段三列）:                                    │
-│   Phase B:  cr_metadata_fetched_status / _error / _date      │
-│   Phase C:  publisher_page_fetched_status / _error / _date   │
-│   Phase E:  relevance_screen_status / _error / _date          │
-│             relevance_screen_category / confidence / reason  │
-│             relevance_screen_is_backfill                     │
-│   Phase E2: mineru_parse_status / _error / _date             │
-│             mineru_output_dir                                │
-│   Phase E3: llm_relevance_status / _error / _date            │
-│             llm_relevance_category / subfields / basis       │
-│   Phase F:  llm_summary_status / _error / _date              │
-│             llm_summary_result (JSON)                        │
-│   Phase G:  report_status / report_date                      │
-│                                                              │
-│ 时间戳: created_date, updated_date                           │
-└──────────────────────────────────────────────────────────────┘
-```
-
-状态值：`FetchStatus` 枚举（`pending` → `success` / `failed` / `skipped`）。
-
-**辅助表**：
-
-- `email.yaml` — 邮件收件人配置（`enabled=true` 优先于 .env `SMTP_TO_ADDRS`）
-- `skipped_dois` — 被永久跳过的论文 DOI（`NonResearchPageError` 等）
-- `fulltext_download_events` — PDF 尝试与每日/出版社配额审计；失败尝试也保留
-
-### 报告输出
-
-| 模式 | 输出目录 | 命名 | 标记已报告 | 邮件推送 |
-|------|---------|------|-----------|---------|
-| 自动（Phase G） | `data/reports/auto/` | `report_YYYYMMDD.md` | ✅ | ✅（Phase H） |
-| 用户（WebUI `/report`） | `data/reports/user/` | `report_YYYYMMDD_HHMMSS.md` | ❌ | ❌ |
-| 预览（`tools/preview_report.py`） | `--output` 指定 | 任意 `.md` | ❌ | ❌ |
-
-`report_YYYYMMDD_explained.html` 解释页（`report.generate_explained_html: true`）默认与 md 同日同目录，
-含 4 统计卡片 + 5 阶段状态柱状图 + 7 天每日采集 + 完整 relevance/summary prompt 快照。
-
-### 邮件模板
-
-`templates/email/<name>.html`：
-
-- `default.html` — 正式风格
-- `funny.html` — 搞笑风格
-- `detailed.html` — 详细版（含追踪期刊、筛选依据、Publisher 抓取状态）
-
-模板变量：`{report_title}` / `{paper_msg}` / `{attachment_section}` / `{journal_list}` /
-`{keyword_list}` / `{domain_block}` / `{publisher_stats}` / `{paper_list}`（详细版专属）。
-
----
-
-## 测试
-
-### T1/T2 — pytest 自动化（21 个测试文件）
-
-```bash
-# 全部离线测试
 pytest tests/ -v
-
-# 单文件
-pytest tests/test_runner_phase_map.py -v
-
-# 单测
-pytest tests/test_relevance.py::test_decision_tree -v
-```
-
-测试覆盖：
-- `test_db.py` — 数据库 CRUD
-- `test_rss.py` — RSS 解析
-- `test_crossref.py` — CrossRef 元数据（mock）
-- `test_publisher_parse.py` — Publisher 页面解析
-- `test_relevance.py` — 相关性判断（mock + 决策树结构）
-- `test_phases.py` — 阶段模块导入
-- `test_report.py` — 报告生成 + 模板加载
-- `test_pdf.py` — PDF 转换
-- `test_email.py` — 邮件发送（mock）
-- `test_runner_phase_map.py` — 锁死 `DAILY_PHASES ⊆ phase_map.keys()` 防 KeyError 回归
-- `test_phase_a_lookback.py` — CrossRef 智能回溯
-- `test_phase_b_authors.py` — Phase B 作者缺失标 FAILED
-- `test_phase_c_bot.py` — bot 检测统一
-- `test_explained_html.py` — 报告解释页模板
-- `test_database_client_context.py` — DatabaseClient context manager
-- `test_mineru_parser.py` — MinerU 解析
-- `test_common.py` — 共享数据模型 + 异常
-- `test_web_security.py` — WebUI 报告文件路径边界校验
-
-### T3 — 真实 API 集成测试（需 .env）
-
-```bash
+pytest tests/ --cov=src --cov-branch --cov-report=term-missing
 bash tests/real/run_all.sh
 ```
 
-| 脚本 | 测试目标 |
-|------|---------|
-| `real_crossref.py` | CrossRef API 真实调用 |
-| `real_llm_api.py` | DeepSeek API 真实调用 |
-| `real_email.py` | SMTP 真实发送 |
+覆盖率命令使用仓库根目录的 `.coveragerc`：统计 `src/` 的行和分支覆盖，显示未覆盖行，
+并以 80% 作为失败门槛。T1/T2 测试通过 mock 隔离浏览器、LLM、MinerU、SMTP 和 CrossRef；
+T3 会消耗真实 API/SMTP 配额，谨慎运行。当前覆盖率报告用于发现重试、异常和配置边界，
+不把真实服务连通性误当作离线覆盖。
 
-T3 脚本会消耗 API 配额，谨慎运行。
+### 流水线不动
 
----
+检查当天的 `data/logs/PaperCrawler-YYYY-MM-DD.log`、`.env` Key、
+`configs/settings.yaml` 中的 `skip_phases`，确认没有把所有阶段设为 true。
 
-## 故障排查速查
+LLM 返回 HTTP 400 时，先看日志中的响应正文；如果提示 `invalid thinking.type`，将对应角色的 `thinking` 改为 `disabled` 或 `adaptive`，不要把 OpenAI Chat 的 `enabled` 直接当作 Messages 参数。
 
-### 流水线完全不动
+### 摘要仍有实体或乱码
 
-- 检查 `data/PaperCrawler.log` 最新输出
-- 确认 `SKIP_PHASE_*` 没有全部置 true
-- 确认 `.env` 中的 LLM API Key 已按当前网关要求填写（默认变量名为 `DEEPSEEK_API_KEY`）
+先确认数据库中的摘要是否含有 `&#xD;`、`&amp;#xD;` 或不可见控制字符。重新运行
+Phase B/C 会用统一清洗链路覆盖有效摘要；仅重新生成报告时，ReportSnapshot 也会在
+展示层清洗历史值。若是科学符号（如 `×`、`◦`）仍存在，这是预期行为，不应一律删除。
 
-### Phase C 大量 failed（Cloudflare / Radware 拦截）
+### 总结报告层级重复
 
-```bash
-# 1) 检查网络出口 IP 信誉（机构网络通常较优）
-# 2) 调高冷却时间
-vim configs/settings.yaml
-# publisher:
-#   page_delay_min: 5
-#   page_delay_max: 10
-#   max_consecutive_failures: 5
+新运行的 Phase F 会先将响应规范化为 schema v3，报告只渲染固定字段、结果列表和局限列表。旧的
+`llm_summary_result` 即使仍是 Markdown 字符串，也会在读取时转换；如需将历史论文重新
+落库为 v2，可使用 `reset-summary` 后重跑 `--phases F`（会重新调用 LLM）。
 
-# 3) 重置失败的论文
-python tools/reset_pipeline.py reset-publisher --all
-python src/main.py
-```
+### 总结内容过少或公式乱码
 
-HTML 快照保存在 `data/raw/page/error/`，可用浏览器打开分析拦截类型。
+Phase F 会把只有一句话、没有具体结果的 JSON 响应标记为 failed；下次运行会自动重试。
+历史 success 结果先运行 `fix_summary_formulas.py --dry-run` 查看候选，再去掉
+`--dry-run` 执行修复。若内容本身不完整（例如除一句话外全部为 `未提供`），使用
+`reset-summary --dois DOI` 后运行 `tools/run_pipeline.py --phases F`，不要只依赖公式修复。
 
-自 2026-08-01 起，Phase C 已内置 **Cloudflare challenge 自动恢复**：
-当页面返回「请稍候…」等 Turnstile challenge 页时，`fetch_page()` 会自动 reload
-（利用 challenge 页加载时写入持久化 context 的 `cf_clearance` cookie）拿到真实文章页，
-无需人工干预。可通过 `configs/settings.yaml` 的 `publisher` 段调整：
+### SMTP 失败
 
-```yaml
-publisher:
-  # challenge 页 reload 恢复次数
-  challenge_max_reloads: 2
-  # reload 后等待时长（毫秒）
-  challenge_reload_wait_ms: 45000
-```
-
-若仍频繁失败，再考虑调大 `page_delay_min/max` 或走代理（`publisher.proxy`）。
-
-### Phase E/F 429 限流
-
-```bash
-# 调低并发
-vim configs/settings.yaml
-# llm:
-#   concurrent_max: 5    # 默认 100 容易触发 429
-```
-
-### Phase E2 PDF 下载失败
-
-Phase E2 只接收初筛 A/B/C 与低置信 D。下载安全参数位于
-`configs/settings.yaml`：
-
-当前 A 类核心锚点包含束流辐照与应用：论文主贡献须研究辐照效应、剂量/损伤机制，
-或实验/模拟验证材料、辐射生物、成像等明确应用；仅在背景或展望中提到用途不算 A。
-
-```yaml
-llm:
-  fulltext_relevance:
-    model: deepseek-v4-pro
-    thinking: enabled
-    timeout: 300
-    evidence_max_chars: 60000
-
-fulltext_download:
-  daily_max: 3
-  publisher_daily_max: 2
-  delay_min_seconds: 30
-  delay_max_seconds: 90
-```
-
-每日额度以 Asia/Shanghai 自然日持久化在 `fulltext_download_events`，失败尝试也占额度，
-重复运行不能绕过。同一 DOI 当天最多尝试一次；新论文优先，历史 A/B/C 回填仅使用剩余额度。
-等待次日额度、下载失败或解析跳过的论文都保持最终相关性 `pending`，不会被 E3 提前按摘要终审；daily 默认会将 MinerU 的 `failed/skipped` 重置为 `pending` 后重试。
-
-修改研究方向后如需重判历史 A/B/C：
-
-```bash
-python tools/reset_pipeline.py reset-relevance --categories A,B,C
-```
-
-`--categories` 与 `--all` 互斥。报告只接收正文终审完成
-（`llm_relevance_basis='fulltext'`）且 LLM 总结成功的 A/B；没有正文的条目保持待处理，待自动重试或手动导入 PDF 后继续 E2→E3。
-
-```bash
-# 手动下载 PDF 后导入
-python tools/import_local_pdf.py --doi <DOI> --pdf ~/Downloads/paper.pdf
-# 下次 daily 调度会自动复用，跳过下载直接送 MinerU
-```
-
-常见失败原因：
-- **Optica（Radware captcha）**：`页面未返回有效 PDF` —— 必须走代理（`configs/settings.yaml`
-  `publisher.proxy.optica`），且 IP 信誉是关键（中国大陆 IP 直连会被 `opg.optica.org/captcha/` 拦截）。
-  2026-08-01 起 `download_pdf()` 已改用 `context.request.get()` 抓取经代理放行的完整 PDF，
-  不再依赖 `expect_download` 事件。若仍失败可尝试更换代理 IP 后重跑。
-- **APS（link.aps.org 跨域）**：自动改写为同域 `journals.aps.org` 直链后下载。
-- **需登录的 PDF**（少数）：`import_local_pdf.py` 手动导入。
-
-### 邮件没收到
-
-1. `/config` 页 → 连通性测试 → 检查 SMTP 配置
-2. `/subscriptions` 页 → 确认邮箱在 `active=1` 列表
-3. 查看 `data/PaperCrawler.log` 的 SMTP 连接日志（`STARTTLS`、`ehlo()` 等）
-4. 检查垃圾邮件箱
+检查 SMTP 凭据、`data/email.yaml` 中是否有启用收件人、Phase H 是否被跳过，并查看日志和垃圾邮件箱。
 
 ### WebUI 启动失败
 
 ```bash
-# 缺包
-pip install fastapi uvicorn jinja2
-
-# 端口占用
+pip install -r requirements.txt
 lsof -i :8080
-# 换端口
-PYTHONPATH=src uvicorn src.web.app:app --port 8081
+LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 8081
 ```
 
-### 数据库被锁
-
-WebUI 和 CLI 同时跑会触发 WAL 锁等待。配置已开 `PRAGMA journal_mode=WAL`（`8c13f86` 提交），
-但大量并发写仍可能短暂等待。**不要**同时跑 `python src/main.py` 和访问 WebUI 的 Pipeline 页。
-
-### Phase D 相关报错
-
-Phase D 已于 2026-07-24 完整移除（commit `f9a8a4f`）。如遇 "Phase D" 引用，检查是否有未清理的旧脚本或配置。
-
-### Hugo 部署失败
+如果由 systemd 管理，先检查服务状态和 journald：
 
 ```bash
-# 缺 hugo / ghp-import
-which hugo ghp-import
-# crontab PATH 极简，必须 export
-export PATH=/usr/local/bin:$PATH:/path/to/conda/bin
+systemctl --user status paperscrawler-web.service
+journalctl --user -u paperscrawler-web.service -n 100 --no-pager
+```
 
-# 测试手动部署
+常见原因是 `ExecStart` 使用了不存在的 Python 路径、8080 端口已被占用，或 `.env`/配置文件权限不允许
+服务用户读取。修改 unit 后需要重新执行 `systemctl --user daemon-reload`，再重启服务。
+
+### 数据库锁
+
+避免在 CLI 大量写入期间提交人工审核；WAL 只能减少冲突，不能消除并发写等待。
+
+### Hugo 部署（旧站点）
+
+检查 `hugo`、`ghp-import` 和 cron PATH，然后运行：
+
+```bash
 python tools/convert_reports_to_hugo.py --all --hugo --deploy
 ```
 
----
+Hugo 是当前旧站点链路，后续迁移完成后再废除。新 Astro 站点使用上面的
+`tools/deploy_report_site.py`，两条链路暂时并行。
 
 ## 相关文档
 
-- [`README.md`](../README.md) — 项目首页简介
-- [`docs/design.md`](design.md) — 架构设计（最高指导）
-- [`docs/tasks.md`](tasks.md) — 变更流水账（关键决策、经验教训）
-- `docs/doc-MinerU-Usage.md` — MinerU API 参考
-- `docs/doc-Data-Sources-Invest.md` — 数据源调研
-- `docs/doc-DeepSeek-ErrorCodes.md` — DeepSeek 错误码表
-- `docs/reviews/` — 历次 Code Review 报告
+- [`README.md`](../README.md)
+- [`docs/design.md`](design.md)
+- [`docs/tasks.md`](tasks.md)
+- [`docs/archive/`](archive/)
