@@ -1,0 +1,13 @@
+[run]
+branch = True
+source =
+    src
+
+[report]
+exclude_also =
+    if __name__ == .__main__.:
+    pragma: no cover
+show_missing = True
+skip_covered = False
+fail_under = 80
+

@@ -1,0 +1,30 @@
+# PapersCrawler WebUI 用户级 systemd 服务模板
+#
+# 复制到 ~/.config/systemd/user/paperscrawler-web.service 后使用。
+# 请根据实际环境替换 ExecStart 中的 Python 解释器路径。
+
+[Unit]
+Description=PapersCrawler WebUI
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/PapersCrawler
+Environment=PYTHONPATH=/path/to/PapersCrawler/src
+Environment=LOG_LEVEL=INFO
+EnvironmentFile=-/path/to/PapersCrawler/.env
+ExecStart=/path/to/paperscrawler-venv/bin/python -m uvicorn \
+    src.web.app:app \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=027
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
