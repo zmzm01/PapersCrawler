@@ -6,17 +6,67 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from pathlib import Path
 
 from config import CFG, DATA_DIR, load_keywords
 from common import LLMCircuitBreaker, LLMServiceUnavailableError
-from db.database import DatabaseClient, FetchStatus
+from db.database import FetchStatus
 from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
 )
 from processors.paper_relevance import LLMAPICallError, LLMResponseParseError
+from processors.summary_schema import (
+    normalize_summary,
+    summary_quality_issues,
+    transform_summary_texts,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _fix_summary_with_formula_fixer(
+    summary: dict,
+    doi: str,
+    llm_config: dict,
+    force: bool,
+    circuit_breaker: LLMCircuitBreaker,
+) -> tuple[str, int]:
+    """Fix formula formatting in one normalized summary.
+
+    Parameters
+    ----------
+    summary : dict
+        Normalized structured summary.
+    doi : str
+        Paper DOI used in progress logs.
+    llm_config : dict
+        Dedicated FormulaFixer LLM configuration.
+    force : bool
+        Whether to send every non-empty text node to the fixer.
+    circuit_breaker : LLMCircuitBreaker
+        Circuit breaker shared by FormulaFixer workers.
+
+    Returns
+    -------
+    tuple[str, int]
+        JSON-encoded fixed summary and the number of changed text nodes.
+    """
+    fixer = FormulaFixer(llm_api_config=llm_config, force=force)
+    fixed_count = 0
+
+    def fix_text(text, field_name):
+        nonlocal fixed_count
+        fixed = fixer.fix_text(
+            text,
+            field_name=field_name,
+            circuit_breaker=circuit_breaker,
+        )
+        if fixed != text:
+            fixed_count += 1
+        return fixed
+
+    logger.debug("FormulaFixer: [%s] 检查结构化总结字段", doi)
+    fixed_summary = transform_summary_texts(summary, fix_text)
+    return json.dumps(fixed_summary, ensure_ascii=False), fixed_count
 
 
 def phase_f_llm_summary(db):
@@ -31,9 +81,16 @@ def phase_f_llm_summary(db):
         logger.info("Phase F: SKIP_PHASE_F=True, skipping")
         return
 
-    papers = db.get_pendings("llm_summary_status")
-    if CFG.MAX_PAPERS_PER_PHASE:
-        papers = papers[:CFG.MAX_PAPERS_PER_PHASE]
+    domain_config = load_keywords()
+    if domain_config.get("scope_definition"):
+        papers = db.get_pending_summary_papers(
+            limit=CFG.MAX_PAPERS_PER_PHASE,
+        )
+    else:
+        # Keep the legacy fallback for installations without a scope file.
+        papers = db.get_pendings("llm_summary_status")
+        if CFG.MAX_PAPERS_PER_PHASE:
+            papers = papers[:CFG.MAX_PAPERS_PER_PHASE]
     if not papers:
         logger.info("Phase F: no pending papers")
         return
@@ -43,7 +100,6 @@ def phase_f_llm_summary(db):
         if p["llm_relevance_category"] in ("A", "B")
     ]
 
-    domain_config = load_keywords()
     if not domain_config.get("scope_definition"):
         relevant_papers = papers
 
@@ -56,9 +112,7 @@ def phase_f_llm_summary(db):
         logger.info(f"Phase F: {skipped_count} papers skipped (not relevant)")
 
     summarizer = DeepSeekPaperSummarizer(llm_api_config=CFG.LLM_API_CONFIG_DICT_SUMM)
-    fixer = None
-    if not CFG.SKIP_FORMULA_FIX:
-        fixer = FormulaFixer(llm_api_config=CFG.LLM_API_CONFIG_DICT_RELE, force=CFG.FORCE_FORMULA_FIX)
+    formula_enabled = not CFG.SKIP_FORMULA_FIX
 
     tasks = []
     for paper in relevant_papers:
@@ -92,73 +146,116 @@ def phase_f_llm_summary(db):
 
     max_workers = min(len(tasks), CFG.LLM_CONCURRENT_MAX)
     logger.info(f"Phase F: {max_workers} concurrent workers")
+    formula_executor = None
+    formula_futures = {}
+    formula_circuit_breaker = None
+    if formula_enabled:
+        formula_workers = min(len(tasks), CFG.FORMULA_FIX_CONCURRENT_MAX)
+        formula_executor = ThreadPoolExecutor(max_workers=formula_workers)
+        formula_circuit_breaker = LLMCircuitBreaker(
+            CFG.LLM_CIRCUIT_BREAKER_THRESHOLD,
+        )
+        logger.info(
+            "Phase F FormulaFixer: %s concurrent workers, model=%s",
+            formula_workers,
+            CFG.LLM_API_CONFIG_DICT_FORMULA.get("model"),
+        )
     success_count = 0
     circuit_breaker = LLMCircuitBreaker(CFG.LLM_CIRCUIT_BREAKER_THRESHOLD)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                summarizer.call_deepseek_api, article_text, CFG.SUMMARIES_PROMPT,
-                circuit_breaker,
-            ): paper
-            for paper, article_text in tasks
-        }
-        for future in as_completed(futures):
-            paper = futures[future]
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    summarizer.call_deepseek_api, article_text, CFG.SUMMARIES_PROMPT,
+                    circuit_breaker,
+                ): paper
+                for paper, article_text in tasks
+            }
+            for future in as_completed(futures):
+                paper = futures[future]
+                doi = paper["doi"]
+                timestamp = str(datetime.now())
+                try:
+                    result_str = future.result()
+                    decoded_result = json.loads(result_str)
+                    if not isinstance(decoded_result, dict):
+                        raise LLMResponseParseError(
+                            "LLM summary must be a JSON object"
+                        )
+                    parsed = normalize_summary(decoded_result)
+                    quality_issues = summary_quality_issues(parsed)
+                    if quality_issues:
+                        raise LLMResponseParseError(
+                            "Summary content validation failed: "
+                            + "; ".join(quality_issues),
+                        )
+                    if formula_executor is not None:
+                        formula_future = formula_executor.submit(
+                            _fix_summary_with_formula_fixer,
+                            parsed,
+                            doi,
+                            CFG.LLM_API_CONFIG_DICT_FORMULA,
+                            CFG.FORCE_FORMULA_FIX,
+                            formula_circuit_breaker,
+                        )
+                        formula_futures[formula_future] = (paper, timestamp)
+                    else:
+                        db.update_llm_summary(
+                            doi, result_str, FetchStatus.SUCCESS.value, timestamp,
+                        )
+                        success_count += 1
+
+                except (LLMAPICallError, LLMResponseParseError) as e:
+                    if isinstance(e, LLMServiceUnavailableError) and circuit_breaker.is_open:
+                        logger.warning("LLM circuit open; retaining pending summary: %s", doi)
+                        continue
+                    logger.warning(f"LLM summary API error [{doi}]: {e}")
+                    db.update_llm_summary_error(
+                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    )
+
+                except LLMContextLengthExceed as e:
+                    logger.warning(f"LLM context length exceeded [{doi}]: {e}")
+                    db.update_llm_summary_error(
+                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    )
+
+                except json.JSONDecodeError as e:
+                    logger.warning(f"LLM non-JSON response [{doi}]: {e}")
+                    db.update_llm_summary_error(
+                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    )
+
+                except Exception as e:
+                    logger.error(f"LLM summary error [{doi}]: {e}")
+                    db.update_llm_summary_error(
+                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    )
+
+        for future in as_completed(formula_futures):
+            paper, timestamp = formula_futures[future]
             doi = paper["doi"]
-            timestamp = str(datetime.now())
             try:
-                result_str = future.result()
-                parsed = json.loads(result_str)
-                if fixer:
-                    logger.debug(f"FormulaFixer: [{doi}] 检查 5 个字段")
-                    FIXER_FIELDS = [
-                        "one_sentence", "motivation_and_goal",
-                        "key_setup_and_method", "main_results_and_physics",
-                        "take_home_message",
-                    ]
-                    fixed_count = 0
-                    for field in FIXER_FIELDS:
-                        if field in parsed and isinstance(parsed[field], str):
-                            before = parsed[field]
-                            after = fixer.fix_text(before, field_name=field)
-                            if after != before:
-                                fixed_count += 1
-                            parsed[field] = after
-                    if fixed_count:
-                        logger.info(f"FormulaFixer: [{doi}] {fixed_count}/{len(FIXER_FIELDS)} 个字段已修复")
-                    result_str = json.dumps(parsed, ensure_ascii=False)
+                result_str, fixed_count = future.result()
+                if fixed_count:
+                    logger.info(
+                        "FormulaFixer: [%s] %s 个文本节点已修复",
+                        doi,
+                        fixed_count,
+                    )
                 db.update_llm_summary(
                     doi, result_str, FetchStatus.SUCCESS.value, timestamp,
                 )
                 success_count += 1
-
-            except (LLMAPICallError, LLMResponseParseError) as e:
-                if isinstance(e, LLMServiceUnavailableError) and circuit_breaker.is_open:
-                    logger.warning("LLM circuit open; retaining pending summary: %s", doi)
-                    continue
-                logger.warning(f"LLM summary API error [{doi}]: {e}")
-                db.update_llm_summary_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
-                )
-
-            except LLMContextLengthExceed as e:
-                logger.warning(f"LLM context length exceeded [{doi}]: {e}")
-                db.update_llm_summary_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
-                )
-
-            except json.JSONDecodeError as e:
-                logger.warning(f"LLM non-JSON response [{doi}]: {e}")
-                db.update_llm_summary_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
-                )
-
             except Exception as e:
-                logger.error(f"LLM summary error [{doi}]: {e}")
+                logger.error("FormulaFixer summary error [%s]: %s", doi, e)
                 db.update_llm_summary_error(
                     doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
                 )
+    finally:
+        if formula_executor is not None:
+            formula_executor.shutdown(wait=True)
 
     if circuit_breaker.is_open:
         logger.warning("Phase F circuit breaker opened; remaining papers will retry next run")
