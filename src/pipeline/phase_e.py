@@ -8,8 +8,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from config import CFG, load_keywords
-from db.database import DatabaseClient, FetchStatus
-from common import LLMCircuitBreaker, LLMServiceUnavailableError
+from db.database import FetchStatus
+from common import (
+    LLMCircuitBreaker,
+    LLMServiceUnavailableError,
+    clean_extracted_text,
+)
 from processors.paper_relevance import (
     PaperRelevanceChecker,
     LLMAPICallError, LLMResponseParseError,
@@ -52,7 +56,7 @@ def phase_e_llm_relevance(db):
     skipped_no_abstract = 0
     for paper in paper_tasks:
         doi = paper["doi"]
-        abstract = (paper["abstract"] or "").strip()
+        abstract = clean_extracted_text(paper["abstract"]) or ""
         if not abstract:
             page_status = paper["publisher_page_fetched_status"]
             if page_status in (FetchStatus.PENDING.value, FetchStatus.FAILED.value):

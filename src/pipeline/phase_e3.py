@@ -6,9 +6,14 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from common import LLMCircuitBreaker, LLMServiceUnavailableError
+from common import (
+    LLMCircuitBreaker,
+    LLMServiceUnavailableError,
+    clean_extracted_text,
+)
 from config import CFG, DATA_DIR, load_keywords
-from db.database import DatabaseClient, FetchStatus
+from db.database import FetchStatus
+from keyword_catalog import flatten_catalog_terms
 from processors.paper_relevance import (
     LLMAPICallError,
     LLMResponseParseError,
@@ -18,7 +23,7 @@ from processors.paper_relevance import (
 logger = logging.getLogger(__name__)
 
 
-def build_relevance_evidence(text, max_chars=60000):
+def build_relevance_evidence(text, max_chars=60000, evidence_terms=None):
     """Extract useful full-text evidence without blindly truncating the head.
 
     Parameters
@@ -27,6 +32,9 @@ def build_relevance_evidence(text, max_chars=60000):
         MinerU Markdown text.
     max_chars : int
         Maximum evidence size sent to the adjudication model.
+    evidence_terms : list[str], optional
+        Additional literal terms from ``keyword_catalog`` to use when
+        selecting context windows from long documents.
 
     Returns
     -------
@@ -44,9 +52,15 @@ def build_relevance_evidence(text, max_chars=60000):
         if start >= 0:
             sections.append(text[max(0, start - 500):start + 9000])
     keyword_hits = []
-    for match in re.finditer(
-            r"laser|ion|proton|target|diagnos|accelerat|beamline|transport|post-acceler",
-            lower):
+    base_terms = [
+        "laser", "ion", "proton", "target", "diagnos", "accelerat",
+        "beamline", "transport", "post-acceler",
+    ]
+    catalog_terms = [str(term) for term in (evidence_terms or []) if str(term).strip()]
+    evidence_pattern = "|".join(
+        re.escape(term.casefold()) for term in base_terms + catalog_terms
+    )
+    for match in re.finditer(evidence_pattern, lower):
         keyword_hits.append(text[max(0, match.start() - 600):match.end() + 1800])
         if len(keyword_hits) >= 12:
             break
@@ -107,10 +121,12 @@ def phase_e3_fulltext_relevance(db):
         if paper["llm_relevance_basis"] == "fulltext":
             continue
         evidence = build_relevance_evidence(
-            fulltext, max_chars=CFG.FULLTEXT_RELEVANCE_MAX_CHARS,
+            fulltext,
+            max_chars=CFG.FULLTEXT_RELEVANCE_MAX_CHARS,
+            evidence_terms=flatten_catalog_terms(domain_config),
         )
         prompt = checker.build_fulltext_prompt(
-            paper["title"] or "", paper["abstract"] or "", evidence,
+            paper["title"] or "", clean_extracted_text(paper["abstract"]) or "", evidence,
             doi=paper["doi"],
         )
         tasks.append((paper, prompt))

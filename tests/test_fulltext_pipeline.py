@@ -2,12 +2,14 @@
 
 import os
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 
 from db.database import DatabaseClient
 from pipeline.phase_e import phase_e_llm_relevance
 from pipeline.phase_e3 import phase_e3_fulltext_relevance
+import pipeline.phase_e2 as phase_e2_module
 from processors.paper_relevance import PaperRelevanceChecker
 
 
@@ -50,6 +52,25 @@ def test_download_quota_persists_failed_attempts_and_publisher_limit(db):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fulltext_download_events"
     ).fetchone()[0] == 3
+
+
+def test_failed_download_history_keeps_doi_and_local_date(db):
+    """MinerU failure history exposes DOI-level dates for alerting."""
+    db.conn.execute(
+        "INSERT INTO fulltext_download_events "
+        "(doi, publisher, local_date, attempted_at, status, error) "
+        "VALUES (?, ?, ?, ?, 'failed', ?)",
+        ("10/x/mineru", "aps", "2026-08-17", "2026-08-17T02:00:00", "timeout"),
+    )
+    db.conn.commit()
+
+    failures = db.get_fulltext_download_failures("2026-08-17")
+
+    assert failures == [{
+        "doi": "10/x/mineru",
+        "local_date": "2026-08-17",
+        "error": "timeout",
+    }]
 
 
 def test_candidate_queue_prioritizes_new_over_backfill(db):
@@ -190,3 +211,65 @@ def test_phase_e3_keeps_terminal_parse_failure_pending(db):
     assert row["llm_relevance_status"] == "pending"
     assert row["llm_relevance_category"] is None
     assert row["llm_relevance_basis"] is None
+
+
+def test_phase_e2_reuses_imported_pdf_without_pdf_url(db, tmp_path, monkeypatch):
+    """A manually imported PDF must bypass the network URL requirement."""
+    doi = "10/x/local-pdf"
+    _paper(db, doi, pdf_url="")
+    db.update_relevance_screen(
+        doi, "A", "[]", "high", "screen result", "success", "now",
+    )
+
+    mineru_dir = tmp_path / "mineru_output"
+    sessions_dir = tmp_path / "sessions"
+    safe_doi = doi.replace("/", "_")
+    local_pdf = mineru_dir / safe_doi / "paper.pdf"
+    local_pdf.parent.mkdir(parents=True)
+    local_pdf.write_bytes(b"%PDF-1.7\nlocal test pdf")
+
+    class FakeDownloader:
+        """Minimal downloader used to prove no network download is needed."""
+
+        def __init__(self, _session_dir):
+            self.page = SimpleNamespace(wait_for_timeout=lambda _delay: None)
+
+        def start_browser(self, _proxy):
+            return None
+
+        def download_pdf(self, *_args, **_kwargs):
+            raise AssertionError("imported PDF should not be downloaded")
+
+        def close(self):
+            return None
+
+    class FakeParser:
+        """Minimal MinerU parser that writes the expected output file."""
+
+        def __init__(self, _token):
+            return None
+
+        def parse_pdf(self, _pdf_path, output_dir):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "full.md").write_text("# Local full text", encoding="utf-8")
+            return output_dir
+
+    monkeypatch.setattr(phase_e2_module, "MINERU_OUTPUT_DIR", mineru_dir)
+    monkeypatch.setattr(phase_e2_module, "BROWSER_SESSION_DIR", sessions_dir)
+    monkeypatch.setattr(phase_e2_module, "BasePublisherScraper", FakeDownloader)
+    monkeypatch.setattr(phase_e2_module, "MinerUParser", FakeParser)
+    monkeypatch.setitem(phase_e2_module.SCRAPER_MAP, "aps", (None, None, None))
+    monkeypatch.setattr(phase_e2_module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(phase_e2_module.CFG, "SKIP_PHASE_E2", False)
+    monkeypatch.setattr(phase_e2_module.CFG, "MINERU_TOKEN", "test-token")
+    monkeypatch.setattr(phase_e2_module.CFG, "FULLTEXT_DOWNLOAD_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_e2_module.CFG, "FULLTEXT_DOWNLOAD_DELAY_MAX", 0)
+
+    phase_e2_module.phase_e2_mineru(db)
+
+    row = db.conn.execute(
+        "SELECT mineru_parse_status, mineru_output_dir FROM papers WHERE doi = ?",
+        (doi,),
+    ).fetchone()
+    assert row["mineru_parse_status"] == "success"
+    assert row["mineru_output_dir"] == f"mineru_output/{safe_doi}"
