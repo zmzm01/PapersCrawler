@@ -14,6 +14,8 @@ from sources.crossref import CrossrefClient, NotFoundError
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["phase_b_crossref", "DatabaseClient"]
+
 
 def phase_b_crossref(db):
     """Enrich paper metadata via CrossRef API.

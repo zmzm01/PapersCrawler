@@ -1,7 +1,36 @@
 {
+  "schema_version": 3,
   "one_sentence": "本文利用200 TW、30 fs激光系统，通过激光驱动等离子体尾波场加速电子，实现了电子能量达到GeV量级。",
-  "motivation_and_goal": "未提供",
-  "key_setup_and_method": "激光系统：峰值功率200 TW，脉冲宽度30 fs。其他实验参数（如波长、能量、焦斑、靶型、诊断设备）未提供。",
-  "main_results_and_physics": "## 主要结果\n\n- 观测到电子通过激光驱动等离子体尾波场加速至GeV量级能量。具体能量值和能谱特征未提供。物理机制：强激光脉冲在等离子体中激发尾波场，尾波场中的纵向电场捕获并加速电子。",
-  "take_home_message": "本文演示了基于激光尾波场加速的GeV电子加速可行性，但缺乏详细的实验参数和诊断数据，限制了对加速过程和性能的深入理解。"
+  "motivation_and_goal": {
+    "background": "未提供",
+    "research_gap": "未提供",
+    "objective": "未提供"
+  },
+  "key_setup_and_method": {
+    "method": "激光驱动等离子体尾波场加速",
+    "setup_and_parameters": "激光系统峰值功率200 TW，脉冲宽度30 fs；其他参数未提供。",
+    "analysis_or_model": "未提供",
+    "key_equations": "未提供"
+  },
+  "main_results_and_physics": [
+    {
+      "key": "electron_energy",
+      "title": "电子能量提升",
+      "finding": "观测到电子通过激光驱动等离子体尾波场加速至GeV量级能量。",
+      "evidence": "具体能量值和能谱特征未提供。",
+      "physical_interpretation": "强激光脉冲在等离子体中激发尾波场，尾波场中的纵向电场捕获并加速电子。"
+    }
+  ],
+  "limitations": [
+    {
+      "key": "simulation_scope",
+      "limitation": "实验参数和诊断数据未提供，无法判断实际装置中的加速性能。",
+      "impact": "限制了对加速过程和性能的定量验证。",
+      "basis": "explicit"
+    }
+  ],
+  "take_home_message": {
+    "contribution": "演示了基于激光尾波场加速的GeV电子加速可行性。",
+    "implication": "未提供"
+  }
 }

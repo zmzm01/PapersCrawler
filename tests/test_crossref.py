@@ -10,7 +10,6 @@ Coverage:
 All network-dependent tests are replaced with mocked responses.
 """
 
-import json
 import os
 import sys
 from unittest.mock import patch, MagicMock
@@ -43,6 +42,14 @@ def test_text_clean_empty():
     """Empty text cleaning returns None."""
     assert CrossrefClient.TextClean("") is None
     assert CrossrefClient.TextClean(None) is None
+
+
+def test_text_clean_encoded_carriage_return():
+    """CrossRef abstracts with encoded carriage returns become readable text."""
+    cleaned = CrossrefClient.TextClean(
+        "<jats:p>first&#xD;second</jats:p><jats:p>third</jats:p>"
+    )
+    assert cleaned == "first second third"
 
 
 # ---- PaperMetadata ----

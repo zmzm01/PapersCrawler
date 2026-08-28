@@ -10,10 +10,8 @@ Coverage:
   - Double-replacement safety: curly braces in scope block content
 """
 
-import json
-from unittest.mock import patch, ANY
+from unittest.mock import patch
 
-import pytest
 
 
 # ---- Real-data tests (use actual configs/keywords.yaml) ----

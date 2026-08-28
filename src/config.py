@@ -26,7 +26,10 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
-from common import build_chat_completions_url
+from common import (
+    LLM_PROTOCOL_OPENAI_CHAT,
+    build_llm_endpoint_url,
+)
 from dotenv import load_dotenv
 import yaml
 
@@ -50,7 +53,10 @@ CONFIG_DIR = BASE_DIR / "configs"              # 配置文件目录
 DB_PATH = DATA_DIR / "papers.db"
 
 # 运行日志文件路径
-LOG_FILE_PATH = DATA_DIR / "PaperCrawler.log"
+LOG_DIR = DATA_DIR / "logs"
+# Compatibility path for external callers. Entry points use logging_config and
+# write date-separated files under LOG_DIR instead of this aggregate filename.
+LOG_FILE_PATH = LOG_DIR / "PaperCrawler.log"
 
 # 浏览器 Session 缓存目录（cloakbrowser 持久化 Session 存放处）
 # 按 publisher 分子目录，如 data/session_cached/nature/
@@ -165,32 +171,46 @@ CFG.NTFY_TIMEOUT = 10
 CFG.NTFY_TITLE = "PapersCrawler 运行汇总"
 CFG.NTFY_PRIORITY = "default"
 
-# ---------- OpenAI-compatible LLM API ----------
+# ---------- Multi-protocol LLM API ----------
 CFG.LLM_BASE_URL = "https://api.deepseek.com"
 CFG.LLM_API_CONFIG_DICT_RELE = {
-    "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
+    "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     "model": "deepseek-v4-flash",
+    "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "disabled",
     "timeout": 300,
     "retry_max_attempts": 3,
     "retry_backoff_max_seconds": 30,
 }
 CFG.LLM_API_CONFIG_DICT_FULLTEXT = {
-    "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
+    "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     "model": "deepseek-v4-pro",
+    "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "enabled",
     "timeout": 300,
     "retry_max_attempts": 3,
     "retry_backoff_max_seconds": 30,
 }
 CFG.LLM_API_CONFIG_DICT_SUMM = {
-    "api_url": build_chat_completions_url(CFG.LLM_BASE_URL),
+    "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
     "model": "deepseek-v4-pro",
+    "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "enabled",
     "timeout": 300,
+    "retry_max_attempts": 3,
+    "retry_backoff_max_seconds": 30,
+}
+CFG.LLM_API_CONFIG_DICT_FORMULA = {
+    "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
+    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "model": "deepseek-v4-flash",
+    "protocol": LLM_PROTOCOL_OPENAI_CHAT,
+    "thinking": "disabled",
+    "max_tokens": 4096,
+    "timeout": 120,
     "retry_max_attempts": 3,
     "retry_backoff_max_seconds": 30,
 }
@@ -202,11 +222,13 @@ _SUMMARIES_PROMPT_FALLBACK = """你是一位专业的理论/实验物理学家�
 严格输出合法 JSON 对象，不包含任何额外文字或注释。JSON 对象的格式与字段内容要求如下：
 
 {
+  "schema_version": 3,
   "one_sentence": "用一句话说明：本文采用什么方法/装置，研究了什么物理问题，得到了什么核心结论",
-  "motivation_and_goal": "研究动机、要解决的具体物理问题、前人工作的缺口或争议，以及本文的明确目标",
-  "key_setup_and_method": "详细描述实验/理论/模拟方法与关键参数。例如激光参数（波长、能量、脉宽、焦斑）、靶型、诊断设备，或模拟代码（PIC、流体）与网格设置。如有核心公式，请用 LaTeX 呈现，并解释符号含义",
-  "main_results_and_physics": "Markdown 格式字符串，描述 2-4 个主要结果及其背后的物理机制。每个结果应包含：观测到的现象、关键定量数据（如能量、转换效率、标度律指数），以及物理解释或支持的理论模型",
-  "take_home_message": "本文对领域的主要贡献或启示，并至少指出 1 条明确局限"
+  "motivation_and_goal": {"background": "研究背景", "research_gap": "研究缺口或争议", "objective": "本文目标"},
+  "key_setup_and_method": {"study_type": "experiment、simulation、theory、review 或 mixed 之一", "method": "方法", "setup_and_parameters": "装置与关键参数", "analysis_or_model": "分析方法或模型", "key_equations": "关键公式及符号含义"},
+  "main_results_and_physics": [{"key": "result_1", "title": "结果短标题", "finding": "结果", "evidence": "证据", "physical_interpretation": "物理内涵"}],
+  "limitations": [{"key": "limitation_1", "limitation": "明确局限", "impact": "对结论或应用的影响", "basis": "explicit 或 inferred"}],
+  "take_home_message": {"contribution": "主要贡献", "implication": "物理启示或应用意义"}
 }
 
 【内容要求】
@@ -220,11 +242,20 @@ _SUMMARIES_PROMPT_FALLBACK = """你是一位专业的理论/实验物理学家�
     **所有 LaTeX 命令必须被数学模式包裹，禁止裸写**。
 4. 禁止使用复杂 LaTeX 环境：禁止 \\begin{} / \\end{}（如 cases、aligned 等），禁止 \\\\ 换行。公式仅限 \\frac、\\sqrt、\\int、\\sum、\\partial 等基本命令及上标/下标/希腊字母。
 5. 字符串内的换行必须用转义符 \\n 表示，**严禁插入真正的换行符**，以保证 JSON 解析无误。
+6. `main_results_and_physics` 必须是数组，每个元素必须有唯一的 `key`，不要输出 Markdown 标题或把多个结果合成一段话。
+7. 所有分析内容必须放入示例中的固定 key；信息未提供时写 "未提供"，不要编造。
+8. `limitations` 只输出正文能够支持的、有明确含义的局限；没有足够依据时输出空数组 `[]`。
+   禁止把 "未提供"、"暂无" 或 "无" 作为 `limitation` 的内容；`basis` 仅用于机器结构化，
+   必须是 `explicit` 或 `inferred`。
+9. `finding`、`evidence` 和 `physical_interpretation` 分别表示结果、证据和物理解释；没有具体数值时写 "未提供"，不要目测图像或自行补齐。
+10. `study_type` 是机器用元数据，必须标记 experiment、simulation、theory、review 或 mixed
+    之一。区分实验、模拟、理论推导和作者展望，不要把背景或未来工作写成本文结果。
+11. `key_setup_and_method` 必须分别填写 `method`、`setup_and_parameters` 和
+    `analysis_or_model`；只要正文包含方法信息，就不能把这些字段全部写成 "未提供"。
 
-【main_results_and_physics 字段的 Markdown 要求】
-- 使用标准 Markdown 语法：二级标题 ##，粗体 **，斜体 *，行内代码 `，列表 -，引用 >。
-- 每个结果建议自成一段，用标题或列表区分。
-- 转义规则同上：反斜杠写双反斜杠，换行写 \\n。
+【结构化输出要求】
+- 结果数组通常输出 2-4 个元素；每个元素分别填写 finding、evidence、physical_interpretation。
+- 所有 key 使用稳定的英文 snake_case，便于报告渲染、导出和后续程序分析。
 """
 
 CFG.SUMMARIES_PROMPT = _SUMMARIES_PROMPT_FALLBACK
@@ -244,6 +275,7 @@ CFG.SKIP_PHASE_F = False
 CFG.SKIP_PHASE_G = False
 CFG.SKIP_PHASE_H = True
 CFG.LLM_CONCURRENT_MAX = 20
+CFG.FORMULA_FIX_CONCURRENT_MAX = 10
 CFG.LLM_CIRCUIT_BREAKER_THRESHOLD = 5
 
 # ---------- 流水线参数 ----------
@@ -281,6 +313,7 @@ CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS = 45000
 CFG.PUBLISHER_PROXY = {
     "optica": {"server": "http://127.0.0.1:10808"},
 }
+CFG.PUBLISHER_FALLBACK_PROXY_URL = ""
 
 # ---------- LLM 公式修复 ----------
 CFG.SKIP_FORMULA_FIX = False
@@ -300,6 +333,34 @@ CFG.FULLTEXT_RELEVANCE_MAX_CHARS = 60000
 # settings.yaml 覆盖: 将 YAML 配置加载到 CFG 属性
 # ==================================================================
 
+def _apply_llm_role_settings(config_dict, role_settings, base_url, default_protocol):
+    """Apply shared LLM settings for one pipeline role.
+
+    Parameters
+    ----------
+    config_dict : dict
+        Mutable runtime configuration for a pipeline role.
+    role_settings : dict
+        YAML settings for that role.
+    base_url : str
+        Common provider base URL.
+    default_protocol : str
+        Protocol used when the role does not override it.
+    """
+    protocol = role_settings.get("protocol", default_protocol)
+    config_dict["protocol"] = protocol
+    config_dict["api_url"] = build_llm_endpoint_url(base_url, protocol)
+    for key in (
+        "model",
+        "thinking",
+        "reasoning_effort",
+        "timeout",
+        "max_tokens",
+        "max_output_tokens",
+    ):
+        if key in role_settings:
+            config_dict[key] = role_settings[key]
+
 def _apply_settings(settings):
     """用 settings dict 更新 CFG 属性。
 
@@ -317,22 +378,31 @@ def _apply_settings(settings):
     llm_cfg = settings.get("llm", {})
     base_url = llm_cfg.get("base_url", CFG.LLM_BASE_URL)
     CFG.LLM_BASE_URL = str(base_url).strip()
-    api_url = build_chat_completions_url(CFG.LLM_BASE_URL)
-    CFG.LLM_API_CONFIG_DICT_RELE["api_url"] = api_url
-    CFG.LLM_API_CONFIG_DICT_FULLTEXT["api_url"] = api_url
-    CFG.LLM_API_CONFIG_DICT_SUMM["api_url"] = api_url
+    default_protocol = llm_cfg.get("protocol", LLM_PROTOCOL_OPENAI_CHAT)
     rele = llm_cfg.get("relevance", {})
-    CFG.LLM_API_CONFIG_DICT_RELE["model"] = rele.get("model", CFG.LLM_API_CONFIG_DICT_RELE["model"])
-    CFG.LLM_API_CONFIG_DICT_RELE["thinking"] = rele.get("thinking", CFG.LLM_API_CONFIG_DICT_RELE["thinking"])
-    CFG.LLM_API_CONFIG_DICT_RELE["timeout"] = rele.get("timeout", CFG.LLM_API_CONFIG_DICT_RELE["timeout"])
     summ = llm_cfg.get("summary", {})
-    CFG.LLM_API_CONFIG_DICT_SUMM["model"] = summ.get("model", CFG.LLM_API_CONFIG_DICT_SUMM["model"])
-    CFG.LLM_API_CONFIG_DICT_SUMM["thinking"] = summ.get("thinking", CFG.LLM_API_CONFIG_DICT_SUMM["thinking"])
-    CFG.LLM_API_CONFIG_DICT_SUMM["timeout"] = summ.get("timeout", CFG.LLM_API_CONFIG_DICT_SUMM["timeout"])
     fulltext = llm_cfg.get("fulltext_relevance", {})
-    for key in ("model", "thinking", "timeout"):
-        if key in fulltext:
-            CFG.LLM_API_CONFIG_DICT_FULLTEXT[key] = fulltext[key]
+    formula_cfg = settings.get("formula_fix", {})
+    formula_llm = formula_cfg.get("llm", {})
+    _apply_llm_role_settings(
+        CFG.LLM_API_CONFIG_DICT_RELE, rele, CFG.LLM_BASE_URL, default_protocol,
+    )
+    _apply_llm_role_settings(
+        CFG.LLM_API_CONFIG_DICT_SUMM, summ, CFG.LLM_BASE_URL, default_protocol,
+    )
+    _apply_llm_role_settings(
+        CFG.LLM_API_CONFIG_DICT_FULLTEXT,
+        fulltext,
+        CFG.LLM_BASE_URL,
+        default_protocol,
+    )
+    formula_base_url = formula_llm.get("base_url", CFG.LLM_BASE_URL)
+    _apply_llm_role_settings(
+        CFG.LLM_API_CONFIG_DICT_FORMULA,
+        formula_llm,
+        str(formula_base_url).strip(),
+        default_protocol,
+    )
     CFG.FULLTEXT_RELEVANCE_MAX_CHARS = fulltext.get(
         "evidence_max_chars", CFG.FULLTEXT_RELEVANCE_MAX_CHARS,
     )
@@ -340,7 +410,8 @@ def _apply_settings(settings):
     retry_cfg = llm_cfg.get("retry", {})
     for config_dict in (CFG.LLM_API_CONFIG_DICT_RELE,
                         CFG.LLM_API_CONFIG_DICT_SUMM,
-                        CFG.LLM_API_CONFIG_DICT_FULLTEXT):
+                        CFG.LLM_API_CONFIG_DICT_FULLTEXT,
+                        CFG.LLM_API_CONFIG_DICT_FORMULA):
         config_dict["retry_max_attempts"] = retry_cfg.get(
             "max_attempts", config_dict["retry_max_attempts"],
         )
@@ -402,11 +473,24 @@ def _apply_settings(settings):
     cfg_proxy = ps.get("proxy", {})
     if cfg_proxy:
         CFG.PUBLISHER_PROXY = cfg_proxy
+    fallback_proxy_url = ps.get(
+        "fallback_proxy_url", CFG.PUBLISHER_FALLBACK_PROXY_URL,
+    )
+    CFG.PUBLISHER_FALLBACK_PROXY_URL = str(fallback_proxy_url or "").strip()
 
     # 公式修复
-    ff = settings.get("formula_fix", {})
-    CFG.SKIP_FORMULA_FIX = ff.get("skip", CFG.SKIP_FORMULA_FIX)
-    CFG.FORCE_FORMULA_FIX = ff.get("force", CFG.FORCE_FORMULA_FIX)
+    CFG.FORMULA_FIX_CONCURRENT_MAX = max(
+        1,
+        int(formula_cfg.get(
+            "concurrent_max", CFG.FORMULA_FIX_CONCURRENT_MAX,
+        )),
+    )
+    CFG.SKIP_FORMULA_FIX = formula_cfg.get(
+        "skip", CFG.SKIP_FORMULA_FIX,
+    )
+    CFG.FORCE_FORMULA_FIX = formula_cfg.get(
+        "force", CFG.FORCE_FORMULA_FIX,
+    )
 
     # 邮件模板配置
     email_cfg = settings.get("email", {})
@@ -456,12 +540,14 @@ def load_keywords():
 
     从 configs/keywords.yaml 读取领域定义和关键词配置。
     返回结构化字典，包含 scope_definition（各子领域描述+关键词）和
-    irrelevant_fields（不相关领域定义）。
+    irrelevant_fields（不相关领域定义）以及 keyword_catalog（可审计的
+    术语、别名和子域映射）。
 
     Returns:
         dict: {
             "scope_definition": dict[str, {"description": str, "topics": list[str]}],
             "context_gates": list[dict],
+            "keyword_catalog": list[dict],
             "irrelevant_fields": {"description": str, "topics": list[str]},
         }
               文件不存在或为空时返回全空结构。
@@ -471,6 +557,7 @@ def load_keywords():
         "scope_definition": {},
         "core_anchors": [],
         "context_gates": [],
+        "keyword_catalog": [],
         "irrelevant_fields": {"description": "", "topics": []},
     }
     if not path.exists():
@@ -486,12 +573,13 @@ def load_keywords():
         "scope_definition": data.get("scope_definition", {}),
         "core_anchors": data.get("core_anchors", []),
         "context_gates": data.get("context_gates", []),
+        "keyword_catalog": data.get("keyword_catalog", []),
         "irrelevant_fields": data.get("irrelevant_fields", {"description": "", "topics": []}),
     }
 
 
 def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=None,
-                      core_anchors=None):
+                      core_anchors=None, keyword_catalog=None):
     """将 scope_definition 格式化为 LLM prompt 中可用的文本块。
 
     Parameters
@@ -505,6 +593,9 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
         {"description": str, "topics": list[str]}
     core_anchors : list[str], optional
         Positive evidence anchors required for the core category.
+    keyword_catalog : list[dict], optional
+        Literal terms and their sub-domain mappings.  These are recall aids,
+        not standalone relevance rules.
 
     Returns
     -------
@@ -563,6 +654,24 @@ def build_scope_block(scope_definition, context_gates=None, irrelevant_fields=No
             lines.append("")
         for t in irr.get("topics", []):
             lines.append(f"- {t}")
+        lines.append("")
+
+    if keyword_catalog:
+        lines.extend([
+            "# Literal Keyword Catalog (recall aids, not standalone criteria)",
+            "以下术语用于覆盖检查和提示模型注意可能的技术对象；仅命中术语不足以判定相关，仍须结合论文主贡献和语境：",
+        ])
+        for entry in keyword_catalog:
+            if not isinstance(entry, dict):
+                continue
+            terms = entry.get("terms", [])
+            subdomains = entry.get("subdomains", [])
+            if terms:
+                lines.append(
+                    f"- {entry.get('id', 'unnamed')}: "
+                    f"{', '.join(map(str, terms))}"
+                    + (f" -> {', '.join(map(str, subdomains))}" if subdomains else "")
+                )
         lines.append("")
 
     # 3. Per sub-domain iteration — Step 3 of the 3-step classification
