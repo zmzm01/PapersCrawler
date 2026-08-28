@@ -1,0 +1,131 @@
+---
+import { contentItems, contentText, contentTextList, recordValue, type PublicReport } from '../lib/reports';
+import { renderReportMarkdown } from '../lib/markdown';
+
+interface Props { report: PublicReport; }
+const { report } = Astro.props;
+const papers = contentItems(report.content, 'papers');
+
+function textValue(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function labelledLines(value: Record<string, unknown>, labels: Record<string, string>): string {
+	return Object.entries(labels)
+		.map(([key, label]) => {
+			const text = textValue(value[key]);
+			return text ? `**${label}：** ${text}` : undefined;
+		})
+		.filter((line): line is string => Boolean(line))
+		.join('\n\n');
+}
+
+function paperSectionText(paper: Record<string, unknown>, key: string): string | undefined {
+	const legacySections = recordValue(paper.sections);
+	const legacy = textValue(legacySections[key]);
+	if (legacy) return legacy;
+
+	const summary = recordValue(paper.summary);
+	if (key === 'motivation') {
+		return labelledLines(recordValue(summary.motivation_and_goal), {
+			background: '研究背景',
+			research_gap: '研究缺口或争议',
+			objective: '本文目标',
+		}) || undefined;
+	}
+	if (key === 'method') {
+		return labelledLines(recordValue(summary.key_setup_and_method), {
+			study_type: '研究类型',
+			method: '方法',
+			setup_and_parameters: '装置与关键参数',
+			analysis_or_model: '分析方法或模型',
+			key_equations: '关键公式',
+		}) || undefined;
+	}
+	if (key === 'results') {
+		const results = Array.isArray(summary.main_results_and_physics) ? summary.main_results_and_physics : [];
+		return results.map((result) => {
+			const item = recordValue(result);
+			const title = textValue(item.title) || '主要结果';
+			const lines = [
+				textValue(item.finding),
+				textValue(item.evidence) ? `**证据：** ${item.evidence}` : undefined,
+				textValue(item.physical_interpretation) ? `**物理内涵：** ${item.physical_interpretation}` : undefined,
+			].filter((line): line is string => Boolean(line));
+			return `## ${title}\n\n${lines.join('\n\n')}`;
+		}).join('\n\n') || undefined;
+	}
+	if (key === 'limitations') {
+		const limitations = Array.isArray(summary.limitations) ? summary.limitations : [];
+		return limitations.map((limitation) => {
+			const item = recordValue(limitation);
+			const title = textValue(item.limitation) || '未说明局限';
+			const impact = textValue(item.impact);
+			return `- **${title}**${impact ? `：${impact}` : ''}`;
+		}).join('\n') || undefined;
+	}
+	if (key === 'takeaway') {
+		return labelledLines(recordValue(summary.take_home_message), {
+			contribution: '主要贡献',
+			implication: '物理启示或应用意义',
+		}) || undefined;
+	}
+	return undefined;
+}
+
+function categoryClass(category: string | undefined): string {
+	return category ? `grade-${category}` : 'grade-unknown';
+}
+---
+
+<section id="section-papers" class="collection papers-collection">
+	<div class="section-title">
+		<p>PAPERSCRAWLER REPORT</p>
+		<h2>本期论文</h2>
+		<span>{papers.length}</span>
+	</div>
+	<div class="paper-list">
+		{papers.map((paper, paperIndex) => {
+			const title = contentText(paper, 'title') ?? '未命名论文';
+			const pageUrl = contentText(paper, 'pageUrl');
+			const category = contentText(paper, 'relevanceCategory');
+			const authors = contentTextList(paper, 'authors');
+			const subfields = contentTextList(paper, 'subfields');
+			const subfieldLabels = contentTextList(paper, 'subfieldLabels');
+			const motivation = paperSectionText(paper, 'motivation');
+			const method = paperSectionText(paper, 'method');
+			const results = paperSectionText(paper, 'results');
+			const limitations = paperSectionText(paper, 'limitations');
+			const takeaway = paperSectionText(paper, 'takeaway');
+			return <article id={`paper-${paperIndex + 1}`} class="paper-item">
+				<div class={`grade ${categoryClass(category)}`}>{category || '—'}</div>
+				<div>
+					<p class="paper-kicker">{contentText(paper, 'journal') || '期刊'} · {contentText(paper, 'publishedAt') || '日期未知'}</p>
+					<h3>
+						{pageUrl ? <a href={pageUrl} rel="noreferrer" target="_blank">{title}<span class="external" aria-hidden="true">↗</span></a> : title}
+					</h3>
+					{authors.length > 0 && <p class="authors">{authors.join(' · ')}</p>}
+					{contentText(paper, 'oneSentence') && <p class="paper-summary">{contentText(paper, 'oneSentence')}</p>}
+					{contentText(paper, 'doi') && <div class="paper-meta"><span>DOI {contentText(paper, 'doi')}</span></div>}
+					{(subfieldLabels.length > 0 || subfields.length > 0) && <div class="chips">{(subfieldLabels.length > 0 ? subfieldLabels : subfields).map((field) => <span class="topic">{field}</span>)}</div>}
+					<div class="links">
+						{contentText(paper, 'pdfUrl') && <a href={contentText(paper, 'pdfUrl')} rel="noreferrer" target="_blank">PDF ↗</a>}
+						{pageUrl && <a href={pageUrl} rel="noreferrer" target="_blank">原文 ↗</a>}
+					</div>
+					<details class="paper-details" open={category === 'A'}>
+						<summary>阅读完整解读</summary>
+						{contentText(paper, 'relevanceReason') && <div><h4>相关性判断</h4><p>{contentText(paper, 'relevanceReason')}</p></div>}
+						{contentText(paper, 'abstract') && <div><h4>原文摘要</h4><p>{contentText(paper, 'abstract')}</p></div>}
+						{[
+							['motivation', '研究动机与目标', motivation],
+							['method', '关键方法与设置', method],
+							['results', '主要结果与物理内涵', results],
+							['limitations', '局限与适用边界', limitations],
+							['takeaway', '要点总结', takeaway],
+						].map(([, label, sectionText]) => sectionText && <div><h4>{label}</h4><div class="markdown-body" set:html={renderReportMarkdown(sectionText)} /></div>)}
+					</details>
+				</div>
+			</article>;
+		})}
+	</div>
+</section>

@@ -1,0 +1,41 @@
+---
+import { formatDate, reportUrl, type PublicReport, contentItems } from '../lib/reports';
+
+interface Props { report: PublicReport; }
+const { report } = Astro.props;
+const papers = contentItems(report.content, 'papers');
+---
+
+<article class="report-card">
+	<div class="card-top">
+		<p class="eyebrow">PAPERSCRAWLER REPORT</p>
+		<time datetime={report.publishedAt}>{formatDate(report.publishedAt)}</time>
+	</div>
+	<h3><a href={reportUrl(report)}>{report.title}</a></h3>
+	<p class="card-summary">{report.summary}</p>
+	<div class="card-bottom">
+		<div class="card-tags">
+			<span>{papers.length} 篇论文</span>
+			{report.tags.map((tag) => <span>{tag}</span>)}
+		</div>
+		<a class="read" href={reportUrl(report)}>阅读报告 <span aria-hidden="true">→</span></a>
+	</div>
+</article>
+
+<style>
+	.report-card { background: var(--surface); border: 1px solid var(--line); border-radius: .7rem; box-shadow: 0 1px 0 rgba(39, 48, 49, .04); display: flex; flex-direction: column; min-height: 210px; padding: 1.5rem; position: relative; transition: box-shadow .2s ease, transform .2s ease; }
+	.report-card::before { background: var(--accent); border-radius: .7rem 0 0 0; content: ""; height: 4px; left: 1.5rem; position: absolute; right: 58%; top: -1px; }
+	.report-card:hover { box-shadow: 0 18px 38px rgba(50, 60, 56, .12); transform: translateY(-3px); }
+	.card-top { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
+	.card-top time { color: var(--muted); flex: 0 0 auto; font-size: .78rem; white-space: nowrap; }
+	.report-card h3 { font-family: var(--display); font-size: 1.65rem; letter-spacing: -.04em; line-height: 1.2; margin: 1.3rem 0 .65rem; overflow-wrap: anywhere; }
+	.report-card h3 a { text-decoration: none; }
+	.report-card h3 a:hover { color: var(--accent); }
+	.card-summary { color: var(--muted); line-height: 1.65; margin: 0; overflow-wrap: anywhere; }
+	.card-bottom { align-items: center; display: flex; gap: .8rem; justify-content: space-between; margin-top: auto; padding-top: 1.2rem; }
+	.card-tags { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: .35rem; }
+	.card-tags span { background: var(--tag); border-radius: .35rem; color: var(--muted); font-size: .72rem; line-height: 1.2; padding: .25rem .5rem; }
+	.read { color: var(--accent); font-size: .82rem; font-weight: 800; text-decoration: none; white-space: nowrap; }
+	.read span { font-size: 1.1rem; }
+	@media (max-width: 420px) { .report-card { min-height: 0; padding: 1.2rem; } .card-top { align-items: flex-start; gap: .5rem; } .card-bottom { align-items: flex-start; flex-direction: column; } }
+</style>

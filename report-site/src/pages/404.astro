@@ -1,0 +1,19 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="页面不存在 · PapersCrawler">
+	<section class="not-found">
+		<p class="eyebrow">404</p>
+		<h1>页面不存在</h1>
+		<p>这个报告链接可能已经被重新生成或尚未发布。</p>
+		<a href="/">返回报告归档 →</a>
+	</section>
+</Layout>
+
+<style>
+	.not-found { margin-inline: auto; max-width: 52rem; padding-block: 6rem; }
+	.not-found h1 { font-family: var(--display); font-size: clamp(2.6rem, 7vw, 5rem); letter-spacing: -.07em; margin: .5rem 0 .8rem; }
+	.not-found p:not(.eyebrow) { color: var(--muted); line-height: 1.7; }
+	.not-found a { color: var(--accent); font-weight: 700; text-decoration: none; }
+</style>

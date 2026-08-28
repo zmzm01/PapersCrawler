@@ -1,0 +1,27 @@
+---
+import { contentItems, contentText, type PublicReport } from '../lib/reports';
+
+interface Props { report: PublicReport; }
+const { report } = Astro.props;
+const papers = contentItems(report.content, 'papers');
+---
+
+<aside class="report-toc" aria-label="论文目录">
+	<p class="toc-kicker">PAPER INDEX</p>
+	<h2>论文目录</h2>
+	<nav class="toc-links">
+		{papers.map((paper, index) => {
+			const title = contentText(paper, 'title') || '未命名论文';
+			return <a href={`#paper-${index + 1}`} title={title}><span>{title}</span></a>;
+		})}
+	</nav>
+	<details class="mobile-paper-index">
+		<summary>论文目录 · {papers.length}</summary>
+		<nav aria-label="移动端论文目录">
+			{papers.map((paper, index) => {
+				const title = contentText(paper, 'title') || '未命名论文';
+				return <a href={`#paper-${index + 1}`}><span>{index + 1}. {title}</span></a>;
+			})}
+		</nav>
+	</details>
+</aside>

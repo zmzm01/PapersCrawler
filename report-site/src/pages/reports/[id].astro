@@ -1,0 +1,26 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import ReportContent from '../../components/ReportContent.astro';
+import ReportToc from '../../components/ReportToc.astro';
+import { contentItems, formatDate, getReports, type PublicReport } from '../../lib/reports';
+
+export function getStaticPaths() {
+	return getReports().map((report) => ({ params: { id: report.id }, props: { report } }));
+}
+
+const report = (Astro.props as { report: PublicReport }).report;
+const paperCount = contentItems(report.content, 'papers').length;
+---
+
+<Layout title={`${report.title} · PapersCrawler`} description={report.summary}>
+	<div class="report-shell" id="report-start">
+		<ReportToc report={report} />
+		<div class="report-main">
+			<a class="back" href="/">← 返回报告归档</a>
+			<p class="eyebrow">PAPERSCRAWLER · {formatDate(report.publishedAt)} · {paperCount} PAPERS</p>
+			<h1>{report.title}</h1>
+			<p class="report-summary">{report.summary}</p>
+			<ReportContent report={report} />
+		</div>
+	</div>
+</Layout>
