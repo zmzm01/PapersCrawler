@@ -5,12 +5,13 @@ Provides run_pipeline() for full execution and run_phases() for selective runs.
 """
 
 import logging
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 from config import (
     CFG, load_publishers, load_keywords,
-    DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR, DATA_DIR,
+    DB_PATH, REPORT_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,32 @@ _PHASE_KEY_MAP = {
 }
 
 
+@contextmanager
+def _phase_skip_override(phase_key, force):
+    """Temporarily disable one phase skip flag during a forced run.
+
+    The runner and each phase both check ``CFG.SKIP_PHASE_*``. Keeping the
+    override here makes ``--all`` honor its documented semantics without
+    changing every phase function signature.
+
+    Parameters
+    ----------
+    phase_key : str
+        Registered phase name such as ``"H"`` or ``"A-RSS"``.
+    force : bool
+        Whether this invocation must ignore the configured skip flag.
+    """
+    attribute = _PHASE_KEY_MAP[phase_key]
+    original_value = getattr(CFG, attribute)
+    if force:
+        setattr(CFG, attribute, False)
+    try:
+        yield
+    finally:
+        if force:
+            setattr(CFG, attribute, original_value)
+
+
 from db.database import DatabaseClient
 
 from pipeline.phase_a import phase_a_rss, phase_a_crossref
@@ -130,16 +157,16 @@ def run_phases(phase_list=None, force=False, mode="custom"):
             key: getattr(CFG, _PHASE_KEY_MAP[key]) for key in _PHASE_KEY_MAP
         }
         phase_map = {
-            "A-RSS": (phase_a_rss, [db, publishers, force], not effective_skip["A-RSS"]),
-            "A-CR": (phase_a_crossref, [db, publishers, force], not effective_skip["A-CR"]),
-            "B": (phase_b_crossref, [db], not effective_skip["B"]),
-            "C": (phase_c_publisher, [db, publishers], not effective_skip["C"]),
-            "E": (phase_e_llm_relevance, [db], not effective_skip["E"]),
-            "E2": (phase_e2_mineru, [db], not effective_skip["E2"]),
-            "E3": (phase_e3_fulltext_relevance, [db], not effective_skip["E3"]),
-            "F": (phase_f_llm_summary, [db], not effective_skip["F"]),
-            "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], not effective_skip["G"]),
-            "H": (phase_h_email, [db, AUTO_REPORT_DIR], not effective_skip["H"]),
+            "A-RSS": (phase_a_rss, [db, publishers, force], force or not effective_skip["A-RSS"]),
+            "A-CR": (phase_a_crossref, [db, publishers, force], force or not effective_skip["A-CR"]),
+            "B": (phase_b_crossref, [db], force or not effective_skip["B"]),
+            "C": (phase_c_publisher, [db, publishers], force or not effective_skip["C"]),
+            "E": (phase_e_llm_relevance, [db], force or not effective_skip["E"]),
+            "E2": (phase_e2_mineru, [db], force or not effective_skip["E2"]),
+            "E3": (phase_e3_fulltext_relevance, [db], force or not effective_skip["E3"]),
+            "F": (phase_f_llm_summary, [db], force or not effective_skip["F"]),
+            "G": (phase_g_report, [db, AUTO_REPORT_DIR, USER_REPORT_DIR], force or not effective_skip["G"]),
+            "H": (phase_h_email, [db, AUTO_REPORT_DIR], force or not effective_skip["H"]),
         }
 
         if phase_list is None:
@@ -165,7 +192,8 @@ def run_phases(phase_list=None, force=False, mode="custom"):
                 ))
                 continue
             try:
-                func(*args)
+                with _phase_skip_override(key, force):
+                    func(*args)
             except Exception as error:
                 logger.error("Phase %s crashed — continuing to next phase", key,
                              exc_info=True)
@@ -181,6 +209,11 @@ def run_phases(phase_list=None, force=False, mode="custom"):
 
         try:
             result.metrics = db.get_run_metrics(started_at)
+            item_errors = result.metrics.get("error_samples", [])
+            if item_errors:
+                result.errors.append(
+                    f"{len(item_errors)} item-level error(s) recorded"
+                )
         except Exception as error:
             logger.error("Could not collect run metrics", exc_info=True)
             result.errors.append(f"统计: {error}")
@@ -227,7 +260,7 @@ def run_daily():
     典型 cron 用法:
 
         # 每天 2:00
-        0 2 * * * cd /path/to/PapersCrawler && python tools/schedule_daily.py
+        0 2 * * * cd /path/to/PapersCrawler && python tools/run_pipeline.py --daily
     """
     return run_phases(phase_list=DAILY_PHASES, mode="daily")
 
@@ -241,7 +274,7 @@ def run_weekly():
     典型 cron 用法:
 
         # 每周日 20:00（Asia/Shanghai）
-        0 20 * * 7 cd /path/to/PapersCrawler && python tools/schedule_weekly.py
+        0 20 * * 7 cd /path/to/PapersCrawler && python tools/run_pipeline.py --weekly
     """
     return run_phases(phase_list=WEEKLY_PHASES, mode="weekly")
 

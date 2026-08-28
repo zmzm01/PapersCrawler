@@ -2,7 +2,7 @@
 """
 统一流水线 CLI 入口。
 
-替代分散的 tools/schedule_daily.py / tools/schedule_weekly.py / src/main.py。
+统一的流水线 CLI 入口。
 
 调用模式::
 
@@ -44,14 +44,13 @@ import argparse
 import logging
 import os
 import sys
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import CFG, LOG_FILE_PATH, DATA_DIR, DB_PATH, _check_mineru_token  # noqa: E402
+from config import CFG, DATA_DIR, DB_PATH, _check_mineru_token  # noqa: E402
 from db.database import DatabaseClient  # noqa: E402
 from pipeline.runner import (  # noqa: E402
     PipelineRunResult,
@@ -67,6 +66,7 @@ from processors.ntfy_notifier import (  # noqa: E402
     NtfyNotifier,
     format_pipeline_summary,
 )
+from logging_config import configure_logging  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     argparse.ArgumentParser
     """
     parser = argparse.ArgumentParser(
-        description="PaperCrawler 流水线统一入口 —— 替代 schedule_daily/schedule_weekly/main.py",
+        description="PaperCrawler 流水线统一入口",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例:\n"
@@ -170,25 +170,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _setup_logging(log_level: str) -> None:
-    """配置日志系统：RotatingFileHandler + StreamHandler。
+    """配置按日期分文件的日志系统。
 
     Parameters
     ----------
     log_level : str
         日志级别（DEBUG / INFO / WARNING / ERROR）。
     """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    file_handler = RotatingFileHandler(
-        LOG_FILE_PATH, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-    )
-    console_handler = logging.StreamHandler()
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.DEBUG),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[file_handler, console_handler],
-    )
+    configure_logging(log_level, DATA_DIR / "logs")
 
 
 def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: bool, dry_run: bool) -> None:
@@ -270,9 +259,13 @@ def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru, reset_rel
     """
     logger.info("Would run phases: %s", phase_list)
 
-    effective_skip = {
+    configured_skip = {
         key: getattr(CFG, _PHASE_KEY_MAP[key], False) for key in _PHASE_KEY_MAP
     }
+    effective_skip = {
+        key: configured_skip[key] and not force for key in configured_skip
+    }
+    logger.info("Configured skip: %s", configured_skip)
     logger.info("Effective skip: %s", effective_skip)
     logger.info("Force mode: %s", force)
 
@@ -299,17 +292,26 @@ def _send_final_notification(result: PipelineRunResult) -> None:
         title=CFG.NTFY_TITLE,
         priority=CFG.NTFY_PRIORITY,
     )
-    message = format_pipeline_summary(result, token=CFG.NTFY_TOKEN)
+    message = format_pipeline_summary(
+        result,
+        token=CFG.NTFY_TOKEN,
+        log_dir=DATA_DIR / "logs",
+    )
     notifier.send(message)
 
 
-def main(argv=None) -> None:
+def main(argv=None) -> int:
     """CLI 入口：解析参数并执行对应的流水线操作。
 
     Parameters
     ----------
     argv : list of str, optional
         命令行参数列表。为 None 时从 sys.argv 读取。
+
+    Returns
+    -------
+    int
+        进程退出码。成功为 0，流水线存在阶段错误或初始化错误时为 1。
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -329,7 +331,7 @@ def main(argv=None) -> None:
         phases = [p.strip() for p in args.phases.split(",") if p.strip()]
         if not phases:
             logger.warning("--phases 解析后为空列表，无事可做")
-            return
+            return 0
         phase_list = phases
     elif args.daily:
         phase_list = DAILY_PHASES
@@ -359,7 +361,7 @@ def main(argv=None) -> None:
             _dry_run_summary(WEEKLY_PHASES, False, args.reset_publisher, args.reset_mineru, args.reset_relevance)
         # 不调用 auto-reset
         logger.info("Dry-run mode — no changes were made")
-        return
+        return 0
 
     result = None
     try:
@@ -396,6 +398,10 @@ def main(argv=None) -> None:
         if result is not None:
             _send_final_notification(result)
 
+    if isinstance(result, PipelineRunResult) and result.status != "success":
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

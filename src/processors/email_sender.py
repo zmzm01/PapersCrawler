@@ -135,7 +135,7 @@ class EmailSender:
                 server.send_message(msg)
                 return True
 
-            except (smtplib.SMTPException, OSError) as e:
+            except (smtplib.SMTPException, OSError):
                 if attempt == 0:
                     time.sleep(2)
                     continue
