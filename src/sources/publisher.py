@@ -53,7 +53,7 @@ import requests as py_requests
 from parsel import Selector
 from cloakbrowser import launch_persistent_context
 
-from common import Paper
+from common import Paper, clean_extracted_text
 from config import RAW_PAGE_DIR, CFG
 
 
@@ -324,7 +324,9 @@ class BasePublisherScraper:
         Returns:
             str: content 内容；标签缺失时返回空字符串。
         """
-        return sel.css(f'meta[name="{name}"]::attr(content)').get() or ""
+        return clean_extracted_text(
+            sel.css(f'meta[name="{name}"]::attr(content)').get()
+        ) or ""
 
     @staticmethod
     def _extract_meta_all(sel, name: str) -> list:
@@ -339,7 +341,8 @@ class BasePublisherScraper:
         Returns:
             list[str]: 全部 content 值。
         """
-        return sel.css(f'meta[name="{name}"]::attr(content)').getall()
+        return [clean_extracted_text(value) or ""
+                for value in sel.css(f'meta[name="{name}"]::attr(content)').getall()]
 
     @staticmethod
     def _extract_attr(sel, css_selector: str) -> str:
@@ -355,7 +358,7 @@ class BasePublisherScraper:
         Returns:
             str: 提取值；缺失时返回空字符串。
         """
-        return sel.css(css_selector).get() or ""
+        return clean_extracted_text(sel.css(css_selector).get()) or ""
 
     @staticmethod
     def _extract_canonical_url(sel) -> str:
@@ -393,7 +396,7 @@ class BasePublisherScraper:
         Returns:
             str: 清理后的摘要文本；空文本返回空字符串。
         """
-        return re.sub(r"\s+", " ", text).strip() if text else ""
+        return clean_extracted_text(text) or ""
 
     def fetch_page(self, url=None, html_path=None, timeout=8000):
         """获取论文页面 HTML 源码。
@@ -537,11 +540,42 @@ class BasePublisherScraper:
         """
         # 优先使用 self.html（fetch_page 设置的、与 parse_page 解析的同一份），
         # 保证在线/离线模式下保存的内容一致；浏览器存在时兜底读取 page.content()。
-        html = getattr(self, "html", "") or (
-            self.page.content() if self.page is not None else ""
-        )
+        html = self._get_snapshot_html()
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
+
+    def _get_snapshot_html(self) -> str:
+        """Return cached page HTML without reading a closed Playwright page.
+
+        Returns
+        -------
+        str
+            Cached or live page HTML. An empty string is returned when no
+            content is available or the page/context has already closed.
+        """
+        cached_html = getattr(self, "html", "") or ""
+        if cached_html:
+            return cached_html
+
+        page = getattr(self, "page", None)
+        if page is None:
+            return ""
+
+        try:
+            is_closed = getattr(page, "is_closed", None)
+            if callable(is_closed) and is_closed():
+                return ""
+            return page.content() or ""
+        except Exception as snapshot_err:
+            # A navigation error can close the Playwright event loop before
+            # Phase C performs its final diagnostic save. Preserve the
+            # original navigation exception and treat missing HTML as a
+            # diagnostic limitation instead of emitting a secondary warning.
+            logging.getLogger(__name__).debug(
+                "Page HTML unavailable for error snapshot: %s",
+                snapshot_err,
+            )
+            return ""
 
     def _save_error_html(self, url_or_doi: str, tag: str = "") -> bool:
         """保存出错时的页面 HTML 快照到 data/raw/page/ 目录。
@@ -566,9 +600,13 @@ class BasePublisherScraper:
         error_dir.mkdir(parents=True, exist_ok=True)
         save_path = error_dir / filename
         try:
-            html = getattr(self, "html", "") or (
-                self.page.content() if self.page is not None else ""
-            )
+            html = self._get_snapshot_html()
+            if not html:
+                logging.getLogger(__name__).debug(
+                    "No page HTML available for error snapshot: %s",
+                    url_or_doi,
+                )
+                return False
             save_path.write_text(html, encoding="utf-8")
             logger = logging.getLogger(__name__)
             logger.warning(f"Error HTML saved to {save_path}")
@@ -907,9 +945,6 @@ class APSScraper(BasePublisherScraper):
         authors = self._extract_meta_all(sel, "citation_author")
         # 注意：citation_pdf_url 链接会产生重定向，且下载 PDF 通常需要认证
         pdf_url = self._extract_meta(sel, "citation_pdf_url")
-
-        # 从 meta description 获取简短描述（备用摘要信息）
-        description = self._extract_meta(sel, "description")
 
         # ─── 从正文区域提取摘要 ───
         # CSS 选择器：#abstract-section-content 是 APS 页面的摘要容器，

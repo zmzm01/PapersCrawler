@@ -13,7 +13,6 @@
 
 import os
 import sys
-import json
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -330,6 +329,29 @@ def test_iop_scraper_parse():
 
         assert paper.title == "IOP Paper"
         assert "IOP abstract" in paper.abstract
+
+
+def test_iop_scraper_decodes_encoded_carriage_returns():
+    """Regression test for the ae81e4-style literal ``&#xD;`` abstract text."""
+    import tempfile
+    html = """
+    <html><head>
+    <meta name="citation_title" content="IOP Paper"/>
+    <meta name="citation_doi" content="10.1088/1361-6587/ae81e4"/>
+    </head><body>
+    <div class="article-abstract"><div class="article-text">
+      first&#xD;second &amp; third&#xD;particlein-&#xD;cell
+    </div></div>
+    </body></html>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "iop_encoded.html")
+        with open(html_path, "w") as file:
+            file.write(html)
+        scraper = IOPScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+        assert paper.abstract == "first second & third particlein-cell"
 
 
 def test_optica_scraper_parse():
