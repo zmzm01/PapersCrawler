@@ -38,9 +38,16 @@ def _result():
                 "category_counts": {"A": 0, "B": 0, "C": 0, "D": 0},
             },
             "error_samples": [
-                {"stage": "E3", "message": "Authorization: Bearer sk-secret"},
-                {"stage": "C", "message": "GET https://private.example/a failed"},
+                {
+                    "stage": "E3", "doi": "10.1234/e3",
+                    "message": "Authorization: Bearer sk-secret",
+                },
+                {
+                    "stage": "C", "doi": "10.1234/c",
+                    "message": "GET https://private.example/a failed",
+                },
             ],
+            "mineru_download_failures": [],
         },
         errors=[],
     )
@@ -79,19 +86,58 @@ def test_ntfy_failure_is_contained():
 
 
 def test_summary_is_redacted_and_conservatively_truncated():
-    """Summary uses ntfy-compatible Markdown without tables or public links."""
+    """Summary uses the Web App Markdown layout without leaking credentials."""
     message = format_pipeline_summary(_result(), token="sk-secret")
-    assert "相关性判断" in message
-    assert "总结" in message
-    assert "错误" in message
+    assert "partial" in message
+    assert "1080.0s" in message
+    assert "# ⚠️ PapersCrawler · daily 运行汇总" in message
+    assert "> **运行状态**：`partial`" in message
+    assert "## 🧩 阶段执行" in message
+    assert "✅ **E** · `success` · `4.2s`" in message
+    assert "❌ **E3** · `failed` · `8.1s`" in message
+    assert "## 🎯 相关性判断" in message
+    assert "### E · 标题与摘要初筛" in message
+    assert "### E3 · 正文终审" in message
+    assert "### F · 结构化总结" in message
+    assert "### ❌ E3 LLM失败 · `2` 条" in message
+    assert "### ❌ C 抓取失败 · `1` 条" in message
+    assert "[redacted]" in message
     assert "sk-secret" not in message
     assert "private.example" not in message
-    assert "Dashboard" not in message
-    assert "### 🧩 阶段执行" in message
-    assert "✅ **E**" in message
+    assert "[URL]" in message
     assert "| 阶段 | 结果 | 耗时 |" not in message
     assert len(message.encode("utf-8")) <= 3500
     assert len(truncate_utf8("论文" * 3000).encode("utf-8")) <= 3500
+
+
+def test_summary_reports_warning_type_and_failure_streak(tmp_path):
+    """Warnings are classified and same-DOI MinerU failures are flagged."""
+    for log_date in ("2026-08-16", "2026-08-17", "2026-08-18"):
+        path = tmp_path / f"PaperCrawler-{log_date}.log"
+        path.write_text(
+            f"{log_date} 02:10:00 [WARNING] pipeline.phase_c: "
+            "Publisher request failed after retry\n"
+            f"{log_date} 02:11:00 [WARNING] processors.prompt_explainer: "
+            "scope definition is empty\n",
+            encoding="utf-8",
+        )
+
+    result = _result()
+    result.metrics["mineru_download_failures"] = [
+        {"doi": "10.1234/mineru", "local_date": log_date, "error": "download failed"}
+        for log_date in ("2026-08-16", "2026-08-17", "2026-08-18")
+    ] + [
+        {"doi": "10.1234/other", "local_date": log_date, "error": "download failed"}
+        for log_date in ("2026-08-17", "2026-08-18")
+    ]
+    message = format_pipeline_summary(result, log_dir=tmp_path)
+
+    assert "## 🚨 问题与错误" in message
+    assert "### ❌ C 抓取失败 · `2` 条" in message
+    assert "### ⚠️ F 其他提示 · `1` 条" in message
+    assert "## 🔁 连续失败提醒" in message
+    assert "**E2 MinerU/PDF** · `10.1234/mineru` · 连续 **3 天** · **需人工干预**" in message
+    assert "**E2 MinerU/PDF** · `10.1234/other` · 连续 **2 天** · **请关注**" in message
 
 
 def test_metrics_are_limited_to_current_run(tmp_path):

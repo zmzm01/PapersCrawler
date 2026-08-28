@@ -19,7 +19,6 @@ from config import (
     build_scope_block,
 )
 from processors.email_sender import EmailSender
-from db.database import DatabaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +142,8 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
                 kw = t.split("—")[0].strip() if "—" in t else t.strip()
                 if kw:
                     all_topics.append(kw)
+        for entry in kw_cfg.get("keyword_catalog", []):
+            all_topics.extend(entry.get("terms", []))
         if all_topics:
             items = "".join(
                 f"<span style=\"display:inline-block;padding:2px 8px;margin:2px 4px;background:#eef2ff;color:#4338ca;border-radius:4px;font-size:12px;\">{html.escape(kw)}</span>"
@@ -160,8 +161,14 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
         scope = kw_cfg.get("scope_definition", {})
         gates = kw_cfg.get("context_gates", [])
         irr = kw_cfg.get("irrelevant_fields", {})
+        catalog = kw_cfg.get("keyword_catalog", [])
         if scope:
-            block_text = build_scope_block(scope, context_gates=gates, irrelevant_fields=irr)
+            block_text = build_scope_block(
+                scope,
+                context_gates=gates,
+                irrelevant_fields=irr,
+                keyword_catalog=catalog,
+            )
             block_text = (
                 block_text.replace("&", "&amp;")
                 .replace("<", "&lt;")
@@ -235,7 +242,6 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
         # 从报告文件中统计论文数量（## 标题即为论文条目）
         report_text = report_path.read_text(encoding="utf-8")
         paper_count = str(len(re.findall(r'(?m)^## (?!目录)[^#]', report_text)))
-        has_papers = True
         paper_msg = f"共收录 {paper_count} 篇相关论文，详细内容请参见附件报告。"
         attachment_section = """              <table role="presentation" style="width:100%;border-collapse:collapse;margin:24px 0;">
                 <tr>

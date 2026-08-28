@@ -30,16 +30,16 @@ import argparse
 import logging
 import os
 import sys
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import LOG_FILE_PATH, DATA_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR  # noqa: E402
+from config import DATA_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR  # noqa: E402
 from pipeline.phase_h import phase_h_email  # noqa: E402
 from config import load_email_recipients  # noqa: E402
+from logging_config import configure_logging  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -93,25 +93,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _setup_logging(log_level: str) -> None:
-    """配置日志系统：RotatingFileHandler + StreamHandler。
+    """配置按日期分文件的日志系统。
 
     Parameters
     ----------
     log_level : str
         日志级别（DEBUG / INFO / WARNING / ERROR）。
     """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    file_handler = RotatingFileHandler(
-        LOG_FILE_PATH, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-    )
-    console_handler = logging.StreamHandler()
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[file_handler, console_handler],
-    )
+    configure_logging(log_level, DATA_DIR / "logs", default_level=logging.INFO)
 
 
 def _find_report_file(filename: str) -> Path | None:

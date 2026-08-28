@@ -14,14 +14,12 @@ Tests for tools/run_pipeline.py and tools/send_report.py.
   - 使用 unittest.mock.patch 验证函数调用
 """
 
-import logging
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import call, patch
-
-import pytest
 
 # 项目根目录
 ROOT = Path(__file__).resolve().parent.parent
@@ -145,6 +143,29 @@ def test_run_pipeline_dry_run_does_not_send_ntfy():
         import tools.run_pipeline
         tools.run_pipeline.main(["--daily", "--dry-run"])
         mock_notify.assert_not_called()
+
+
+def test_run_pipeline_returns_nonzero_for_failed_result():
+    """A failed PipelineRunResult must become a failing CLI exit code."""
+    from pipeline.runner import PhaseRunResult, PipelineRunResult
+
+    failed_result = PipelineRunResult(
+        mode="custom",
+        started_at=datetime.now(),
+        finished_at=datetime.now(),
+        phase_results=[PhaseRunResult("E", "failed", 0.1, "LLM unavailable")],
+        errors=["Phase E: LLM unavailable"],
+    )
+    with patch("tools.run_pipeline._run_auto_reset"):
+        with patch("tools.run_pipeline._send_final_notification"):
+            with patch("tools.run_pipeline.run_phases", return_value=failed_result):
+                import tools.run_pipeline
+                exit_code = tools.run_pipeline.main([
+                    "--phases", "E", "--no-reset-publisher",
+                    "--no-reset-mineru",
+                ])
+
+    assert exit_code == 1
 
 
 def test_run_pipeline_reset_relevance_flagged_off():
