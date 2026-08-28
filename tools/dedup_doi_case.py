@@ -154,7 +154,7 @@ def run(dry_run=False):
             print(f"  {i}. {action}")
         if total_pairs > 20:
             print(f"  ... 其余 {total_pairs - 20} 对略")
-        print(f"\n单例转小写示例:")
+        print("\n单例转小写示例:")
         for s in singletons[:5]:
             print(f"  {s['doi']} → {s['doi'].lower()}")
         conn.close()

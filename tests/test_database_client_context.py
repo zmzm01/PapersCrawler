@@ -8,6 +8,8 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -32,11 +34,8 @@ def test_context_manager_closes_connection():
         assert db.conn is None
         # The connection object should be closed
         # sqlite3 raises ProgrammingError on operations against closed conn
-        try:
+        with pytest.raises(sqlite3.ProgrammingError):
             conn_ref.execute("SELECT 1")
-            assert False, "expected ProgrammingError on closed conn"
-        except (sqlite3.ProgrammingError, Exception):
-            pass  # any error means it's closed
     finally:
         db_path.unlink(missing_ok=True)
 
