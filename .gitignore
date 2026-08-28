@@ -1,6 +1,9 @@
 data
 slides
 __pycache__
+.coverage
+coverage.xml
+htmlcov/
 .env
 *.swp
 graphify-out
@@ -19,9 +22,7 @@ configs/prompts/fix.yaml
 configs/prompts/relevance.yaml
 configs/prompts/summary.yaml
 
-# 用户自定义脚本（不要提交）
-run_daily.sh
-run_weekly.sh
+# 可部署的 cron 包装脚本允许纳入版本控制；机器专属脚本仍保持忽略。
 run_hugo_deploy.sh
 
 # SMTP 配置文件（已合并到 .env）
@@ -33,3 +34,10 @@ docs/reviews/
 AGENTS.md
 site/
 site/public/
+
+# Independent Astro report site: source is tracked, generated data/builds are not.
+report-site/node_modules/
+report-site/dist/
+report-site/.astro/
+report-site/src/data/reports/
+report-site/src/generated-reports.ts
