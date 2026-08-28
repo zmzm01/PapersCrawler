@@ -20,19 +20,13 @@ if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
 import logging
-import os as _os
+import os
+from pydantic import BaseModel
 
-from config import DATA_DIR, LOG_FILE_PATH
+from config import DATA_DIR
+from logging_config import configure_logging
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-file_handler = logging.FileHandler(LOG_FILE_PATH, encoding='utf-8')
-console_handler = logging.StreamHandler()
-logging.basicConfig(
-    level=getattr(logging, _os.getenv("LOG_LEVEL", "DEBUG").upper(), logging.DEBUG),
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[file_handler, console_handler],
-)
+configure_logging(os.getenv("LOG_LEVEL", "DEBUG"), DATA_DIR / "logs")
 logger = logging.getLogger(__name__)
 
 # 在 logging.basicConfig 配置完成后再检测 token，避免 warning 偷装默认 handler
@@ -48,7 +42,7 @@ from config import (
     DB_PATH, AUTO_REPORT_DIR, USER_REPORT_DIR,
     DATA_DIR, load_publishers,
 )
-from db.database import DatabaseClient
+from db.database import DataBaseDOINotExists, DatabaseClient
 
 app = FastAPI(title="PapersCrawler")
 
@@ -68,6 +62,15 @@ HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+
+
+class RelevanceReviewPayload(BaseModel):
+    """JSON payload submitted by the manual relevance review form."""
+
+    doi: str
+    decision: str
+    notes: str = ""
+    reviewer: str = ""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -253,10 +256,17 @@ async def papers_page(
         per_page = per_page if per_page in (50, 100, 200) else 100
         page = page if page >= 1 else 1
         offset = (page - 1) * per_page
-        papers = db.get_papers(limit=per_page, offset=offset, sort_by=sort_by, category_filter=category_filter)
-        if has_summary:
-            papers = [p for p in papers if getattr(p, "llm_summary_status", None) == "success"]
-        total_count = db.get_papers_count(category_filter=category_filter)
+        papers = db.get_papers(
+            limit=per_page,
+            offset=offset,
+            sort_by=sort_by,
+            category_filter=category_filter,
+            has_summary=has_summary,
+        )
+        total_count = db.get_papers_count(
+            category_filter=category_filter,
+            has_summary=has_summary,
+        )
     finally:
         db.conn.close()
     return templates.TemplateResponse(request, "papers.html", {
@@ -264,6 +274,137 @@ async def papers_page(
         "has_summary_filter": has_summary,
         "page": page, "per_page": per_page, "total_count": total_count,
     })
+
+
+# ── Manual relevance review ──────────────────────────────────────────────────
+
+def _resolve_mineru_fulltext(output_dir: str):
+    """Resolve a stored MinerU directory to its safe ``full.md`` path.
+
+    Parameters
+    ----------
+    output_dir : str
+        Relative output directory stored in the papers table.
+
+    Returns
+    -------
+    Path or None
+        Full-text path when it remains inside ``DATA_DIR`` and exists.
+    """
+    if not output_dir:
+        return None
+    candidate = (DATA_DIR / output_dir / "full.md").resolve()
+    if not _is_report_path_in_directory(candidate, DATA_DIR):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+@app.get("/relevance-review", response_class=HTMLResponse)
+async def relevance_review_page(
+    request: Request,
+    status: str = "pending",
+    category: str = "all",
+    confidence: str = "all",
+    disagreement: bool = False,
+    search: str = "",
+    page: int = 1,
+    per_page: int = 50,
+):
+    """Render the manual relevance review queue."""
+    page = max(1, page)
+    per_page = per_page if per_page in (50, 100, 200) else 50
+    offset = (page - 1) * per_page
+    with DatabaseClient(DB_PATH) as db:
+        db.init_db_papers()
+        papers = db.get_relevance_review_queue(
+            status_filter=status,
+            category_filter=category,
+            confidence_filter=confidence,
+            disagreement_only=disagreement,
+            search_text=search,
+            limit=per_page,
+            offset=offset,
+        )
+        total_count = db.count_relevance_review_queue(
+            status_filter=status,
+            category_filter=category,
+            confidence_filter=confidence,
+            disagreement_only=disagreement,
+            search_text=search,
+        )
+        pending_count = db.count_relevance_review_queue(status_filter="pending")
+        reviewed_count = db.count_relevance_review_queue(status_filter="reviewed")
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    return templates.TemplateResponse(request, "relevance_review.html", {
+        "papers": papers,
+        "status_filter": status,
+        "category_filter": category,
+        "confidence_filter": confidence,
+        "disagreement_only": disagreement,
+        "search_text": search,
+        "page": min(page, total_pages),
+        "per_page": per_page,
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "pending_count": pending_count,
+        "reviewed_count": reviewed_count,
+    })
+
+
+@app.get("/relevance-review/{doi:path}", response_class=HTMLResponse)
+async def relevance_review_detail(request: Request, doi: str):
+    """Render one paper and its current manual review state."""
+    with DatabaseClient(DB_PATH) as db:
+        db.init_db_papers()
+        rows = db.get_relevance_review_queue(
+            status_filter="all", search_text=doi, limit=200, offset=0,
+        )
+        paper = next(
+            (row for row in rows if row["doi"].lower() == doi.strip().lower()),
+            None,
+        )
+    if paper is None:
+        return HTMLResponse("Paper not found", status_code=404)
+
+    fulltext = ""
+    fulltext_path = _resolve_mineru_fulltext(paper["mineru_output_dir"])
+    if fulltext_path:
+        try:
+            # Keep the detail page responsive while retaining enough context
+            # for manual adjudication. The complete file remains on disk.
+            fulltext = fulltext_path.read_text(encoding="utf-8")[:200000]
+        except (OSError, UnicodeError) as error:
+            logger.warning("Cannot read review full text %s: %s", doi, error)
+
+    return templates.TemplateResponse(request, "relevance_review_detail.html", {
+        "paper": paper,
+        "fulltext": fulltext,
+        "fulltext_available": bool(fulltext),
+    })
+
+
+@app.post("/api/relevance-reviews")
+async def save_relevance_review(payload: RelevanceReviewPayload):
+    """Append a manual relevance review without changing LLM columns."""
+    if not payload.doi.strip():
+        return JSONResponse({"error": "DOI is required"}, status_code=422)
+    if len(payload.notes) > 20000:
+        return JSONResponse({"error": "Notes are too long"}, status_code=422)
+    if len(payload.reviewer) > 200:
+        return JSONResponse({"error": "Reviewer name is too long"}, status_code=422)
+    try:
+        with DatabaseClient(DB_PATH) as db:
+            db.init_db_papers()
+            review_id = db.save_relevance_review(
+                payload.doi, payload.decision, payload.notes, payload.reviewer,
+            )
+    except DataBaseDOINotExists:
+        return JSONResponse({"error": "Paper not found"}, status_code=404)
+    except ValueError as error:
+        return JSONResponse({"error": str(error)}, status_code=422)
+    return JSONResponse({"ok": True, "review_id": review_id})
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────

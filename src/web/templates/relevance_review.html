@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}相关性人工审核{% endblock %}
+{% block content %}
+<div class="review-page-header">
+  <div>
+    <h2>相关性人工审核</h2>
+    <p class="text-muted">只展示已经完成全文终审的论文。人工意见单独保存，不会覆盖 LLM 原始结果。</p>
+  </div>
+  <div class="review-stats">
+    <span class="review-stat">待审核 <strong>{{ pending_count }}</strong></span>
+    <span class="review-stat">已审核 <strong>{{ reviewed_count }}</strong></span>
+  </div>
+</div>
+
+<form class="review-filters" method="get" action="/relevance-review">
+  <label>状态
+    <select name="status">
+      <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>待审核</option>
+      <option value="reviewed" {% if status_filter == 'reviewed' %}selected{% endif %}>已审核</option>
+      <option value="all" {% if status_filter == 'all' %}selected{% endif %}>全部</option>
+    </select>
+  </label>
+  <label>最终分类
+    <select name="category">
+      <option value="all" {% if category_filter == 'all' %}selected{% endif %}>全部</option>
+      {% for value in ['A', 'B', 'C', 'D'] %}
+      <option value="{{ value }}" {% if category_filter == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>置信度
+    <select name="confidence">
+      <option value="all" {% if confidence_filter == 'all' %}selected{% endif %}>全部</option>
+      {% for value in ['high', 'medium', 'low'] %}
+      <option value="{{ value }}" {% if confidence_filter == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="review-search">搜索
+    <input type="search" name="search" value="{{ search_text }}" placeholder="标题或 DOI">
+  </label>
+  <label class="review-check">
+    <input type="checkbox" name="disagreement" value="true" {% if disagreement_only %}checked{% endif %}>
+    初筛与终审不一致
+  </label>
+  <button class="btn btn-primary" type="submit">筛选</button>
+</form>
+
+{% if not papers %}
+<div class="alert alert-info">当前筛选下没有论文。</div>
+{% else %}
+<table class="review-table">
+  <thead>
+    <tr>
+      <th>优先级</th>
+      <th>论文</th>
+      <th>初筛 → 终审</th>
+      <th>置信度</th>
+      <th>人工结果</th>
+      <th>依据</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for paper in papers %}
+    <tr>
+      <td>
+        {% if paper.review_priority == 0 %}<span class="badge badge-failed">B/medium</span>
+        {% elif paper.review_priority == 1 %}<span class="badge badge-warning">不一致</span>
+        {% elif paper.review_priority == 2 %}<span class="badge badge-skipped">A/medium</span>
+        {% else %}<span class="text-muted">普通</span>{% endif %}
+      </td>
+      <td class="review-title-cell">
+        <a href="/relevance-review/{{ paper.doi }}">{{ paper.title or '无标题' }}</a>
+        <small>{{ paper.doi }}</small>
+      </td>
+      <td>
+        <span class="badge badge-skipped">{{ paper.relevance_screen_category or '—' }}</span>
+        <span class="review-arrow">→</span>
+        <span class="badge {% if paper.llm_relevance_category == 'A' %}badge-success{% elif paper.llm_relevance_category == 'B' %}badge-warning{% elif paper.llm_relevance_category == 'C' %}badge-skipped{% else %}badge-failed{% endif %}">{{ paper.llm_relevance_category or '—' }}</span>
+      </td>
+      <td>{{ paper.llm_relevance_confidence or '—' }}</td>
+      <td>
+        {% if paper.review_decision %}
+        <span class="badge badge-reviewed">{{ paper.review_decision }}</span>
+        {% else %}<span class="text-muted">未审核</span>{% endif %}
+      </td>
+      <td>{{ paper.llm_relevance_basis or '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<div class="review-pagination">
+  <span class="text-muted">共 {{ total_count }} 篇 · 第 {{ page }} / {{ total_pages }} 页</span>
+  {% if page > 1 %}<a class="btn btn-secondary" href="{{ request.url.include_query_params(page=page - 1) }}">上一页</a>{% endif %}
+  {% if page < total_pages %}<a class="btn btn-secondary" href="{{ request.url.include_query_params(page=page + 1) }}">下一页</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -17,6 +17,10 @@
     <option value="published" {% if sort_by == 'published' %}selected{% endif %} data-i18n="papers.sort_published">Published Date</option>
     <option value="summary" {% if sort_by == 'summary' %}selected{% endif %} data-i18n="papers.sort_summary">Summary Date</option>
   </select>
+  <label class="summary-filter-label">
+    <input type="checkbox" id="summary-only" {% if has_summary_filter %}checked{% endif %} onchange="changeSummaryFilter()">
+    <span data-i18n="papers.has_summary">已生成总结</span>
+  </label>
 </div>
 
 {% if sort_by == 'published' %}
@@ -128,6 +132,11 @@ function changeCategory() {
 function changePerPage() {
   const val = document.getElementById('per-page-select').value;
   window.location.href = _urlWithParams({per_page: val, page: ''});
+}
+
+function changeSummaryFilter() {
+  const enabled = document.getElementById('summary-only').checked;
+  window.location.href = _urlWithParams({has_summary: enabled ? 'true' : '', page: ''});
 }
 
 function goPage(p) {

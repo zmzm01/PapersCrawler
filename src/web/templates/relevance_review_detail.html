@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}审核：{{ paper.title or paper.doi }}{% endblock %}
+{% block content %}
+<div class="review-detail-header">
+  <a href="/relevance-review" class="text-muted">← 返回审核队列</a>
+  <h2>{{ paper.title or '无标题' }}</h2>
+  <div class="review-meta">
+    <code>{{ paper.doi }}</code>
+    {% if paper.page_url %}<a href="{{ paper.page_url }}" target="_blank" rel="noopener">出版社页面</a>{% endif %}
+    {% if paper.pdf_url %}<a href="{{ paper.pdf_url }}" target="_blank" rel="noopener">PDF</a>{% endif %}
+  </div>
+</div>
+
+<div class="review-detail-grid">
+  <section>
+    <div class="review-card">
+      <h3>当前 LLM 判断</h3>
+      <div class="review-result-grid">
+        <div><span class="field-label">标题+摘要初筛</span><strong>{{ paper.relevance_screen_category or '—' }}</strong></div>
+        <div><span class="field-label">全文终审</span><strong>{{ paper.llm_relevance_category or '—' }}</strong></div>
+        <div><span class="field-label">置信度</span><strong>{{ paper.llm_relevance_confidence or '—' }}</strong></div>
+        <div><span class="field-label">判定依据</span><strong>{{ paper.llm_relevance_basis or '—' }}</strong></div>
+      </div>
+      <h4>初筛理由</h4>
+      <div class="evidence-text">{{ paper.relevance_screen_reason or '无' }}</div>
+      <h4>终审理由</h4>
+      <div class="evidence-text">{{ paper.llm_relevance_reason or '无' }}</div>
+    </div>
+
+    <div class="review-card">
+      <h3>摘要</h3>
+      <div class="paper-abstract">{{ paper.abstract or '无摘要' }}</div>
+    </div>
+
+    <div class="review-card">
+      <h3>全文证据</h3>
+      {% if fulltext_available %}
+      <details open>
+        <summary>展开 MinerU 全文（最多显示 200,000 字符）</summary>
+        <pre class="fulltext-preview">{{ fulltext }}</pre>
+      </details>
+      {% else %}
+      <p class="text-muted">没有找到 MinerU 全文文件。</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <aside class="review-card review-form-card">
+    <h3>人工判定</h3>
+    <p class="text-muted">请依据论文的主要研究对象、方法和结果填写证据。模型的“可能有用”不单独构成 B 类依据。</p>
+    <form id="review-form">
+      <fieldset>
+        <legend>人工分类</legend>
+        {% for value, label in [('A', '直接相关'), ('B', '具体方法可迁移'), ('C', '同领域但较远'), ('D', '不相关'), ('uncertain', '暂不确定')] %}
+        <label class="decision-option">
+          <input type="radio" name="decision" value="{{ value }}" {% if paper.review_decision == value %}checked{% endif %} required>
+          <span><strong>{{ value }}</strong> · {{ label }}</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+      <label class="form-label" for="reviewer">审核人（可选）</label>
+      <input class="review-input" id="reviewer" name="reviewer" maxlength="200" value="{{ paper.review_reviewer or '' }}" placeholder="姓名或缩写">
+      <label class="form-label" for="notes">审核备注 / 证据</label>
+      <textarea class="review-input review-notes" id="notes" name="notes" maxlength="20000" placeholder="例如：正文第 3 节明确展示了……，因此判为 B。">{{ paper.review_notes or '' }}</textarea>
+      <button class="btn btn-primary review-save-btn" type="submit">保存人工审核</button>
+      <span id="review-save-status" class="save-status"></span>
+    </form>
+  </aside>
+</div>
+
+<script>
+const reviewDoi = {{ paper.doi|tojson }};
+document.getElementById('review-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const selected = document.querySelector('input[name="decision"]:checked');
+  const status = document.getElementById('review-save-status');
+  if (!selected) {
+    status.textContent = '请选择人工分类';
+    status.className = 'save-status error';
+    return;
+  }
+  status.textContent = '保存中…';
+  status.className = 'save-status';
+  try {
+    const response = await fetch('/api/relevance-reviews', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        doi: reviewDoi,
+        decision: selected.value,
+        reviewer: document.getElementById('reviewer').value,
+        notes: document.getElementById('notes').value,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '保存失败');
+    status.textContent = '已保存';
+    status.className = 'save-status ok';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'save-status error';
+  }
+});
+</script>
+{% endblock %}
