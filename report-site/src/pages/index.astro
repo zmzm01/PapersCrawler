@@ -1,0 +1,42 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ReportCard from '../components/ReportCard.astro';
+import { contentText, getReports } from '../lib/reports';
+
+const reports = getReports();
+const latest = reports[0];
+const latestHeader = latest ? recordHeader(latest.content.header) : undefined;
+const sortNote = latestHeader ? contentText(latestHeader, 'sortNote') : undefined;
+const legend = Array.isArray(latestHeader?.relevanceLegend) ? latestHeader.relevanceLegend.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null && !Array.isArray(item)) : [];
+const disclaimers = Array.isArray(latestHeader?.disclaimers) ? latestHeader.disclaimers.filter((item): item is string => typeof item === 'string') : [];
+
+function recordHeader(value: unknown): Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function headerText(item: Record<string, unknown>, key: string): string {
+	return typeof item[key] === 'string' ? item[key] as string : '';
+}
+---
+
+<Layout title="PapersCrawler 报告" description="PapersCrawler 研究论文报告归档。">
+	<section class="page-hero">
+		<p class="eyebrow">PAPERSCRAWLER ARCHIVE</p>
+		<h1>论文报告</h1>
+		<p class="intro">经过相关性筛选、全文分析与结构化总结的研究论文快照。</p>
+	</section>
+
+	{latestHeader && <section class="guide" aria-labelledby="guide-title">
+		<div class="guide-heading"><p class="eyebrow">REPORT GUIDE</p><h2 id="guide-title">阅读说明</h2></div>
+		{sortNote && <p class="sort-note"><strong>报告排序：</strong>{sortNote}</p>}
+		{legend.length > 0 && <div class="legend-grid"><h3>相关性等级</h3>{legend.map((item) => <div class="legend-item"><strong>{headerText(item, 'code')}</strong><div><b>{headerText(item, 'name')}</b><p>{headerText(item, 'description')}</p></div></div>)}</div>}
+		{disclaimers.length > 0 && <div class="disclaimers"><h3>其他说明</h3><ul>{disclaimers.map((item) => <li>{item}</li>)}</ul></div>}
+	</section>}
+
+	<section aria-labelledby="archive-title">
+		<div class="archive-heading"><h2 id="archive-title">报告归档</h2><span class="report-count">{reports.length} 期报告</span></div>
+		<div class="report-list">
+			{reports.length > 0 ? reports.map((report) => <ReportCard report={report} />) : <p class="empty">暂无公开报告。完成一次 Phase G 后重新导出并构建站点即可。</p>}
+		</div>
+	</section>
+</Layout>

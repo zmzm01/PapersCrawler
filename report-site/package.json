@@ -1,0 +1,22 @@
+{
+  "name": "paperscrawler-report-site",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "node scripts/sync-reports.mjs && astro build",
+    "check": "node scripts/sync-reports.mjs && astro check",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^7.2.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@types/node": "^26.2.0",
+    "wrangler": "^4.34.0"
+  }
+}
