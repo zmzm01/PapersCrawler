@@ -22,6 +22,7 @@
       <ul class="sidebar-nav">
         <li><a href="/dashboard" class="{% if request.url.path == '/dashboard' %}active{% endif %}"><i class="fa-solid fa-chart-bar"></i><span data-i18n="nav.dashboard">Dashboard</span></a></li>
         <li><a href="/papers" class="{% if request.url.path == '/papers' %}active{% endif %}"><i class="fa-solid fa-file-lines"></i><span data-i18n="nav.papers">Papers</span></a></li>
+        <li><a href="/relevance-review" class="{% if request.url.path.startswith('/relevance-review') %}active{% endif %}"><i class="fa-solid fa-user-check"></i><span data-i18n="nav.review">人工审核</span></a></li>
         <li><a href="/report" class="{% if request.url.path == '/report' %}active{% endif %}"><i class="fa-solid fa-newspaper"></i><span data-i18n="nav.report">Report</span></a></li>
       </ul>
     </nav>

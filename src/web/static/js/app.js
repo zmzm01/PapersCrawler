@@ -7,6 +7,7 @@ const I18N = {
     'nav.dashboard': '仪表盘',
     'nav.papers': '论文',
     'nav.report': '报告',
+    'nav.review': '人工审核',
 
     'pipeline.success': '成功',
     'pipeline.failed': '失败',
@@ -35,6 +36,7 @@ const I18N = {
     'papers.per_page': '每页',
     'papers.prev': '上一页',
     'papers.next': '下一页',
+    'papers.has_summary': '已生成总结',
 
     'report.title': '报告',
     'report.choose_report': '查看报告：',
@@ -59,6 +61,7 @@ const I18N = {
     'nav.dashboard': 'Dashboard',
     'nav.papers': 'Papers',
     'nav.report': 'Report',
+    'nav.review': 'Manual Review',
 
     'pipeline.success': 'Success',
     'pipeline.failed': 'Failed',
@@ -87,6 +90,7 @@ const I18N = {
     'papers.per_page': 'Per page',
     'papers.prev': 'Prev',
     'papers.next': 'Next',
+    'papers.has_summary': 'Has summary',
 
     'report.title': 'Report',
     'report.choose_report': 'Report:',

@@ -1,6 +1,5 @@
 """Security tests for read-only Web UI file handling."""
 
-from pathlib import Path
 
 from web.app import _is_report_path_in_directory
 
