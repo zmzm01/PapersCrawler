@@ -12,9 +12,22 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import pytest
-from pipeline.phase_c import _has_bot_markers, _extract_page_title
-from sources.publisher import BasePublisherScraper
+import pipeline.phase_c as phase_c_module
+from pipeline.phase_c import (
+    _has_bot_markers,
+    _extract_page_title,
+    _limit_phase_papers,
+)
+from sources.publisher import BasePublisherScraper, Paper
+
+
+def test_phase_c_limit_is_global_across_publishers():
+    """MAX_PAPERS_PER_PHASE limits the complete Phase C invocation."""
+    papers = ["paper-a", "paper-b"]
+    assert _limit_phase_papers(papers, 0, 3) == papers
+    assert _limit_phase_papers(papers, 2, 3) == ["paper-a"]
+    assert _limit_phase_papers(papers, 3, 3) == []
+    assert _limit_phase_papers(papers, 99, 0) == papers
 
 
 # ---- _is_cf_challenge_page (fetch_page reload-recovery helper) ----
@@ -364,3 +377,102 @@ class TestPrewarm:
             wait_for_timeout=lambda *a, **k: None,
         )
         assert s.prewarm() is False
+
+
+def test_phase_c_uses_configured_proxy_after_normal_retry(monkeypatch):
+    """末级 fallback 应用配置代理新建 scraper 并成功更新页面状态。"""
+
+    class FakeScraper:
+        def __init__(self, fallback=False):
+            self.fallback = fallback
+            self.html = ""
+            self.page_url = ""
+            self.closed = False
+
+        def prewarm(self):
+            return True
+
+        def fetch_page(self, url, timeout):
+            self.page_url = url
+            if self.fallback:
+                self.html = "<title>Valid article</title>"
+            else:
+                self.html = "<title>Radware Bot Manager Captcha</title>"
+
+        def parse_page(self):
+            if self.fallback:
+                return Paper(
+                    doi="10.0000/fallback",
+                    title="Valid article",
+                    abstract="A valid abstract.",
+                    authors=[],
+                )
+            return Paper()
+
+        def close(self):
+            self.closed = True
+
+        def _save_error_html(self, url, tag):
+            return False
+
+    class FakeDatabase:
+        def __init__(self):
+            self.updated = []
+
+        def get_pending_publisher_papers(self, publisher, skip_crossref_abstract):
+            return [{
+                "doi": "10.0000/fallback",
+                "page_url": "https://example.test/paper",
+                "title": "Pending article",
+            }]
+
+        def update_publisher_page(self, *args):
+            self.updated.append(args)
+
+        def update_error_message(self, *args):
+            raise AssertionError("fallback should have succeeded")
+
+    created_proxies = []
+    scrapers = []
+
+    def fake_create_scraper(publisher, proxy_override=None):
+        created_proxies.append(proxy_override)
+        scraper = FakeScraper(fallback=proxy_override is not None)
+        scrapers.append(scraper)
+        return scraper
+
+    database = FakeDatabase()
+    monkeypatch.setattr(phase_c_module, "create_scraper", fake_create_scraper)
+    monkeypatch.setattr(phase_c_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(phase_c_module.CFG, "SKIP_PHASE_C", False)
+    monkeypatch.setattr(phase_c_module.CFG, "MAX_PAPERS_PER_PHASE", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PREFETCH_NON_RESEARCH", False)
+    monkeypatch.setattr(phase_c_module.CFG, "POSTFETCH_NON_RESEARCH", True)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_PAGE_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_PAGE_DELAY_MAX", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_MAX_CONSECUTIVE_FAILURES", 3)
+    monkeypatch.setattr(
+        phase_c_module.CFG,
+        "PUBLISHER_FALLBACK_PROXY_URL",
+        "http://127.0.0.1:7890",
+    )
+    monkeypatch.setitem(
+        phase_c_module.SCRAPER_MAP,
+        "iop",
+        (FakeScraper, None, None),
+    )
+
+    phase_c_module.phase_c_publisher(
+        database,
+        [{"publisher": "iop", "enabled": True}],
+    )
+
+    assert created_proxies == [
+        None,
+        {"server": "http://127.0.0.1:7890"},
+        None,
+    ]
+    assert len(database.updated) == 1
+    assert database.updated[0][0] == "10.0000/fallback"
+    assert database.updated[0][-2] == "success"
+    assert scrapers[1].closed is True

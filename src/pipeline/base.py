@@ -26,13 +26,16 @@ SCRAPER_MAP = {
 }
 
 
-def create_scraper(publisher):
+def create_scraper(publisher, proxy_override=None):
     """Create and initialize a scraper instance for the given publisher.
 
     Parameters
     ----------
     publisher : str
         Publisher identifier (e.g. "nature", "aps").
+    proxy_override : dict or None, optional
+        Optional cloakbrowser proxy configuration. When provided, it takes
+        precedence over the publisher's normal proxy configuration.
 
     Returns
     -------
@@ -48,6 +51,8 @@ def create_scraper(publisher):
     if not config:
         raise ValueError(f"No scraper config for publisher: {publisher}")
     scraper_class, user_data_dir, proxy = config
+    if proxy_override is not None:
+        proxy = proxy_override
     os.makedirs(user_data_dir, exist_ok=True)
     scraper = scraper_class(user_data_dir)
     scraper.start_browser(proxy)

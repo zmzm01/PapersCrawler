@@ -10,11 +10,34 @@ import time
 from datetime import datetime
 
 from config import CFG
-from db.database import DatabaseClient, FetchStatus
+from db.database import FetchStatus
 from pipeline.base import SCRAPER_MAP, create_scraper
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
 
 logger = logging.getLogger(__name__)
+
+
+def _limit_phase_papers(papers, processed_count, phase_limit):
+    """Return the papers still allowed by the phase-wide limit.
+
+    Parameters
+    ----------
+    papers : list
+        Pending papers for the current publisher.
+    processed_count : int
+        Number of papers already selected by this Phase C invocation.
+    phase_limit : int
+        Maximum number for the whole phase; ``0`` means unlimited.
+
+    Returns
+    -------
+    list
+        A bounded view of ``papers``.
+    """
+    if not phase_limit:
+        return papers
+    remaining = max(phase_limit - processed_count, 0)
+    return papers[:remaining]
 
 
 def _extract_page_title(html):
@@ -102,7 +125,7 @@ def phase_c_publisher(db, publishers):
         j["publisher"] for j in publishers if j.get("enabled", True)
     }
 
-    total_pending = 0
+    processed_count = 0
     phase_limit = CFG.MAX_PAPERS_PER_PHASE
 
     for publisher_key in sorted(all_publisher_keys):
@@ -158,13 +181,12 @@ def phase_c_publisher(db, publishers):
                     f"skipped (CrossRef has abstract)"
                 )
 
-        if CFG.MAX_PAPERS_PER_PHASE:
-            papers = papers[:phase_limit]
+        papers = _limit_phase_papers(papers, processed_count, phase_limit)
 
         if not papers:
             continue
 
-        total_pending += len(papers)
+        processed_count += len(papers)
         logger.info(f"Processing publisher: {publisher_key} ({len(papers)} papers)")
 
         scraper = None
@@ -214,15 +236,26 @@ def phase_c_publisher(db, publishers):
                 # initial verification, so skip 5s/15s attempts and go
                 # straight to 45s + 2min cooldown.
                 if is_first_in_group:
-                    retry_attempts = [2]
+                    normal_retry_attempts = [2]
                     logger.debug(f"First-in-group, extended timeout [{paperDOI}]")
                 else:
-                    retry_attempts = range(3)
+                    normal_retry_attempts = list(range(3))
                 is_first_in_group = False
+
+                fallback_proxy_url = getattr(
+                    CFG, "PUBLISHER_FALLBACK_PROXY_URL", "",
+                ).strip()
+                retry_plan = [
+                    (attempt, False) for attempt in normal_retry_attempts
+                ]
+                if fallback_proxy_url:
+                    retry_plan.append((None, True))
 
                 paper_succeeded = False
                 paper_skipped = False
                 last_error = None
+                last_scraper = scraper
+                fallback_attempted = False
 
                 # Pre-fetch non-research detection: check DB title before browser launch
                 if CFG.PREFETCH_NON_RESEARCH:
@@ -242,55 +275,100 @@ def phase_c_publisher(db, publishers):
                     if paper_skipped:
                         continue
 
-                for attempt in retry_attempts:
+                for attempt, is_fallback in retry_plan:
+                    attempt_scraper = scraper
+                    fallback_scraper = None
                     try:
-                        if attempt == 0:
-                            timeout = 5000
-                            cooloff = 0
-                        elif attempt == 1:
-                            timeout = 15000
-                            cooloff = 0
-                        else:
+                        if is_fallback:
+                            fallback_attempted = True
+                            logger.info(
+                                "Phase C fallback retry with configured proxy "
+                                "[%s]",
+                                paperDOI,
+                            )
+                            if scraper:
+                                try:
+                                    scraper.close()
+                                except Exception:
+                                    pass
+                                scraper = None
+                            fallback_scraper = create_scraper(
+                                publisher_key,
+                                proxy_override={"server": fallback_proxy_url},
+                            )
+                            attempt_scraper = fallback_scraper
+                            last_scraper = attempt_scraper
+                            try:
+                                attempt_scraper.prewarm()
+                            except Exception:
+                                logger.warning(
+                                    "Fallback prewarm raised for %s, "
+                                    "continuing anyway",
+                                    publisher_key,
+                                )
                             timeout = 45000
-                            # First-in-group: no prior failure, skip cooldown
-                            if len(retry_attempts) == 1:
-                                logger.debug(f"Extended timeout 45s (first-in-group) [{paperDOI}]")
+                        else:
+                            last_scraper = attempt_scraper
+                            if attempt == 0:
+                                timeout = 5000
+                                cooloff = 0
+                            elif attempt == 1:
+                                timeout = 15000
+                                cooloff = 0
                             else:
-                                cooloff = random.uniform(120, 180)
-                                logger.debug(f"Cooling {cooloff:.0f}s before retry 3 [{paperDOI}]")
-                                time.sleep(cooloff)
-                        scraper.fetch_page(page_url, timeout=timeout)
+                                timeout = 45000
+                                # First-in-group: no prior failure, skip cooldown
+                                if len(normal_retry_attempts) == 1:
+                                    logger.debug(
+                                        f"Extended timeout 45s (first-in-group) "
+                                        f"[{paperDOI}]"
+                                    )
+                                else:
+                                    cooloff = random.uniform(120, 180)
+                                    logger.debug(
+                                        f"Cooling {cooloff:.0f}s before retry 3 "
+                                        f"[{paperDOI}]"
+                                    )
+                                    time.sleep(cooloff)
+                        attempt_scraper.fetch_page(page_url, timeout=timeout)
 
                         # Always try parsing first — CF/bot markers in HTML
                         # (e.g. _cf_chl_opt from CDN scripts) do NOT necessarily
                         # mean the page is blocked.  Only treat as a bot block
                         # when parsing also returns empty results.
-                        paperPage = scraper.parse_page()
+                        paperPage = attempt_scraper.parse_page()
 
                         if not paperPage.title and not paperPage.doi and not paperPage.abstract:
                             # Empty parse — check for bot detection patterns
-                            page_title_snippet = _extract_page_title(scraper.html)
-
-                            bot_blocked = _has_bot_markers(
-                                scraper.html, page_title=page_title_snippet,
+                            page_title_snippet = _extract_page_title(
+                                attempt_scraper.html,
                             )
 
+                            bot_blocked = _has_bot_markers(
+                                attempt_scraper.html,
+                                page_title=page_title_snippet,
+                            )
+
+                            if is_fallback:
+                                attempt_label = "fallback"
+                            elif len(normal_retry_attempts) == 1:
+                                attempt_label = "1/1"
+                            else:
+                                attempt_label = f"{attempt + 1}/{len(normal_retry_attempts)}"
                             if bot_blocked:
                                 logger.warning(
-                                    f"Bot detection page (attempt "
-                                    f"{'1/1' if len(retry_attempts) == 1 else f'{attempt+1}/{len(retry_attempts)}'})"
+                                    f"Bot detection page (attempt {attempt_label})"
                                     f" [{paperDOI}]"
                                     + (f" | page title: {page_title_snippet}"
                                        if page_title_snippet else "")
                                 )
                             else:
                                 logger.warning(
-                                    f"Empty parse result (attempt "
-                                    f"{'1/1' if len(retry_attempts) == 1 else f'{attempt+1}/{len(retry_attempts)}'})"
+                                    f"Empty parse result (attempt {attempt_label})"
                                     f" [{paperDOI}]"
                                 )
 
-                            if attempt < len(retry_attempts) - 1:
+                            if not is_fallback and attempt < len(normal_retry_attempts) - 1:
                                 continue
                             raise PageParseError(
                                 "Title, DOI and Abstract all empty"
@@ -317,7 +395,12 @@ def phase_c_publisher(db, publishers):
                             FetchStatus.SUCCESS.value, timestamp,
                         )
                         paper_succeeded = True
-                        logger.info(f"Publisher page OK: {paperDOI}")
+                        if is_fallback:
+                            logger.info(
+                                f"Publisher page OK via fallback proxy: {paperDOI}"
+                            )
+                        else:
+                            logger.info(f"Publisher page OK: {paperDOI}")
                         break
 
                     except AcceptedPaperError:
@@ -340,41 +423,91 @@ def phase_c_publisher(db, publishers):
                         # If parse_page() raised an error and the HTML contains
                         # bot-detection markers, treat it as a bot block and
                         # retry with longer timeout instead of giving up early.
-                        if scraper and hasattr(scraper, 'html') and scraper.html:
-                            page_title_snippet = _extract_page_title(scraper.html)
+                        if (
+                            attempt_scraper
+                            and hasattr(attempt_scraper, "html")
+                            and attempt_scraper.html
+                        ):
+                            page_title_snippet = _extract_page_title(
+                                attempt_scraper.html,
+                            )
                             is_bot = _has_bot_markers(
-                                scraper.html, page_title=page_title_snippet,
+                                attempt_scraper.html,
+                                page_title=page_title_snippet,
                             )
                             if is_bot:
+                                if is_fallback:
+                                    attempt_label = "fallback"
+                                elif len(normal_retry_attempts) == 1:
+                                    attempt_label = "1/1"
+                                else:
+                                    attempt_label = f"{attempt + 1}/{len(normal_retry_attempts)}"
                                 logger.warning(
-                                    f"Bot block caused parse error (attempt "
-                                    f"{'1/1' if len(retry_attempts) == 1 else f'{attempt+1}/{len(retry_attempts)}'})"
+                                    f"Bot block caused parse error (attempt {attempt_label})"
                                     f" [{paperDOI}]: {e}"
                                 )
-                                if attempt < len(retry_attempts) - 1:
+                                if not is_fallback and attempt < len(normal_retry_attempts) - 1:
                                     continue
                                 # fall through to error handling below
-                        if attempt == 0:
+                        if not is_fallback and attempt == 0:
+                            continue
+                        if not is_fallback and fallback_proxy_url:
                             continue
                         break
+                    finally:
+                        if fallback_scraper:
+                            try:
+                                fallback_scraper.close()
+                            except Exception:
+                                pass
+                        if is_fallback:
+                            try:
+                                scraper = create_scraper(publisher_key)
+                                scraper.prewarm()
+                            except Exception as exc:
+                                scraper = None
+                                logger.warning(
+                                    "Could not restore normal scraper for %s: %s",
+                                    publisher_key,
+                                    exc,
+                                )
 
                 if not paper_succeeded and not paper_skipped:
                     error_msg = str(last_error) if last_error else "Unknown error"
                     error_type = type(last_error).__name__ if last_error else "N/A"
-                    page_title_snippet = (
-                        _extract_page_title(scraper.html)
-                        if scraper and hasattr(scraper, 'html') and scraper.html
-                        else ""
-                    )
+                    page_title_snippet = ""
+                    if (
+                        last_scraper
+                        and hasattr(last_scraper, "html")
+                        and last_scraper.html
+                    ):
+                        page_title_snippet = _extract_page_title(
+                            last_scraper.html,
+                        )
                     html_saved = ""
-                    if scraper and hasattr(scraper, '_save_error_html'):
-                        save_url = getattr(scraper, 'page_url', None) or page_url
-                        if scraper._save_error_html(save_url, f"phaseC_fail_{paperDOI}"):
-                            html_saved = f" | HTML saved to error dir"
+                    if last_scraper and hasattr(last_scraper, '_save_error_html'):
+                        save_url = getattr(last_scraper, 'page_url', None) or page_url
+                        if last_scraper._save_error_html(save_url, f"phaseC_fail_{paperDOI}"):
+                            html_saved = " | HTML saved to error dir"
+                    retry_summary = (
+                        " after normal retries and fallback proxy"
+                        if fallback_attempted else ""
+                    )
                     if isinstance(last_error, PageParseError):
-                        logger.warning(f"Phase C page parse error [{paperDOI}]: {error_msg} | type={error_type}{html_saved}")
+                        logger.warning(
+                            f"Phase C page parse error{retry_summary} "
+                            f"[{paperDOI}]: {error_msg} | type={error_type}"
+                            f"{html_saved}"
+                        )
                     else:
-                        logger.warning(f"Phase C scrape failed after 3 attempts [{paperDOI}]: {error_msg} | type={error_type}{html_saved}")
+                        failure_summary = (
+                            "normal retries and fallback proxy"
+                            if fallback_attempted else "3 attempts"
+                        )
+                        logger.warning(
+                            f"Phase C scrape failed after {failure_summary} "
+                            f"[{paperDOI}]: {error_msg} | type={error_type}{html_saved}"
+                        )
                     if page_title_snippet:
                         logger.debug(f"Phase C page title [{paperDOI}]: {page_title_snippet}")
                     db.update_error_message(
