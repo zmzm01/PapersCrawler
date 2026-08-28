@@ -15,7 +15,6 @@ T3 真实测试：发送一封真实测试邮件。
 
 import os
 import sys
-from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
