@@ -14,8 +14,8 @@ def test_formula_fix_summary_helper_can_run_in_parallel(monkeypatch):
     worker_threads = set()
 
     class FakeFormulaFixer:
-        def __init__(self, llm_api_config, force=False):
-            del llm_api_config, force
+        def __init__(self, llm_api_config, force=False, max_repair_rounds=1):
+            del llm_api_config, force, max_repair_rounds
 
         def fix_text(self, text, field_name="", circuit_breaker=None):
             del field_name, circuit_breaker

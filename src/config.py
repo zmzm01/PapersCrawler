@@ -276,6 +276,7 @@ CFG.SKIP_PHASE_G = False
 CFG.SKIP_PHASE_H = True
 CFG.LLM_CONCURRENT_MAX = 20
 CFG.FORMULA_FIX_CONCURRENT_MAX = 10
+CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS = 1
 CFG.LLM_CIRCUIT_BREAKER_THRESHOLD = 5
 
 # ---------- 流水线参数 ----------
@@ -483,6 +484,12 @@ def _apply_settings(settings):
         1,
         int(formula_cfg.get(
             "concurrent_max", CFG.FORMULA_FIX_CONCURRENT_MAX,
+        )),
+    )
+    CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS = max(
+        1,
+        int(formula_cfg.get(
+            "max_repair_rounds", CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS,
         )),
     )
     CFG.SKIP_FORMULA_FIX = formula_cfg.get(

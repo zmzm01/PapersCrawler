@@ -28,6 +28,7 @@ from common import LLMCircuitBreaker
 from config import CFG, DB_PATH
 from db.database import DatabaseClient, FetchStatus
 from processors.llm_summarize_deepseek import FormulaFixer
+from processors.katex_validator import validate_katex_formulas
 from processors.summary_schema import normalize_summary, transform_summary_texts
 
 
@@ -134,7 +135,9 @@ def analyze_papers(papers, fixer, verbose=False, force=False):
             if not text or text == "未提供":
                 continue
             stats["total_fields"] += 1
-            need = fixer.needs_fix(text, force=force)
+            need = fixer.needs_fix(text, force=force) or bool(
+                validate_katex_formulas(text),
+            )
             if need:
                 formula_needed = True
                 stats["needs_fix"] += 1
@@ -156,12 +159,16 @@ def analyze_papers(papers, fixer, verbose=False, force=False):
     return stats, paper_results
 
 
-def _fix_one_paper(paper, llm_config, force, circuit_breaker):
+def _fix_one_paper(paper, llm_config, force, circuit_breaker, max_repair_rounds):
     """Fix one paper in a worker thread and return a DB-ready JSON string."""
     summary_raw = paper["llm_summary_result"] or "{}"
     parsed = json.loads(summary_raw)
     normalized = normalize_summary(parsed)
-    fixer = FormulaFixer(llm_api_config=llm_config, force=force)
+    fixer = FormulaFixer(
+        llm_api_config=llm_config,
+        force=force,
+        max_repair_rounds=max_repair_rounds,
+    )
     fixed_count = 0
 
     def fix_text(text, field_name):
@@ -227,6 +234,7 @@ def fix_papers(papers, candidate_dois, db, dry_run=False, force=False):
                 CFG.LLM_API_CONFIG_DICT_FORMULA,
                 force,
                 circuit_breaker,
+                CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS,
             ): paper
             for paper in selected
         }
@@ -280,6 +288,7 @@ def main():
         detector = FormulaFixer(
             llm_api_config=CFG.LLM_API_CONFIG_DICT_FORMULA,
             force=args.force,
+            max_repair_rounds=CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS,
         )
         logger.info("共 %s 篇论文，正在检测公式和文本伪转义...", len(papers))
         stats, paper_results = analyze_papers(

@@ -11,6 +11,18 @@
 - E3 正文终审是报告硬门槛：必须 `fulltext`、A/B 且 F 总结成功。
 - 自动运行结束最多发送一条 ntfy 汇总，详细错误写本地日志。
 
+## 2026-08-29：静态 KaTeX 公式校验与 Prince PDF 导出
+
+- 新增 Node 渲染器 `report-site/scripts/render-markdown-katex.mjs`：先保护 Markdown 中的
+  `\(...\)` / `\[...\]` 公式，再用 `marked` 生成 HTML，以 KaTeX 严格模式替换为静态 HTML/MathML，
+  并复制本地 CSS/字体；转换时不依赖 Chrome 或 CDN。
+- 新增 `tools/convert_md_to_pdf.py` 与 `md_to_pdf_prince.py`：静态 HTML 交给 Prince 生成 PDF；
+  免费版的右上角水印作为可接受限制。缺少 Node、npm 依赖或 Prince 时安全失败，不伪造输出。
+- FormulaFixer 复用该渲染器的 `--validate` 结构化错误：把无法渲染的公式和 KaTeX 诊断发送给 LLM，
+  并要求修复后再次通过验证；验证器不可用时降级为既有修复行为。允许保留 KaTeX 支持的复杂环境。
+- `formula_fix.max_repair_rounds` 将“校验 → LLM → 验收”作为一个不可拆分的 round 配置，默认 1；
+  若验收仍失败，下一轮将新的报错和上轮输出交给 LLM，达到上限仍失败则回退原文本。
+
 ## 2026-08-28：修复错误快照生命周期与本地 PDF 导入提交
 
 - 错误快照优先使用已缓存的 HTML；当 Phase C 在关闭 fallback 浏览器后执行诊断保存时，不再访问已关闭的 Playwright page，避免 `Event loop is closed` 二次警告遮蔽原始导航错误。

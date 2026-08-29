@@ -380,6 +380,7 @@ formula_fix:
   skip: false
   force: false
   concurrent_max: 10
+  max_repair_rounds: 1
   llm:
     protocol: openai_chat
     model: mimo-v2.5
@@ -390,7 +391,7 @@ formula_fix:
 
 程序内部先构造统一的 `model/messages/thinking` 请求，再由协议适配层转换。Responses 协议会把 system prompt 放到 `instructions`，把用户消息放到 `input`，并将 JSON 模式转换为 `text.format.type=json_object`；返回结果从 `output_text` 或 `output` 文本块读取。Messages 协议不发送 OpenAI 专用的 `response_format`，结构化输出依靠 Prompt 中的“只输出合法 JSON”约束。对于需要严格 JSON 的总结，建议使用 `thinking: disabled`，避免思考内容与 JSON 混在同一输出中；Responses 如需控制推理，可配置 `reasoning_effort: low|medium|high`。
 
-FormulaFixer 使用 `formula_fix.llm` 的独立配置，不会自动使用 `relevance` 或 `summary` 的模型；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。它在总结响应解析成功后异步修复各篇论文，修复失败会保留原文本。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
+FormulaFixer 使用 `formula_fix.llm` 的独立配置，不会自动使用 `relevance` 或 `summary` 的模型；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。`formula_fix.max_repair_rounds`（默认 `1`）控制每个字段最多几轮“KaTeX 校验 → LLM 修复 → KaTeX 验收”；若上一轮仍报错，下一轮把新的错误信息和上一轮结果再交给 LLM。超过上限后保留原文本。若 `report-site` 的 npm 依赖已经安装，FormulaFixer 会把 KaTeX 解析错误（公式源码与错误原因）附到对应的 LLM 请求；Node 或依赖缺失时自动降级为原行为。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
 
 FormulaFixer 之前的历史结果也可以单独修复，不必重新调用 Phase F：
 
@@ -465,6 +466,7 @@ recipients:
 | `send_report.py` | 发送指定报告 |
 | `import_local_pdf.py` | 导入本地 PDF 到 E2 队列 |
 | `fix_summary_formulas.py` | 修复总结中的 LaTeX |
+| `convert_md_to_pdf.py` | Markdown → 静态 KaTeX HTML → Prince PDF |
 | `dedup_doi_case.py` | 清理历史 DOI 大小写重复 |
 | `convert_reports_to_hugo.py` | 转换并部署 Hugo 报告 |
 | `export_public_reports.py` | 导出静态站点 JSON |
@@ -572,6 +574,27 @@ python3 tools/deploy_report_site.py
 API Token 只应授予 Cloudflare Pages 写权限，不要写入仓库或普通配置文件。部署脚本默认
 加载 `NVM_DIR=/path/to/nvm`，也可通过 `NVM_DIR` 覆盖。`--branch NAME` 用于上传预览
 分支，未指定时上传生产部署。当前该命令不会修改 Hugo 或 `gh-pages`。
+
+### Prince PDF 导出
+
+报告 PDF 使用本地静态管线，不启动 Chrome、也不在转换时访问 CDN：先以与 WebUI 一致的
+`marked` 解析 Markdown，再把 `\(...\)` / `\[...\]` 公式替换为 KaTeX 静态 HTML 和
+MathML，最后由 Prince 排版。KaTeX CSS 与字体会复制到临时 HTML 目录，因此 Prince 可离线读取。
+
+先在 `report-site/` 安装锁定的 Node 依赖，并按 [Prince 官方下载页](https://www.princexml.com/download/16/)
+安装 `prince` 命令；免费版可以使用，但 PDF 右上角带水印。
+
+```bash
+cd report-site && npm ci
+cd ..
+python tools/convert_md_to_pdf.py data/reports/auto/report_YYYYMMDD.md
+# 或指定目标位置
+python tools/convert_md_to_pdf.py /tmp/report.md /tmp/report.pdf
+```
+
+KaTeX 不支持的公式会在生成 PDF 前失败并打印严格解析错误；使用
+`tools/fix_summary_formulas.py` 可将该错误反馈给 FormulaFixer。该路径支持 KaTeX 已实现的
+复杂环境（包括 `cases`、`matrix`、`aligned`），但不是完整 XeLaTeX 兼容层。
 
 ### `reset_pipeline.py`
 

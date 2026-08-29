@@ -132,6 +132,8 @@ LLM 文本进入 JSON 解析前还会做一次边界清洗：提取 Markdown ` `
 
 FormulaFixer 是 Phase F 总结后的可选文本后处理，不复用相关性角色的模型配置。`formula_fix.llm` 独立配置协议、模型、思考模式、输出上限和超时，`formula_fix.concurrent_max` 独立限制公式修复线程数。Phase F 的总结请求完成后，每篇论文的 FormulaFixer 任务进入独立线程池；每个任务使用自己的 HTTP Session，避免在线程间共享连接对象。公式修复失败只回退该文本节点，不影响结构化总结写入。
 
+若本机可运行 `report-site/scripts/render-markdown-katex.mjs`（Node.js + `marked` + `katex`），FormulaFixer 还会对已正确包裹的公式执行 KaTeX 校验。`formula_fix.max_repair_rounds` 定义每个字段最多几轮“校验 → 带错误的 LLM 修复 → 再校验”，默认一轮；只有最终通过时才替换原文本，超过轮数则保留原文本。Node 或依赖不可用时该验证器静默降级，保留原有启发式和 LLM 修复行为。KaTeX 支持的 `cases`、`matrix`、`aligned` 等复杂环境允许保留；不把 KaTeX 的子集限制误判为完整 LaTeX 语义校验。
+
 该拆分避免公式修复占用总结并发池，也避免主线程逐篇等待所有修复请求。默认仍通过 `needs_fix()` 跳过无需修复的文本；如果只需要先完成总结，可将 `formula_fix.skip` 设为 `true`。
 
 ### 关键词目录与效果评估
@@ -189,6 +191,17 @@ Phase F 在写入前执行两级保护：`repair_llm_text_artifacts()` 恢复 JS
 下一次重试，不会进入报告。历史 success
 记录可用 `tools/fix_summary_formulas.py` 递归修复，复杂 LaTeX 环境仍交给 FormulaFixer
 的独立模型处理。
+
+### 静态 KaTeX/Prince PDF 链路
+
+报告 PDF 的规范渲染链路为 `Markdown → marked HTML → 静态 KaTeX HTML/MathML → Prince PDF`。
+Node 脚本先以唯一占位符保护 `\(...\)` 与 `\[...\]`，防止 Markdown 解析把公式中的下划线或
+反斜杠当作文本标记；`marked` 解析其余内容后，KaTeX 以 `throwOnError: true` 阻断真实语法错误，
+以 `strict: "warn"` 放行兼容性警告后渲染并替换占位符。静态 HTML 同目录包含复制的 KaTeX CSS/字体，Prince 无需执行 JavaScript 或
+联网。公式错误会阻止 PDF 生成，并通过同一渲染脚本供 FormulaFixer 收集为 LLM 修复上下文。
+
+`tools/convert_md_to_pdf.py` 是用户入口。Prince 为首选排版后端；其免费版水印是可接受的已知
+展示限制。旧的 cloakbrowser/Chrome 打印模块继续保留，仅作为历史兼容工具，不再是推荐路径。
 
 ### 7. 配置与入口隔离
 

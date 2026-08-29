@@ -12,7 +12,9 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "astro": "^7.2.3"
+    "astro": "^7.2.3",
+    "katex": "^0.16.22",
+    "marked": "^15.0.12"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

@@ -29,6 +29,7 @@ def _fix_summary_with_formula_fixer(
     llm_config: dict,
     force: bool,
     circuit_breaker: LLMCircuitBreaker,
+    max_repair_rounds: int = 1,
 ) -> tuple[str, int]:
     """Fix formula formatting in one normalized summary.
 
@@ -44,13 +45,19 @@ def _fix_summary_with_formula_fixer(
         Whether to send every non-empty text node to the fixer.
     circuit_breaker : LLMCircuitBreaker
         Circuit breaker shared by FormulaFixer workers.
+    max_repair_rounds : int
+        Maximum KaTeX-validation repair rounds for each text node.
 
     Returns
     -------
     tuple[str, int]
         JSON-encoded fixed summary and the number of changed text nodes.
     """
-    fixer = FormulaFixer(llm_api_config=llm_config, force=force)
+    fixer = FormulaFixer(
+        llm_api_config=llm_config,
+        force=force,
+        max_repair_rounds=max_repair_rounds,
+    )
     fixed_count = 0
 
     def fix_text(text, field_name):
@@ -198,6 +205,7 @@ def phase_f_llm_summary(db):
                             CFG.LLM_API_CONFIG_DICT_FORMULA,
                             CFG.FORCE_FORMULA_FIX,
                             formula_circuit_breaker,
+                            CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS,
                         )
                         formula_futures[formula_future] = (paper, timestamp)
                     else:
