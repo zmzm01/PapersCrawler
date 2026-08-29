@@ -36,6 +36,7 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **按日分文件日志**：运行日志按日期保存并自动清理旧文件，配套工具可直接统计 WARNING/ERROR，避免单文件持续膨胀
 - **结构化报告输出**：先生成版本化 JSON 快照，再渲染 Markdown；自动报告可导出到公开站点
 - **统一文本清洗与结构化总结**：解码出版社遗留的 HTML/XML 实体（如 `&#xD;`），修复 LLM JSON 伪转义和公式分隔符，并将 Phase F 总结保存为带稳定 key 和独立局限性字段的 schema v3 JSON；人读报告隐藏内部枚举元数据并采用单层局限条目；公开报告封装为 schema v2
+- **可验证公式与印刷级 PDF**：FormulaFixer 可配置 KaTeX 校验驱动的 LLM 修复轮数；Markdown 可离线预渲染为静态 KaTeX HTML，再由 Prince 生成 PDF（免费版带水印）
 - **多协议 LLM 接入**：按角色支持 Chat Completions、OpenAI Responses 和 Anthropic Messages；可接入 OpenCode Zen 的 Muse Spark Contributor、MiniMax M3 等模型，并兼容模型偶发的 Markdown/JSON 格式包装；FormulaFixer 使用独立模型和并发池
 - **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
 - **独立报告站点**：`report-site/` 使用 Astro 静态构建，借鉴报告归档、论文目录和折叠解读设计；旧 Hugo 站点暂时保留

@@ -50,6 +50,9 @@ def test_formula_fixer_prompt_detection_and_fallback(monkeypatch):
     assert FormulaFixer.needs_fix(r"\alpha")
     assert FormulaFixer.needs_fix("α")
     assert FormulaFixer.needs_fix(r"\(x^2\)") is False
+    assert FormulaFixer.needs_fix(
+        r"\(\begin{matrix} a & b \\ c & d \end{matrix}\)"
+    ) is False
     assert fixer.fix_text("") == ""
     assert fixer.fix_text("未提供") == "未提供"
     assert fixer.fix_text("normal") == "normal"
@@ -69,3 +72,47 @@ def test_formula_fixer_prompt_detection_and_fallback(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
     )
     assert fixer.fix_text("x^2") == "x^2"
+
+
+def test_formula_fixer_passes_katex_diagnostics_and_rejects_invalid_reply(monkeypatch):
+    """FormulaFixer uses strict renderer feedback without accepting bad output."""
+    validations = [[{"formula": r"\\bad", "message": "Undefined control sequence"}], []]
+    monkeypatch.setattr(
+        summarizer_module,
+        "validate_katex_formulas",
+        lambda text: validations.pop(0),
+    )
+    captured = {}
+    monkeypatch.setattr(
+        common,
+        "call_llm_api_with_retry",
+        lambda config, headers, payload, **kwargs: captured.update(payload) or r"\\(x\\)",
+    )
+    fixer = FormulaFixer({"api_key": "key"})
+
+    assert fixer.fix_text(r"\\(\\bad\\)") == r"\\(x\\)"
+    assert "KaTeX 严格校验错误" in captured["messages"][0]["content"]
+
+
+def test_formula_fixer_retries_only_for_configured_rounds(monkeypatch):
+    """Each configured round is a validation, repair, and revalidation loop."""
+    validations = [
+        [{"formula": r"\\bad", "message": "first"}],
+        [{"formula": r"\\stillbad", "message": "second"}],
+        [],
+    ]
+    monkeypatch.setattr(
+        summarizer_module,
+        "validate_katex_formulas",
+        lambda text: validations.pop(0),
+    )
+    replies = iter([r"\\(\\stillbad\\)", r"\\(x\\)"])
+    monkeypatch.setattr(
+        common,
+        "call_llm_api_with_retry",
+        lambda *args, **kwargs: next(replies),
+    )
+    fixer = FormulaFixer({"api_key": "key"}, max_repair_rounds=2)
+
+    assert fixer.fix_text(r"\\(\\bad\\)") == r"\\(x\\)"
+    assert validations == []

@@ -121,6 +121,8 @@ formula_fix:
   force: false
   # FormulaFixer 独立并发上限，不占用 Phase E/F 的总结并发池
   concurrent_max: 10
+  # 每个字段最多执行几轮「KaTeX 校验 → LLM 修复 → KaTeX 验收」
+  max_repair_rounds: 1
   llm:
     protocol: openai_chat
     model: deepseek-v4-flash

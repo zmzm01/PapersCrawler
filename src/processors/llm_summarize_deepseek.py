@@ -25,6 +25,7 @@ import requests
 from typing import Dict, Any
 
 from common import LLMCircuitBreaker, LLMContextLengthExceed
+from processors.katex_validator import validate_katex_formulas
 from processors.summary_schema import repair_llm_text_artifacts
 
 logger = logging.getLogger(__name__)
@@ -209,7 +210,7 @@ class FormulaFixer:
         "【修正规则】\n"
         "- 行内公式必须用 \\(...\\) 包裹，独立公式必须用 \\[...\\] 包裹\n"
         "- 严禁使用 $...$ 或 $$...$$；将其转换为上述分隔符\n"
-        "- 严禁使用 \\begin{...} / \\end{...}；将 cases、矩阵等改写为纯文本条件或行内公式\n"
+        "- 可保留 KaTeX 支持的 \\begin{...} / \\end{...} 环境（如 cases、matrix、aligned）\n"
         "- 不要改变文本内容、语序、标点\n"
         "- 输出中不应保留任何数学类 Unicode 字符\n\n"
         "只输出修正后的文本，不要包含任何额外解释："
@@ -227,9 +228,15 @@ class FormulaFixer:
             FormulaFixer._fix_prompt_cache = loaded if loaded else self._FIX_PROMPT_FALLBACK
         return FormulaFixer._fix_prompt_cache
 
-    def __init__(self, llm_api_config: Dict[str, Any], force: bool = False):
+    def __init__(
+        self,
+        llm_api_config: Dict[str, Any],
+        force: bool = False,
+        max_repair_rounds: int = 1,
+    ):
         self.config = llm_api_config
         self.force = force
+        self.max_repair_rounds = max(1, max_repair_rounds)
         self._session = requests.Session()
         self._session.headers.update({
             "Content-Type": "application/json",
@@ -259,7 +266,7 @@ class FormulaFixer:
             return True
         if repair_llm_text_artifacts(text) != text:
             return True
-        if "$" in text or r"\begin{" in text or r"\end{" in text:
+        if "$" in text:
             return True
         cleaned = re.sub(r'\\\(.*?\\\)|\\\[.*?\\\]', '', text, flags=re.DOTALL)
         # Unicode 数学字符范围：希腊字母、上下标、箭头、运算符、字母类符号
@@ -307,44 +314,88 @@ class FormulaFixer:
             logger.debug(f"{tag}跳过修复: 空字段或未提供")
             return text
         locally_repaired = repair_llm_text_artifacts(text)
-        if not self.needs_fix(locally_repaired, force=self.force):
+        validation_errors = validate_katex_formulas(locally_repaired)
+        needs_llm_fix = self.needs_fix(locally_repaired, force=self.force)
+        if validation_errors:
+            needs_llm_fix = True
+        if not needs_llm_fix:
             logger.debug(f"{tag}跳过修复: 无需修复")
             return locally_repaired
-        logger.info(f"{tag}正在修复公式格式 ({len(locally_repaired)} 字符)")
-        # 模型和 api_url 均来自 self.config（由调用方从 config.py 传入），
-        # 因此 FormulaFixer 的模型配置与 settings.yaml 保持一致。
-        payload = {
-            "model": self.config.get("model", "deepseek-v4-flash"),
-            "messages": [
-                {"role": "user", "content": self._get_fix_prompt() + "\n\n" + locally_repaired},
-            ],
-            "thinking": {"type": "disabled"},
-        }
-        configured_max_tokens = self.config.get(
-            "max_output_tokens", self.config.get("max_tokens"),
-        )
-        if configured_max_tokens is not None:
-            payload["max_tokens"] = configured_max_tokens
-        try:
-            from common import call_llm_api_with_retry
-
-            fixed = call_llm_api_with_retry(
-                self.config,
-                {
-                    "Authorization": f"Bearer {self.config['api_key']}",
-                    "Content-Type": "application/json",
-                },
-                payload,
-                session=self._session,
-                circuit_breaker=circuit_breaker,
-                expect_json=False,
+        current_text = locally_repaired
+        current_errors = validation_errors
+        for round_number in range(1, self.max_repair_rounds + 1):
+            logger.info(
+                "%s正在修复公式格式（第 %s/%s 轮，%s 字符）",
+                tag, round_number, self.max_repair_rounds, len(current_text),
             )
+            payload = {
+                "model": self.config.get("model", "deepseek-v4-flash"),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": self._get_fix_prompt()
+                        + self._format_katex_errors(current_errors)
+                        + "\n\n"
+                        + current_text,
+                    },
+                ],
+                "thinking": {"type": "disabled"},
+            }
+            configured_max_tokens = self.config.get(
+                "max_output_tokens", self.config.get("max_tokens"),
+            )
+            if configured_max_tokens is not None:
+                payload["max_tokens"] = configured_max_tokens
+            try:
+                from common import call_llm_api_with_retry
+
+                fixed = call_llm_api_with_retry(
+                    self.config,
+                    {
+                        "Authorization": f"Bearer {self.config['api_key']}",
+                        "Content-Type": "application/json",
+                    },
+                    payload,
+                    session=self._session,
+                    circuit_breaker=circuit_breaker,
+                    expect_json=False,
+                )
+            except Exception as error:
+                logger.warning("%s公式修复失败，回退本地修复内容: %s", tag, error)
+                return locally_repaired
+
             fixed = repair_llm_text_artifacts(fixed)
-            logger.info(f"{tag}公式修复成功 ({len(locally_repaired)}→{len(fixed)} 字符)")
-            return fixed
-        except Exception as e:
-            logger.warning(f"{tag}公式修复失败，回退本地修复内容: {e}")
-            return locally_repaired
+            current_errors = validate_katex_formulas(fixed)
+            if not current_errors:
+                logger.info(
+                    "%s公式修复成功 (%s→%s 字符)",
+                    tag, len(locally_repaired), len(fixed),
+                )
+                return fixed
+            current_text = fixed
+
+        logger.warning(
+            "%sFormulaFixer reached %s repair rounds; retaining original: %s",
+            tag,
+            self.max_repair_rounds,
+            self._format_katex_errors(current_errors).strip(),
+        )
+        return locally_repaired
+
+    @staticmethod
+    def _format_katex_errors(errors: list[dict] | None) -> str:
+        """Format renderer diagnostics as concise, LLM-actionable context."""
+        if not errors:
+            return ""
+        messages = [
+            "\n\n【KaTeX 严格校验错误】以下公式当前无法渲染；"
+            "请只修复这些语法问题，且保留物理含义：",
+        ]
+        for error in errors:
+            messages.append(
+                f"- 公式: {error.get('formula', '')}; 错误: {error.get('message', '')}"
+            )
+        return "\n".join(messages)
 
 
 if __name__ == "__main__":
