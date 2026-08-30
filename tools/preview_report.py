@@ -62,7 +62,11 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import AUTO_REPORT_DIR, DB_PATH, PUBLIC_EXPORT_DIR
-from db.database import DatabaseClient
+from db.database import (
+    DatabaseClient,
+    EFFECTIVE_RELEVANCE_CATEGORY_SQL,
+    LATEST_RELEVANCE_REVIEW_CTE,
+)
 from processors.paper_report_generator import generate_report
 from processors.public_report import write_public_report
 from processors.report_presentation import build_report_presentation
@@ -76,16 +80,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # 与 get_papers_for_report() 等价，但**显式不包含** report_date IS NULL
-# 过滤——预览工具需要"重看历史"，已报告的论文也包含进来。
+# 过滤——预览工具需要"重看历史"，已报告的论文也包含进来。最新人工审核
+# 决定覆盖 LLM 分类，保持预览与自动报告一致。
 _BASE_WHERE = (
-    "llm_summary_status = 'success' "
-    "AND llm_relevance_category IN ('A', 'B') "
-    "AND llm_relevance_status = 'success'"
+    "p.llm_summary_status = 'success' "
+    f"AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B') "
+    "AND p.llm_relevance_status = 'success' "
+    "AND p.llm_relevance_basis = 'fulltext'"
 )
 # Phase A stores this field as YYYYMMDD, while older/test data may use
 # YYYY-MM-DD or an ISO timestamp.  Removing dashes from the date prefix gives
 # one sortable YYYYMMDD representation for all supported forms.
-_CREATED_DATE_KEY = "replace(substr(created_date, 1, 10), '-', '')"
+_CREATED_DATE_KEY = "replace(substr(p.created_date, 1, 10), '-', '')"
 
 
 def _build_paper_dicts(papers):
@@ -146,11 +152,20 @@ def _fetch_papers(
     elif scope != "all":
         raise ValueError(f"Unknown scope: {scope}")
 
-    sql = (
-        "SELECT * FROM papers WHERE "
-        + " AND ".join(where_clauses)
-        + " ORDER BY paperdate_rss DESC"
-    )
+    sql = f"""
+        {LATEST_RELEVANCE_REVIEW_CTE}
+        SELECT p.*,
+               {EFFECTIVE_RELEVANCE_CATEGORY_SQL}
+                   AS effective_relevance_category,
+               latest_relevance_review.decision
+                   AS manual_relevance_decision,
+               latest_relevance_review.notes AS manual_relevance_notes
+        FROM papers AS p
+        LEFT JOIN latest_relevance_review
+          ON latest_relevance_review.doi = p.doi
+        WHERE {" AND ".join(where_clauses)}
+        ORDER BY p.paperdate_rss DESC
+    """
     return db.conn.execute(sql, query_params).fetchall()
 
 

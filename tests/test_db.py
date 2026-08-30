@@ -317,6 +317,54 @@ def test_get_pending_summary_papers_excludes_non_ab_and_non_fulltext(db):
     assert [row["doi"] for row in pending] == ["10.0000/f-pending-a"]
 
 
+def test_manual_review_overrides_summary_and_report_category(db):
+    """Latest manual decisions control both summary and report eligibility."""
+    _insert_review_candidate(db, "10.0000/manual-downgrade", "A", "high")
+    _insert_review_candidate(db, "10.0000/manual-promote", "C", "high")
+    db.save_relevance_review(
+        "10.0000/manual-downgrade", "C", "正文不属于核心范围", "alice",
+    )
+    db.save_relevance_review(
+        "10.0000/manual-promote", "A", "正文明确研究激光驱动束流", "alice",
+    )
+
+    pending = db.get_pending_summary_papers()
+    assert [row["doi"] for row in pending] == ["10.0000/manual-promote"]
+    assert pending[0]["effective_relevance_category"] == "A"
+
+    for doi in ("10.0000/manual-downgrade", "10.0000/manual-promote"):
+        db.update_llm_summary(
+            doi, '{"one_sentence":"summary"}',
+            FetchStatus.SUCCESS.value, "2026-08-30",
+        )
+
+    reportable = db.get_papers_for_report()
+    assert [row["doi"] for row in reportable] == ["10.0000/manual-promote"]
+    assert reportable[0]["manual_relevance_decision"] == "A"
+    assert reportable[0]["manual_relevance_notes"] == "正文明确研究激光驱动束流"
+
+
+def test_relevance_review_queue_can_sort_by_summary_date(db):
+    """Summary sorting puts newest completed summaries first and nulls last."""
+    for doi, summary_date in (
+        ("10.0000/summary-old", "2026-08-28 09:00:00"),
+        ("10.0000/summary-new", "2026-08-30 09:00:00"),
+    ):
+        _insert_review_candidate(db, doi, "B", "high")
+        db.update_llm_summary(
+            doi, '{"one_sentence":"summary"}',
+            FetchStatus.SUCCESS.value, summary_date,
+        )
+    _insert_review_candidate(db, "10.0000/summary-pending", "B", "high")
+
+    rows = db.get_relevance_review_queue(sort_by="summary")
+    assert [row["doi"] for row in rows] == [
+        "10.0000/summary-new",
+        "10.0000/summary-old",
+        "10.0000/summary-pending",
+    ]
+
+
 def test_get_papers_for_report(db):
     """验证 get_papers_for_report 只返回已总结、未报告、且当前仍是 A/B 的论文。"""
     db.insert_rss_basicinfo("10.0000/s1", "S1", "http://s1", "J", "pub", "2025")

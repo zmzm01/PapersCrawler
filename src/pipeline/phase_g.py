@@ -11,6 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 from config import CFG, DB_PATH, PUBLIC_EXPORT_DIR, load_keywords
+from db.database import (
+    EFFECTIVE_RELEVANCE_CATEGORY_SQL,
+    LATEST_RELEVANCE_REVIEW_CTE,
+)
 from processors.paper_report_generator import generate_report
 from processors.public_report import write_public_report
 from processors.report_presentation import build_report_presentation
@@ -44,14 +48,25 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
     else:
         placeholders = ",".join("?" for _ in doi_list)
         # 与 get_papers_for_report 保持一致：relevance 过滤必须显式存在，
-        # 因为 update_llm_relevance() 不会级联重置 llm_summary_*。
+        # 且最新人工审核结果覆盖 LLM 分类。用户选定模式允许重看已报告论文。
         cur = db.conn.execute(
-            f"SELECT * FROM papers "
-            f"WHERE llm_summary_status = 'success' "
-            f"  AND llm_relevance_category IN ('A', 'B') "
-            f"  AND llm_relevance_status = 'success' "
-            f"  AND llm_relevance_basis = 'fulltext' "
-            f"  AND doi IN ({placeholders})",
+            f"""
+            {LATEST_RELEVANCE_REVIEW_CTE}
+            SELECT p.*,
+                   {EFFECTIVE_RELEVANCE_CATEGORY_SQL}
+                       AS effective_relevance_category,
+                   latest_relevance_review.decision
+                       AS manual_relevance_decision,
+                   latest_relevance_review.notes AS manual_relevance_notes
+            FROM papers AS p
+            LEFT JOIN latest_relevance_review
+              ON latest_relevance_review.doi = p.doi
+            WHERE p.llm_summary_status = 'success'
+              AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+              AND p.llm_relevance_status = 'success'
+              AND p.llm_relevance_basis = 'fulltext'
+              AND p.doi IN ({placeholders})
+            """,
             doi_list,
         )
         papers = cur.fetchall()

@@ -75,3 +75,24 @@ def test_fetch_papers_before_date_can_combine_with_week_scope(db):
     )
 
     assert [paper["doi"] for paper in papers] == ["10.0000/inside"]
+
+
+def test_fetch_papers_uses_latest_manual_decision(db):
+    """Preview selection follows manual downgrades and promotions."""
+    _insert_reportable_paper(db, "10.0000/manual-c", "20260820")
+    _insert_reportable_paper(db, "10.0000/manual-a", "20260821")
+    db.update_llm_relevance(
+        "10.0000/manual-a", "C", "[]", "high", "original C",
+        FetchStatus.SUCCESS.value, "20260821", basis="fulltext",
+    )
+    db.save_relevance_review(
+        "10.0000/manual-c", "C", "manual downgrade", "reviewer",
+    )
+    db.save_relevance_review(
+        "10.0000/manual-a", "A", "manual promotion", "reviewer",
+    )
+
+    papers = _fetch_papers(db, "all", datetime(2026, 8, 30))
+
+    assert [paper["doi"] for paper in papers] == ["10.0000/manual-a"]
+    assert papers[0]["effective_relevance_category"] == "A"

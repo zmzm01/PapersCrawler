@@ -47,6 +47,31 @@ from enum import Enum
 from common import clean_extracted_text
 
 
+# The latest manual decision is an override, not an additional signal.  Keep
+# the SQL fragments shared by summary/report queries so all downstream stages
+# apply the same effective category semantics.
+LATEST_RELEVANCE_REVIEW_CTE = """
+WITH latest_relevance_review AS (
+    SELECT review.*
+    FROM relevance_reviews AS review
+    INNER JOIN (
+        SELECT doi, MAX(id) AS latest_id
+        FROM relevance_reviews
+        GROUP BY doi
+    ) AS latest
+      ON latest.doi = review.doi
+     AND latest.latest_id = review.id
+)
+"""
+EFFECTIVE_RELEVANCE_CATEGORY_SQL = """
+CASE
+    WHEN latest_relevance_review.id IS NOT NULL
+        THEN latest_relevance_review.decision
+    ELSE p.llm_relevance_category
+END
+"""
+
+
 # ------------------------------------------------------------------
 # 自定义异常
 # ------------------------------------------------------------------
@@ -917,7 +942,7 @@ class DatabaseClient:
     def get_relevance_review_queue(
             self, status_filter="pending", category_filter="all",
             confidence_filter="all", disagreement_only=False,
-            search_text="", limit=100, offset=0):
+            search_text="", sort_by="priority", limit=100, offset=0):
         """Return the full-text relevance papers for manual review.
 
         Parameters
@@ -932,6 +957,9 @@ class DatabaseClient:
             Restrict results to papers whose screen and final categories differ.
         search_text : str
             Case-insensitive substring matched against DOI and title.
+        sort_by : str
+            ``priority`` keeps the review-priority order; ``summary`` sorts
+            by LLM summary time, newest first, with unsummarized papers last.
         limit : int
             Maximum number of rows.
         offset : int
@@ -945,12 +973,15 @@ class DatabaseClient:
         allowed_status = {"pending", "reviewed", "all"}
         allowed_categories = {"all", "A", "B", "C", "D"}
         allowed_confidence = {"all", "high", "medium", "low"}
+        allowed_sort = {"priority", "summary"}
         if status_filter not in allowed_status:
             status_filter = "pending"
         if category_filter not in allowed_categories:
             category_filter = "all"
         if confidence_filter not in allowed_confidence:
             confidence_filter = "all"
+        if sort_by not in allowed_sort:
+            sort_by = "priority"
 
         conditions = [
             "p.llm_relevance_status = 'success'",
@@ -1006,6 +1037,7 @@ class DatabaseClient:
                    latest_review.notes AS review_notes,
                    latest_review.reviewer AS review_reviewer,
                    latest_review.created_date AS review_date,
+                   p.llm_summary_date,
                    CASE
                      WHEN latest_review.id IS NULL THEN 0
                      ELSE 1
@@ -1025,11 +1057,25 @@ class DatabaseClient:
             LEFT JOIN latest_review
               ON latest_review.doi = p.doi
             WHERE {where_clause}
-            ORDER BY is_reviewed ASC, review_priority ASC,
-                     p.llm_relevance_date DESC, p.id DESC
+            ORDER BY
+                CASE WHEN ? = 'summary'
+                     THEN CASE WHEN p.llm_summary_date IS NULL
+                                    OR p.llm_summary_date = ''
+                               THEN 1 ELSE 0 END
+                     ELSE 0 END ASC,
+                CASE WHEN ? = 'summary'
+                     THEN p.llm_summary_date END DESC,
+                CASE WHEN ? = 'summary' THEN is_reviewed END ASC,
+                CASE WHEN ? = 'summary' THEN review_priority END ASC,
+                CASE WHEN ? = 'summary' THEN p.id END DESC,
+                is_reviewed ASC, review_priority ASC,
+                p.llm_relevance_date DESC, p.id DESC
             LIMIT ? OFFSET ?
         """
-        params.extend([max(1, min(int(limit), 200)), max(0, int(offset))])
+        params.extend([
+            sort_by, sort_by, sort_by, sort_by, sort_by,
+            max(1, min(int(limit), 200)), max(0, int(offset)),
+        ])
         return self.conn.execute(query, tuple(params)).fetchall()
 
     def count_relevance_review_queue(
@@ -1422,13 +1468,22 @@ class DatabaseClient:
         list[sqlite3.Row]
             Pending summary records ordered from oldest to newest.
         """
-        query = """
-            SELECT * FROM papers
-            WHERE llm_summary_status = 'pending'
-              AND llm_relevance_status = 'success'
-              AND llm_relevance_category IN ('A', 'B')
-              AND llm_relevance_basis = 'fulltext'
-            ORDER BY created_date
+        query = f"""
+        {LATEST_RELEVANCE_REVIEW_CTE}
+        SELECT p.*,
+               {EFFECTIVE_RELEVANCE_CATEGORY_SQL}
+                   AS effective_relevance_category,
+               latest_relevance_review.decision
+                   AS manual_relevance_decision,
+               latest_relevance_review.notes AS manual_relevance_notes
+        FROM papers AS p
+        LEFT JOIN latest_relevance_review
+          ON latest_relevance_review.doi = p.doi
+        WHERE p.llm_summary_status = 'pending'
+          AND p.llm_relevance_status = 'success'
+          AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+          AND p.llm_relevance_basis = 'fulltext'
+        ORDER BY p.created_date
         """
         parameters = ()
         if limit:
@@ -1507,19 +1562,28 @@ class DatabaseClient:
 
     def get_relevant_papers(self):
         """
-        获取 LLM 判定为相关的论文（A/B 类）。
+        获取当前有效判定为相关的论文（A/B 类）。
 
-        查询条件: llm_relevance_category IN ('A', 'B')
+        查询条件: 无人工审核时使用 LLM 分类，有审核时使用最新人工分类；有效分类为 A/B。
         排序: 按 RSS 日期倒序
 
         Returns:
             list[sqlite3.Row]
         """
-        cur = self.conn.execute("""
-        SELECT * FROM papers
-        WHERE llm_relevance_category IN ('A', 'B')
-          AND llm_relevance_status = 'success'
-        ORDER BY paperdate_rss DESC
+        cur = self.conn.execute(f"""
+        {LATEST_RELEVANCE_REVIEW_CTE}
+        SELECT p.*,
+               {EFFECTIVE_RELEVANCE_CATEGORY_SQL}
+                   AS effective_relevance_category,
+               latest_relevance_review.decision
+                   AS manual_relevance_decision,
+               latest_relevance_review.notes AS manual_relevance_notes
+        FROM papers AS p
+        LEFT JOIN latest_relevance_review
+          ON latest_relevance_review.doi = p.doi
+        WHERE {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+          AND p.llm_relevance_status = 'success'
+        ORDER BY p.paperdate_rss DESC
         """)
         return cur.fetchall()
 
@@ -1529,25 +1593,34 @@ class DatabaseClient:
 
         查询条件: llm_summary_status = 'success'
                   AND report_date IS NULL
-                  AND llm_relevance_category IN ('A', 'B')
+                  AND 有效相关性分类 IN ('A', 'B')；最新人工审核结果覆盖 LLM 分类
                   AND llm_relevance_status = 'success'
                   AND llm_relevance_basis = 'fulltext'
         用 report_date 替代 report_status 作为过滤条件，支持按日期重置重报。
-        显式加 relevance 过滤是必要的：update_llm_relevance() 不会重置
-        llm_summary_* 字段，若论文被从 A/B 重判为 C/D，summary_status 仍
-        为 'success'，没有此过滤会被误入报。排序: 按 RSS 日期倒序。
+        显式加 relevance 过滤是必要的：相关性重判不会重置 llm_summary_* 字段，若论文
+        被从 A/B 重判为 C/D，summary_status 仍为 'success'，没有此过滤会被误入报。
+        排序: 按 RSS 日期倒序。
 
         Returns:
             list[sqlite3.Row]
         """
-        cur = self.conn.execute("""
-        SELECT * FROM papers
-        WHERE llm_summary_status = 'success'
-          AND report_date IS NULL
-          AND llm_relevance_category IN ('A', 'B')
-          AND llm_relevance_status = 'success'
-          AND llm_relevance_basis = 'fulltext'
-        ORDER BY paperdate_rss DESC
+        cur = self.conn.execute(f"""
+        {LATEST_RELEVANCE_REVIEW_CTE}
+        SELECT p.*,
+               {EFFECTIVE_RELEVANCE_CATEGORY_SQL}
+                   AS effective_relevance_category,
+               latest_relevance_review.decision
+                   AS manual_relevance_decision,
+               latest_relevance_review.notes AS manual_relevance_notes
+        FROM papers AS p
+        LEFT JOIN latest_relevance_review
+          ON latest_relevance_review.doi = p.doi
+        WHERE p.llm_summary_status = 'success'
+          AND p.report_date IS NULL
+          AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+          AND p.llm_relevance_status = 'success'
+          AND p.llm_relevance_basis = 'fulltext'
+        ORDER BY p.paperdate_rss DESC
         """)
         return cur.fetchall()
 

@@ -10,6 +10,15 @@ from common import clean_extracted_text
 from processors.summary_schema import normalize_summary
 
 
+def _record_value(record, field_name, default=None):
+    """Read a field from either a mapping or a SQLite row safely."""
+    try:
+        value = record[field_name]
+    except (KeyError, IndexError):
+        return default
+    return default if value is None else value
+
+
 def build_report_papers(papers) -> list[dict[str, Any]]:
     """Convert database rows into the common report paper structure.
 
@@ -33,6 +42,14 @@ def build_report_papers(papers) -> list[dict[str, Any]]:
             authors = [author.get("name", "") for author in authors if author.get("name")]
 
         subfields = _load_json_object(paper["llm_relevance_subfields"], [])
+        manual_decision = _record_value(
+            paper, "manual_relevance_decision", ""
+        )
+        manual_notes = _record_value(paper, "manual_relevance_notes", "")
+        relevance_category = _record_value(
+            paper, "effective_relevance_category",
+            paper["llm_relevance_category"] or "",
+        )
         report_papers.append({
             "title": paper["title"] or "",
             "authors": authors,
@@ -46,8 +63,12 @@ def build_report_papers(papers) -> list[dict[str, Any]]:
             "journal": paper["journal"] or "",
             "publisher": paper["publisher"] or "",
             "matched_subdomains": subfields,
-            "relevance_category": paper["llm_relevance_category"] or "",
-            "relevance_reason": paper["llm_relevance_reason"] or "",
+            "relevance_category": relevance_category or "",
+            "relevance_reason": (
+                manual_notes
+                if manual_decision and manual_notes
+                else paper["llm_relevance_reason"] or ""
+            ),
             "relevance_basis": paper["llm_relevance_basis"] or "",
             "page_url": paper["page_url"] or "",
             "pdf_url": paper["pdf_url"] or "",
