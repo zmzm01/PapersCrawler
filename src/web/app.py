@@ -42,7 +42,12 @@ from config import (
     DB_PATH, AUTO_REPORT_DIR, USER_REPORT_DIR,
     DATA_DIR, load_publishers,
 )
-from db.database import DataBaseDOINotExists, DatabaseClient
+from db.database import (
+    DataBaseDOINotExists,
+    DatabaseClient,
+    EFFECTIVE_RELEVANCE_CATEGORY_SQL,
+    LATEST_RELEVANCE_REVIEW_CTE,
+)
 
 app = FastAPI(title="PapersCrawler")
 
@@ -124,12 +129,18 @@ def _pipeline_status():
             phases[ps["label"]] = out
         # Only full-text-adjudicated papers with complete summaries are reportable.
         pending_report = db.conn.execute(
-            "SELECT COUNT(*) FROM papers "
-            "WHERE llm_summary_status = 'success' "
-            "  AND report_date IS NULL "
-            "  AND llm_relevance_status = 'success' "
-            "  AND llm_relevance_category IN ('A', 'B') "
-            "  AND llm_relevance_basis = 'fulltext'"
+            f"""
+            {LATEST_RELEVANCE_REVIEW_CTE}
+            SELECT COUNT(*)
+            FROM papers AS p
+            LEFT JOIN latest_relevance_review
+              ON latest_relevance_review.doi = p.doi
+            WHERE p.llm_summary_status = 'success'
+              AND p.report_date IS NULL
+              AND p.llm_relevance_status = 'success'
+              AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+              AND p.llm_relevance_basis = 'fulltext'
+            """
         ).fetchone()[0]
         return {
             "total": total,
@@ -195,30 +206,33 @@ async def pipeline_weekly_stats():
 
         day_start = days[0]["date"]
         day_end = days[-1]["date"]
-        rows = db.conn.execute("""
+        rows = db.conn.execute(f"""
+            {LATEST_RELEVANCE_REVIEW_CTE}
             SELECT
-              created_date AS day,
+              p.created_date AS day,
               COUNT(*) AS total,
-              SUM(CASE WHEN llm_summary_status = 'success'
-                             AND report_date IS NULL
-                             AND llm_relevance_status = 'success'
-                             AND llm_relevance_category IN ('A', 'B')
-                             AND llm_relevance_basis = 'fulltext'
+              SUM(CASE WHEN p.llm_summary_status = 'success'
+                             AND p.report_date IS NULL
+                             AND p.llm_relevance_status = 'success'
+                             AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+                             AND p.llm_relevance_basis = 'fulltext'
                        THEN 1 ELSE 0 END) AS reportable,
-              SUM(CASE WHEN publisher_page_fetched_status = 'failed'
+              SUM(CASE WHEN p.publisher_page_fetched_status = 'failed'
                        THEN 1 ELSE 0 END) AS publisher_failed,
-              SUM(CASE WHEN mineru_parse_status = 'failed'
+              SUM(CASE WHEN p.mineru_parse_status = 'failed'
                        THEN 1 ELSE 0 END) AS mineru_failed,
-              SUM(CASE WHEN llm_summary_status = 'failed'
+              SUM(CASE WHEN p.llm_summary_status = 'failed'
                        THEN 1 ELSE 0 END) AS summary_failed,
-              SUM(CASE WHEN publisher_page_fetched_status = 'failed'
-                        OR mineru_parse_status = 'failed'
-                        OR llm_summary_status = 'failed'
+              SUM(CASE WHEN p.publisher_page_fetched_status = 'failed'
+                        OR p.mineru_parse_status = 'failed'
+                        OR p.llm_summary_status = 'failed'
                        THEN 1 ELSE 0 END) AS total_failed
-            FROM papers
-            WHERE created_date >= ? AND created_date <= ?
-            GROUP BY created_date
-            ORDER BY created_date
+            FROM papers AS p
+            LEFT JOIN latest_relevance_review
+              ON latest_relevance_review.doi = p.doi
+            WHERE p.created_date >= ? AND p.created_date <= ?
+            GROUP BY p.created_date
+            ORDER BY p.created_date
         """, (day_start, day_end)).fetchall()
 
         day_map = {r["day"]: r for r in rows}
@@ -309,12 +323,14 @@ async def relevance_review_page(
     confidence: str = "all",
     disagreement: bool = False,
     search: str = "",
+    sort: str = "priority",
     page: int = 1,
     per_page: int = 50,
 ):
     """Render the manual relevance review queue."""
     page = max(1, page)
     per_page = per_page if per_page in (50, 100, 200) else 50
+    sort_by = sort if sort in ("priority", "summary") else "priority"
     offset = (page - 1) * per_page
     with DatabaseClient(DB_PATH) as db:
         db.init_db_papers()
@@ -324,6 +340,7 @@ async def relevance_review_page(
             confidence_filter=confidence,
             disagreement_only=disagreement,
             search_text=search,
+            sort_by=sort_by,
             limit=per_page,
             offset=offset,
         )

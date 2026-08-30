@@ -27,6 +27,7 @@ from processors.paper_report_generator import (
     _relevance_legend_html,
     _sort_papers,
 )
+from processors.report_snapshot import build_report_papers
 
 
 # ---- 测试数据 ----
@@ -483,6 +484,36 @@ def test_report_uses_relevance_first_sort():
     a_idx = md.find("## A-paper")
     b_idx = md.find("## B-paper")
     assert a_idx < b_idx, f"A 论文应在 B 前：A={a_idx} B={b_idx}"
+
+
+def test_report_snapshot_uses_manual_relevance_override():
+    """Report snapshots expose the effective category and human rationale."""
+    paper = {
+        "llm_summary_result": "{}",
+        "authors_json": "[]",
+        "llm_relevance_subfields": "[]",
+        "title": "Manually promoted paper",
+        "paperdate_crossref": "2026-08-30",
+        "paperdate_page": "",
+        "paperdate_rss": "",
+        "doi": "10.1234/manual",
+        "journal": "Journal",
+        "publisher": "Publisher",
+        "llm_relevance_category": "C",
+        "effective_relevance_category": "A",
+        "manual_relevance_decision": "A",
+        "manual_relevance_notes": "正文明确属于核心方向",
+        "llm_relevance_reason": "LLM 原始理由",
+        "llm_relevance_basis": "fulltext",
+        "page_url": "",
+        "pdf_url": "",
+        "abstract": "",
+        "llm_summary_status": "success",
+    }
+
+    snapshot = build_report_papers([paper])[0]
+    assert snapshot["relevance_category"] == "A"
+    assert snapshot["relevance_reason"] == "正文明确属于核心方向"
 
 
 # ---- 相关性元信息 ----

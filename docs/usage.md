@@ -193,7 +193,9 @@ TLS、认证、限速和访问源限制。临时调试才可将 uvicorn 改为 `
 
 审核队列只显示 E3 已完成全文终审的论文：`llm_relevance_status=success` 且 `llm_relevance_basis=fulltext`。默认优先未审核 B/中置信度、初筛/终审分歧和 A/中置信度记录。
 
-审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照，不覆盖 `papers` 原始结果。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
+审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照。最新人工审核结果作为有效相关性分类，覆盖 E3 的 LLM 分类：人工 A/B 可进入 Phase F 总结和报告，人工 C/D/uncertain 会阻止后续进入报告；未审核时仍使用 E3 分类。原始 LLM 字段保留用于追溯。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
+
+审核队列默认按审核优先级排列，也可在“排序”中选择“Summary 时间（新→旧）”；没有 Summary 时间的论文排在最后，便于先复核已经生成总结的记录。
 
 ## 典型工作流
 
@@ -645,7 +647,7 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 | `data/raw/` | RSS、页面和错误快照 |
 | `data/session_cached/` | Publisher 浏览器上下文 |
 
-报告资格：E3 `fulltext` + A/B + F summary success + 尚未 `report_date`。
+报告资格：E3 `fulltext` + 有效相关性分类 A/B（有最新人工审核时以人工决定为准）+ F summary success + 尚未 `report_date`。自动报告、用户选定报告和 `preview_report.py` 使用相同的有效分类规则。
 
 摘要清洗：RSS、CrossRef 和 Publisher 摘要进入数据库前会统一解码 HTML/XML 实体、移除
 控制字符并压缩空白；数据库初始化会幂等修复已有标题/摘要，报告快照生成时还会清洗一次历史数据。因此 IOP 摘要中的

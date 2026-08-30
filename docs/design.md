@@ -97,6 +97,10 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 | `data/mineru_output/.../full.md` | MinerU 全文，供 E3/F/人工审核读取 |
 
 人工审核不覆盖 `papers` 中的 LLM 原始结果；同一 DOI 的最新审核记录按最大 `id` 作为当前审核结果。
+报告与总结阶段使用“有效相关性分类”：没有人工审核时取 E3 的
+`llm_relevance_category`，有最新人工审核时取 `relevance_reviews.decision`。因此人工 A/B
+可使原本 C/D 的论文进入 Phase F/G，人工 C/D/uncertain 会阻止原本 A/B 的论文进入总结或报告；
+报告快照同时使用有效分类和人工备注（备注非空时）作为展示依据。
 
 ## 配置模型
 
@@ -167,7 +171,7 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
 
 ### 5. 报告分离
 
-报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；只有显式指定 `--export-public` 才会同步到公开站点。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
+报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；只有显式指定 `--export-public` 才会同步到公开站点。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
 
 ### 6. Phase F 总结 schema
 
@@ -222,10 +226,10 @@ WebUI 使用 FastAPI + Jinja2，当前页面如下：
 | Dashboard | `/dashboard` | 只读状态、阶段统计、7 日趋势 |
 | Papers | `/papers` | 只读论文列表、类别筛选、已总结筛选和分页 |
 | Report | `/report` | 只读报告查看和下载 |
-| Relevance Review | `/relevance-review` | 审核队列和筛选 |
+| Relevance Review | `/relevance-review` | 审核队列、分类筛选和 Summary 时间排序 |
 | Review Detail | `/relevance-review/{doi}` | 查看摘要/全文/LLM 结果并提交审核 |
 
-唯一写入端点是 `POST /api/relevance-reviews`，只接受固定决策值和长度受限的备注/审核人字段；审核目标必须是 E3 全文终审成功的记录，`uncertain` 以 schema 规定的小写形式保存。
+唯一写入端点是 `POST /api/relevance-reviews`，只接受固定决策值和长度受限的备注/审核人字段；审核目标必须是 E3 全文终审成功的记录，`uncertain` 以 schema 规定的小写形式保存。审核队列支持默认优先级和 Summary 时间（新到旧）两种排序，空 Summary 时间排在最后。
 
 安全边界：
 

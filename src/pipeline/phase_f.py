@@ -23,6 +23,15 @@ from processors.summary_schema import (
 logger = logging.getLogger(__name__)
 
 
+def _effective_relevance_category(paper):
+    """Return the latest human-overridden category when one is available."""
+    try:
+        effective_category = paper["effective_relevance_category"]
+    except (KeyError, IndexError):
+        effective_category = None
+    return effective_category or paper["llm_relevance_category"]
+
+
 def _fix_summary_with_formula_fixer(
     summary: dict,
     doi: str,
@@ -104,7 +113,7 @@ def phase_f_llm_summary(db):
 
     relevant_papers = [
         p for p in papers
-        if p["llm_relevance_category"] in ("A", "B")
+        if _effective_relevance_category(p) in ("A", "B")
     ]
 
     if not domain_config.get("scope_definition"):

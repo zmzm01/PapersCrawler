@@ -4,7 +4,7 @@
 <div class="review-page-header">
   <div>
     <h2>相关性人工审核</h2>
-    <p class="text-muted">只展示已经完成全文终审的论文。人工意见单独保存，不会覆盖 LLM 原始结果。</p>
+    <p class="text-muted">只展示已经完成全文终审的论文。人工意见会作为后续总结和报告的有效分类。</p>
   </div>
   <div class="review-stats">
     <span class="review-stat">待审核 <strong>{{ pending_count }}</strong></span>
@@ -39,6 +39,12 @@
   <label class="review-search">搜索
     <input type="search" name="search" value="{{ search_text }}" placeholder="标题或 DOI">
   </label>
+  <label>排序
+    <select name="sort">
+      <option value="priority" {% if sort_by == 'priority' %}selected{% endif %}>审核优先级</option>
+      <option value="summary" {% if sort_by == 'summary' %}selected{% endif %}>Summary 时间（新→旧）</option>
+    </select>
+  </label>
   <label class="review-check">
     <input type="checkbox" name="disagreement" value="true" {% if disagreement_only %}checked{% endif %}>
     初筛与终审不一致
@@ -56,6 +62,7 @@
       <th>论文</th>
       <th>初筛 → 终审</th>
       <th>置信度</th>
+      <th>Summary 时间</th>
       <th>人工结果</th>
       <th>依据</th>
     </tr>
@@ -79,6 +86,7 @@
         <span class="badge {% if paper.llm_relevance_category == 'A' %}badge-success{% elif paper.llm_relevance_category == 'B' %}badge-warning{% elif paper.llm_relevance_category == 'C' %}badge-skipped{% else %}badge-failed{% endif %}">{{ paper.llm_relevance_category or '—' }}</span>
       </td>
       <td>{{ paper.llm_relevance_confidence or '—' }}</td>
+      <td>{{ (paper.llm_summary_date or '—')[:19] }}</td>
       <td>
         {% if paper.review_decision %}
         <span class="badge badge-reviewed">{{ paper.review_decision }}</span>

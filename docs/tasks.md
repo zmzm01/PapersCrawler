@@ -2,13 +2,23 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-08-30：人工审核覆盖总结与报告筛选
+
+- 报告、报告预览和 Dashboard 的 reportable 统计统一使用有效相关性分类：无人工审核时采用 E3
+  分类，有最新人工审核时以人工 A/B/C/D/uncertain 为准；人工 C/D/uncertain 不再因已有 Summary
+  成功而进入报告，人工 A/B 可使原本 C/D 的论文进入后续总结和报告。
+- Phase F 待总结队列同步使用有效分类，避免无效论文继续消耗总结配额；报告快照展示人工分类，
+  非空人工备注优先作为判断理由。
+- WebUI 相关性审核队列新增 Summary 时间（新到旧）排序，未生成 Summary 的记录排在最后；补充
+  数据库、预览、报告快照和审核队列回归测试。
+
 ## 当前状态（2026-08-26）
 
 - 核心流水线为 A-RSS/A-CR → B → C → E → E2 → E3 → F → G → H。
 - 推荐运行入口为 `tools/run_pipeline.py`；旧入口仅兼容保留。
 - WebUI 当前提供 Dashboard、Papers、Report 和 Relevance Review。
 - WebUI 推荐由 systemd 用户级服务常驻管理；日常/每周流水线继续由 cron 调度。
-- E3 正文终审是报告硬门槛：必须 `fulltext`、A/B 且 F 总结成功。
+- E3 正文终审是报告硬门槛：必须 `fulltext`、有效 A/B 且 F 总结成功；有人工审核时以最新人工分类为准。
 - 自动运行结束最多发送一条 ntfy 汇总，详细错误写本地日志。
 
 ## 2026-08-29：静态 KaTeX 公式校验与 Prince PDF 导出
