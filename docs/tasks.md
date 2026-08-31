@@ -2,6 +2,17 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-08-31：统一错误记录与跨日通知修复
+
+- 新增 `common.format_error_for_record()`，各论文阶段将错误以 `异常类名: 消息` 的稳定格式写入
+  既有 error 列（最长 500 字符）；避免 LLM API、响应解析、上下文超限和未知异常在 Dashboard
+  中只剩模糊文本。Phase C 的无 page URL 也改为写入 `MissingPageURL`，不再只有 failed 状态。
+- 未知的 CrossRef、OpenAlex、E/F 和 FormulaFixer 异常记录 traceback；损坏的 settings、prompt、
+  publisher、keywords 配置会记录文件路径和 traceback，而不再静默退化。
+- ntfy 阶段识别修复了 `E`，并遍历开始日至结束日之间的全部日志文件，保证跨午夜运行的告警可见。
+- WebUI middleware 对未处理请求异常记录 method/path 与 traceback，只向客户端返回通用 500，避免
+  内部细节泄漏。
+
 ## 2026-08-30：OpenAlex 元数据 fallback 与全文候选解析
 
 - B 阶段形成 CrossRef → OpenAlex → Publisher 的字段级链路：CrossRef 非空字段优先，OpenAlex

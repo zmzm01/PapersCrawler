@@ -23,6 +23,7 @@ from common import (
     build_chat_completions_url,
     build_llm_endpoint_url,
     call_llm_api_with_retry,
+    format_error_for_record,
     fix_json_invalid_escapes,
 )
 
@@ -36,6 +37,14 @@ def test_clean_extracted_text_decodes_entities_and_controls():
 def test_clean_extracted_text_keeps_scientific_unicode_symbols():
     """Useful symbols such as degree and multiplication signs are preserved."""
     assert clean_extracted_text("181.7 MeV, 12◦, 5.5 × 10²⁰") == "181.7 MeV, 12◦, 5.5 × 10²⁰"
+
+
+def test_format_error_for_record_preserves_exception_class_and_bound():
+    """Persisted errors retain their stable class while remaining bounded."""
+    result = format_error_for_record(ValueError("x" * 600))
+
+    assert result.startswith("ValueError: ")
+    assert len(result) == 500
 
 
 @pytest.mark.parametrize(

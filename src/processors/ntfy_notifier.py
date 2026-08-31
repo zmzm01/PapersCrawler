@@ -159,7 +159,7 @@ def _phase_for_event(logger_name: str, message: str) -> str:
     text = f"{logger_name} {message}".lower()
     phase_match = re.search(
         r"(?:pipeline\.phase_|phase\s+)"
-        r"(a-rss|a-cr|[abc](?:2|3)?|e2|e3|f|g|h)",
+        r"(a-rss|a-cr|e3|e2|a|b|c|e|f|g|h)",
         text,
     )
     if phase_match:
@@ -217,11 +217,16 @@ def _current_log_events(result, log_dir: Path | None) -> list[dict[str, str]]:
     if log_dir is not None:
         start = result.started_at
         end = result.finished_at
-        for path in _log_paths(log_dir, start.date()):
-            for event in _parse_log_file(path):
-                timestamp = datetime.strptime(event["timestamp"], "%Y-%m-%d %H:%M:%S")
-                if start <= timestamp <= end:
-                    events.append(event)
+        log_date = start.date()
+        while log_date <= end.date():
+            for path in _log_paths(log_dir, log_date):
+                for event in _parse_log_file(path):
+                    timestamp = datetime.strptime(
+                        event["timestamp"], "%Y-%m-%d %H:%M:%S",
+                    )
+                    if start <= timestamp <= end:
+                        events.append(event)
+            log_date += timedelta(days=1)
 
     for phase in result.phase_results:
         if phase.status == "failed":

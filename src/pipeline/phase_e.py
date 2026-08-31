@@ -13,6 +13,7 @@ from common import (
     LLMCircuitBreaker,
     LLMServiceUnavailableError,
     clean_extracted_text,
+    format_error_for_record,
 )
 from processors.paper_relevance import (
     PaperRelevanceChecker,
@@ -172,19 +173,19 @@ def phase_e_llm_relevance(db):
                     continue
                 logger.warning(f"LLM relevance API error [{doi}]: {e}")
                 db.update_relevance_screen_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                 )
 
             except json.JSONDecodeError as e:
                 logger.warning(f"LLM non-JSON response [{doi}]: {e}")
                 db.update_relevance_screen_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                 )
 
             except Exception as e:
-                logger.error(f"LLM relevance error [{doi}]: {e}")
+                logger.exception("LLM relevance error [%s]", doi)
                 db.update_relevance_screen_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                 )
 
     if circuit_breaker.is_open:

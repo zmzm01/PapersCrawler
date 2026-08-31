@@ -490,7 +490,7 @@ def test_phase_c_processes_success_skips_and_retries(monkeypatch):
     database = FakeDB()
     phase_c.phase_c_publisher(database, [{"publisher": "fake", "enabled": True}])
     kinds = {action[0] for action in database.actions}
-    assert {"status", "skip", "delete", "success", "error"} <= kinds
+    assert {"skip", "delete", "success", "error"} <= kinds
 
 
 def test_phase_c_fallback_proxy_recovers(monkeypatch):

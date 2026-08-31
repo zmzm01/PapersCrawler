@@ -8,7 +8,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from config import CFG, DATA_DIR, load_keywords
-from common import LLMCircuitBreaker, LLMServiceUnavailableError
+from common import (
+    LLMCircuitBreaker,
+    LLMServiceUnavailableError,
+    format_error_for_record,
+)
 from db.database import FetchStatus
 from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
@@ -229,25 +233,25 @@ def phase_f_llm_summary(db):
                         continue
                     logger.warning(f"LLM summary API error [{doi}]: {e}")
                     db.update_llm_summary_error(
-                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                        doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                     )
 
                 except LLMContextLengthExceed as e:
                     logger.warning(f"LLM context length exceeded [{doi}]: {e}")
                     db.update_llm_summary_error(
-                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                        doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                     )
 
                 except json.JSONDecodeError as e:
                     logger.warning(f"LLM non-JSON response [{doi}]: {e}")
                     db.update_llm_summary_error(
-                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                        doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                     )
 
                 except Exception as e:
-                    logger.error(f"LLM summary error [{doi}]: {e}")
+                    logger.exception("LLM summary error [%s]", doi)
                     db.update_llm_summary_error(
-                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                        doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                     )
 
         for future in as_completed(formula_futures):
@@ -266,9 +270,9 @@ def phase_f_llm_summary(db):
                 )
                 success_count += 1
             except Exception as e:
-                logger.error("FormulaFixer summary error [%s]: %s", doi, e)
+                logger.exception("FormulaFixer summary error [%s]", doi)
                 db.update_llm_summary_error(
-                    doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    doi, format_error_for_record(e), FetchStatus.FAILED.value, timestamp,
                 )
     finally:
         if formula_executor is not None:
