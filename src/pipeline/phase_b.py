@@ -9,6 +9,7 @@ from datetime import datetime
 import requests
 
 from config import CFG
+from common import format_error_for_record
 from db.database import DatabaseClient, FetchStatus
 from sources.crossref import CrossrefClient, NotFoundError
 from sources.openalex import OpenAlexClient, OpenAlexNotFoundError
@@ -66,12 +67,15 @@ def _fetch_openalex_fallbacks(db, fallback_tasks):
             else:
                 status = FetchStatus.FAILED.value
                 logger.warning("OpenAlex fallback failed [%s]: %s", doi, error)
-            db.update_openalex_status(doi, status, str(error), timestamp)
+            db.update_openalex_status(
+                doi, status, format_error_for_record(error), timestamp,
+            )
     except Exception as error:
-        logger.warning("OpenAlex fallback batch failed: %s", error)
+        logger.exception("OpenAlex fallback batch failed")
         for doi, timestamp in fallback_tasks:
             db.update_openalex_status(
-                doi, FetchStatus.FAILED.value, str(error), timestamp,
+                doi, FetchStatus.FAILED.value,
+                format_error_for_record(error), timestamp,
             )
     finally:
         client.close()
@@ -159,7 +163,7 @@ def phase_b_crossref(db):
             db.update_error_message(
                 paperDOI, "cr_metadata_fetched_status",
                 FetchStatus.FAILED.value,
-                "cr_metadata_fetched_error", str(e),
+                "cr_metadata_fetched_error", format_error_for_record(e),
                 "cr_metadata_fetched_date", timestamp,
             )
             openalex_fallback_tasks.append((paperDOI, timestamp))
@@ -172,17 +176,17 @@ def phase_b_crossref(db):
             db.update_error_message(
                 paperDOI, "cr_metadata_fetched_status",
                 FetchStatus.FAILED.value,
-                "cr_metadata_fetched_error", str(e),
+                "cr_metadata_fetched_error", format_error_for_record(e),
                 "cr_metadata_fetched_date", timestamp,
             )
             openalex_fallback_tasks.append((paperDOI, timestamp))
 
         except Exception as e:
-            logger.error(f"CrossRef failed [{paperDOI}]: {e}")
+            logger.exception("CrossRef failed [%s]", paperDOI)
             db.update_error_message(
                 paperDOI, "cr_metadata_fetched_status",
                 FetchStatus.FAILED.value,
-                "cr_metadata_fetched_error", str(e),
+                "cr_metadata_fetched_error", format_error_for_record(e),
                 "cr_metadata_fetched_date", timestamp,
             )
             openalex_fallback_tasks.append((paperDOI, timestamp))

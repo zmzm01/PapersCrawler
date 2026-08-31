@@ -137,6 +137,30 @@ class LLMContextLengthExceed(Exception):
     """输入文本超长——超过模型上下文窗口限制。"""
 
 
+def format_error_for_record(error: BaseException, max_length: int = 500) -> str:
+    """Return a bounded, type-preserving error string for logs and storage.
+
+    Persisting only ``str(error)`` makes API failures, malformed responses,
+    and unexpected programming errors indistinguishable once they reach the
+    Dashboard or notification summary.  The exception class is stable enough
+    for those consumers while the message remains useful to an operator.
+
+    Parameters
+    ----------
+    error : BaseException
+        The exception to describe.
+    max_length : int, optional
+        Maximum returned character count.
+
+    Returns
+    -------
+    str
+        ``"ExceptionClass: message"`` truncated to ``max_length``.
+    """
+    message = str(error).strip() or "No error message provided"
+    return f"{type(error).__name__}: {message}"[:max_length]
+
+
 # ---------- LLM 调用工具 ----------
 
 _logger = logging.getLogger(__name__)

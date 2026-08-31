@@ -58,7 +58,21 @@ app = FastAPI(title="PapersCrawler")
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     """注入安全响应头防止 clickjacking / MIME sniffing / 信息泄露。"""
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "Unhandled WebUI request: method=%s path=%s",
+            request.method,
+            request.url.path,
+        )
+        if request.url.path.startswith("/pipeline/"):
+            response = JSONResponse(
+                {"ok": False, "detail": "Internal server error"},
+                status_code=500,
+            )
+        else:
+            response = HTMLResponse("Internal server error", status_code=500)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from config import CFG, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR
+from common import format_error_for_record
 from db.database import FetchStatus
 from pipeline.base import SCRAPER_MAP
 from processors.mineru_paper_parser import MinerUParser
@@ -339,7 +340,7 @@ def phase_e2_mineru(db):
                         else FetchStatus.FAILED.value
                     )
                     db.update_mineru_error(
-                        doi, str(e)[:500], terminal_status, timestamp,
+                        doi, format_error_for_record(e), terminal_status, timestamp,
                     )
                     if terminal_status == FetchStatus.FAILED.value:
                         failed_count += 1
@@ -357,7 +358,7 @@ def phase_e2_mineru(db):
                             doi,
                             "skipped" if failure_kind == "not_yet_published"
                             else "failed",
-                            str(e)[:500], diagnostics,
+                            format_error_for_record(e), diagnostics,
                         )
 
                 delay = random.uniform(

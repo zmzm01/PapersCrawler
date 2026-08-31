@@ -193,7 +193,11 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
 ### 5. 错误隔离与重试
 
 - Phase 级异常由 runner 收集并继续后续阶段。
-- 单篇异常写入对应 error 字段，不影响同阶段其他论文。
+- 单篇异常写入对应 error 字段，不影响同阶段其他论文。所有持久化异常使用
+  ``异常类名: 诊断消息`` 格式并限制为 500 字符，例如 ``LLMAPICallError: ...``、
+  ``JSONDecodeError: ...``；这样日志、Dashboard 和 ntfy 汇总无需猜测原始消息即可区分
+  API、响应解析和未知程序错误。预期业务结果（如无 Publisher URL）也写入稳定原因
+  ``MissingPageURL``，不会只留下 failed 状态。
 - CLI daily 默认重置普通 Publisher、MinerU 和 LLM 相关性的 failed 状态。Publisher 页面被
   Bot Manager/验证码拦截时，C 阶段将 `failure_kind` 记为 `bot_block`，递增重试次数并写入
   `retry_after`；daily 只在冷却结束且未达到 `publisher.bot_max_retries` 时自动重置，达到上限
@@ -333,7 +337,9 @@ Hugo 部署。无头服务器运行 Phase C 需要 `xvfb-run`。Astro 站点目�
 可覆盖日志目录，测试用例通过它写入临时目录，避免污染正式日志。旧的
 `data/PaperCrawler.log` 仅作为历史聚合日志保留，不再写入。运维通过
 `tools/log_report.py` 按日期、级别和关键词读取这些文件，避免依赖手工 grep；该工具
-只读日志，不改变流水线状态。
+只读日志，不改变流水线状态。未知单篇和阶段级异常使用带 traceback 的 ERROR 日志；配置文件
+读取失败同样记录配置路径和 traceback。ntfy 汇总按运行的完整日期范围读取日志，因此跨午夜
+运行不会漏报第二天的事件。
 
 ## 测试和迁移
 

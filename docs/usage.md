@@ -122,6 +122,12 @@ python tools/log_report.py --summary-only           # 只看总数、来源和�
 python tools/log_report.py --json > /tmp/log.json   # 给脚本继续处理
 ```
 
+错误会同时写入阶段日志和论文对应的数据库 error 字段。记录采用
+`异常类名: 诊断消息` 的格式，例如 `LLMAPICallError: LLM API 失败 (HTTP 429)`、
+`JSONDecodeError: ...` 或 `MissingPageURL: No publisher page URL`；Dashboard 与 ntfy
+据此展示可区分的类别。未知异常会保留 traceback；请勿把 API Key、Token 或完整鉴权请求复制到
+配置或自定义异常消息中。
+
 默认输出包括级别总数、产生问题最多的模块、重复消息和最近明细；终端会自动使用
 颜色突出错误，重定向或 `--json` 时不会混入颜色控制符。
 

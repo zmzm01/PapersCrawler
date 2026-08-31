@@ -140,6 +140,29 @@ def test_summary_reports_warning_type_and_failure_streak(tmp_path):
     assert "**E2 MinerU/PDF** · `10.1234/other` · 连续 **2 天** · **请关注**" in message
 
 
+def test_summary_classifies_phase_e_and_reads_cross_midnight_logs(tmp_path):
+    """Phase E and next-day warnings remain visible in the final summary."""
+    (tmp_path / "PaperCrawler-2026-08-17.log").write_text(
+        "2026-08-17 23:59:59 [WARNING] pipeline.phase_e: LLM request failed\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "PaperCrawler-2026-08-18.log").write_text(
+        "2026-08-18 00:00:01 [WARNING] pipeline.phase_f: LLM request failed\n",
+        encoding="utf-8",
+    )
+    result = PipelineRunResult(
+        mode="daily",
+        started_at=datetime(2026, 8, 17, 23, 59, 58),
+        finished_at=datetime(2026, 8, 18, 0, 0, 2),
+        metrics={"mineru_download_failures": []},
+    )
+
+    message = format_pipeline_summary(result, log_dir=tmp_path)
+
+    assert "### ❌ E LLM失败 · `1` 条" in message
+    assert "### ❌ F LLM失败 · `1` 条" in message
+
+
 def test_metrics_are_limited_to_current_run(tmp_path):
     """E/E3/F counters exclude older database history."""
     db = DatabaseClient(tmp_path / "metrics.db")

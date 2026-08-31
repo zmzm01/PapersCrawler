@@ -22,6 +22,7 @@ config.py
   - 用户可修改 configs/settings.yaml 和 configs/prompts/*.yaml 调整运行参数和提示词
 """
 
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -112,6 +113,9 @@ def load_settings():
         with open(path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     except Exception:
+        logging.getLogger(__name__).exception(
+            "Could not load settings configuration: %s", path
+        )
         return None
 
 
@@ -138,6 +142,7 @@ def load_prompt(name):
             return None
         return data.get("system_prompt", "")
     except Exception:
+        logging.getLogger(__name__).exception("Could not load prompt: %s", path)
         return None
 
 
@@ -609,6 +614,9 @@ def load_publishers():
             data = yaml.safe_load(f)
         return data.get("publishers", []) if data else []
     except Exception:
+        logging.getLogger(__name__).exception(
+            "Could not load publisher configuration: %s", path
+        )
         return []
 
 
@@ -644,6 +652,9 @@ def load_keywords():
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except Exception:
+        logging.getLogger(__name__).exception(
+            "Could not load keyword configuration: %s", path
+        )
         return empty
     if data is None:
         return empty

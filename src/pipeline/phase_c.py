@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timedelta
 
 from config import CFG
+from common import format_error_for_record
 from db.database import FetchStatus
 from pipeline.base import SCRAPER_MAP, create_scraper
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
@@ -307,10 +308,9 @@ def phase_c_publisher(db, publishers):
 
                 if not page_url:
                     logger.warning(f"No page URL, skipping: {paperDOI}")
-                    db.update_process_status(
-                        paperDOI, "publisher_page_fetched_status",
-                        FetchStatus.FAILED.value,
-                        "publisher_page_fetched_date", timestamp,
+                    _record_publisher_failure(
+                        db, paperDOI, "MissingPageURL: No publisher page URL",
+                        timestamp,
                     )
                     continue
 
@@ -613,7 +613,8 @@ def phase_c_publisher(db, publishers):
                     retry_count = _record_publisher_failure(
                         db,
                         paperDOI,
-                        error_msg,
+                        format_error_for_record(last_error)
+                        if last_error else error_msg,
                         timestamp,
                         failure_kind=failure_kind,
                         retry_after=retry_after,
