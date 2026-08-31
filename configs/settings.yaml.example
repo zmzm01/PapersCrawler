@@ -34,35 +34,33 @@ ntfy:
 # LLM API 配置
 # ---------------------------------------------------------------------------
 llm:
-  # 服务基础地址；各角色可选择 openai_chat、openai_responses 或
-  # anthropic_messages 协议。
-  # 可保留 /v1 路径前缀，程序会自动追加对应端点。
-  base_url: https://api.deepseek.com
+  # 推荐在 .env 的 LLM_BASE_URL 中配置服务地址；可填写 /v1 基础地址
+  # 或完整 /chat/completions endpoint。未设置时才使用代码内置回退。
 
-  # 相关性判断（Phase E）— 快速模型，不需深度思考
+  # 相关性判断（Phase E）— 高频初筛，使用低成本快速模型
   relevance:
     protocol: openai_chat
-    model: deepseek-v4-flash
+    model: Qwen/Qwen3.7-Flash
     thinking: disabled
     timeout: 300
 
-  # 论文总结（Phase F）— 更强模型，开启深度思考
+  # 论文总结（Phase F）— 中文结构化总结，兼顾质量与成本
   summary:
-    # Responses API 示例；若使用 OpenCode Muse Spark Contributor，使用该协议。
+    # Responses API 示例；如果网关提供 Responses 协议，可切换该角色。
     # protocol: openai_responses
-    # model: muse-spark-1.2-contributor
+    # model: meta/muse-spark-1.2-contributor
     protocol: openai_chat
-    model: deepseek-v4-pro
-    thinking: enabled
+    model: MiniMaxAI/MiniMax-M3
+    thinking: disabled
     timeout: 300
 
   # 正文相关性终审（Phase E3）— 强模型
   fulltext_relevance:
     protocol: openai_chat
-    model: deepseek-v4-pro
+    model: claude-sonnet-5
     thinking: enabled
     timeout: 300
-    evidence_max_chars: 60000
+    evidence_max_chars: 200000
 
   # 并发上限：Phase E/F 同时发起的 LLM 请求数
   concurrent_max: 100
@@ -72,6 +70,16 @@ fulltext_download:
   publisher_daily_max: 2
   delay_min_seconds: 30
   delay_max_seconds: 90
+
+openalex:
+  enabled: true
+  # Optional; prefer OPENALEX_API_KEY in .env.
+  api_key: ""
+  max_concurrency: 4
+  requests_per_second: 8
+  timeout_seconds: 30
+  max_attempts: 3
+  backoff_max_seconds: 30
 
 # ---------------------------------------------------------------------------
 # 流水线运行参数
@@ -99,6 +107,9 @@ publisher:
   page_delay_min: 3
   page_delay_max: 5
 
+  # 已有有效 CrossRef 摘要时跳过 Publisher 页面抓取
+  skip_if_crossref_abstract: true
+
   # 同 publisher 内连续抓取失败 N 篇后自动中止该 publisher
   max_consecutive_failures: 3
 
@@ -110,6 +121,11 @@ publisher:
   # 所有常规重试失败后，使用该代理新建浏览器上下文再尝试一次。
   # 留空表示关闭；代理 URL 只用于 Phase C 的末级 fallback。
   fallback_proxy_url: ""
+
+  # Bot Manager/验证码失败的自动重试策略；达到次数后隔离，日常任务不再重试。
+  # 需要人工验证时使用 tools/run_pipeline.py --retry-bot-blocks。
+  bot_retry_cooldown_hours: 72
+  bot_max_retries: 3
 
 # ---------------------------------------------------------------------------
 # FormulaFixer 公式修复
@@ -125,7 +141,7 @@ formula_fix:
   max_repair_rounds: 1
   llm:
     protocol: openai_chat
-    model: deepseek-v4-flash
+    model: Qwen/Qwen3.7-Flash
     thinking: disabled
     max_tokens: 4096
     timeout: 120

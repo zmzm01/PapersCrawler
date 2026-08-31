@@ -11,11 +11,11 @@ For selective phase execution, use pipeline/runner.run_phases().
 import os
 
 from config import DATA_DIR
-from logging_config import configure_logging
+from logging_config import configure_logging, resolve_log_dir
 
 configure_logging(
     os.getenv("LOG_LEVEL", "DEBUG"),
-    DATA_DIR / "logs",
+    resolve_log_dir(DATA_DIR / "logs"),
 )
 
 from pipeline.runner import run_pipeline

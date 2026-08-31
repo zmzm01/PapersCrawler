@@ -39,6 +39,7 @@ db.py
     → Phase G: 报告生成 (使用 get_papers_for_report())
 """
 
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -125,8 +126,12 @@ class DatabaseClient:
     _VALID_STATUS_COLUMNS = frozenset({
         "cr_metadata_fetched_status", "cr_metadata_fetched_error",
         "cr_metadata_fetched_date",
+        "openalex_metadata_fetched_status", "openalex_metadata_fetched_error",
+        "openalex_metadata_fetched_date",
         "publisher_page_fetched_status", "publisher_page_fetched_error",
         "publisher_page_fetched_date",
+        "publisher_page_retry_count", "publisher_page_retry_after",
+        "publisher_page_failure_kind",
         "llm_relevance_status", "llm_relevance_error",
         "llm_relevance_date",
         "llm_summary_status", "llm_summary_error", "llm_summary_date",
@@ -270,10 +275,21 @@ class DatabaseClient:
             cr_metadata_fetched_error TEXT,
             cr_metadata_fetched_date TEXT,
 
+            -- OpenAlex fallback metadata status
+            openalex_metadata_fetched_status TEXT DEFAULT 'pending',
+            openalex_metadata_fetched_error TEXT,
+            openalex_metadata_fetched_date TEXT,
+            openalex_id TEXT,
+            abstract_source TEXT,
+            metadata_provenance_json TEXT,
+
             -- Publisher 页面抓取状态
             publisher_page_fetched_status TEXT DEFAULT 'pending',
             publisher_page_fetched_error TEXT,
             publisher_page_fetched_date TEXT,
+            publisher_page_retry_count INTEGER DEFAULT 0,
+            publisher_page_retry_after TEXT,
+            publisher_page_failure_kind TEXT,
 
             -- LLM 相关性判断
             llm_relevance_status TEXT DEFAULT 'pending',
@@ -339,9 +355,35 @@ class DatabaseClient:
             local_date TEXT NOT NULL,
             attempted_at TEXT NOT NULL,
             status TEXT NOT NULL,
-            error TEXT
+            error TEXT,
+            location_source TEXT,
+            route TEXT,
+            requested_url TEXT,
+            final_url TEXT,
+            http_status INTEGER,
+            content_type TEXT,
+            failure_kind TEXT,
+            details_json TEXT
         )
         """)
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS paper_fulltext_locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doi TEXT NOT NULL,
+            url TEXT NOT NULL,
+            source TEXT NOT NULL,
+            version TEXT,
+            is_oa INTEGER DEFAULT 0,
+            license TEXT,
+            priority INTEGER DEFAULT 100,
+            discovered_at TEXT NOT NULL,
+            UNIQUE(doi, url)
+        )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fulltext_locations_doi "
+            "ON paper_fulltext_locations(doi, priority, id)"
+        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_download_events_date "
             "ON fulltext_download_events(local_date)"
@@ -370,6 +412,15 @@ class DatabaseClient:
         )
         self.conn.commit()
 
+        for col_def in [
+            "location_source TEXT", "route TEXT", "requested_url TEXT",
+            "final_url TEXT", "http_status INTEGER", "content_type TEXT",
+            "failure_kind TEXT", "details_json TEXT",
+        ]:
+            self._add_column_if_missing(
+                col_def, table_name="fulltext_download_events",
+            )
+
         # ---- 迁移: 为旧数据库添加 MinerU 列 (如果不存在) ----
         # SQLite 3.35.0+ 支持 ALTER TABLE ADD COLUMN IF NOT EXISTS
         mineru_columns = [
@@ -382,12 +433,32 @@ class DatabaseClient:
         for col_def in mineru_columns:
             self._add_column_if_missing(col_def)
 
+        # ---- 迁移: OpenAlex fallback metadata columns ----
+        for col_def in [
+            "openalex_metadata_fetched_status TEXT DEFAULT 'pending'",
+            "openalex_metadata_fetched_error TEXT",
+            "openalex_metadata_fetched_date TEXT",
+            "openalex_id TEXT",
+            "abstract_source TEXT",
+            "metadata_provenance_json TEXT",
+        ]:
+            self._add_column_if_missing(col_def)
+
         # ---- 迁移: 为旧数据库添加报告状态列 ----
         report_columns = [
             "report_status TEXT DEFAULT 'pending'",
             "report_date TEXT",
         ]
         for col_def in report_columns:
+            self._add_column_if_missing(col_def)
+
+        # ---- 迁移: Publisher Bot 阻断重试状态列 ----
+        # 这些列只记录 Phase C 的反爬失败，不改变已有论文状态语义。
+        for col_def in [
+            "publisher_page_retry_count INTEGER DEFAULT 0",
+            "publisher_page_retry_after TEXT",
+            "publisher_page_failure_kind TEXT",
+        ]:
             self._add_column_if_missing(col_def)
 
         # ---- 迁移: 为旧数据库添加发现来源列 ----
@@ -420,13 +491,15 @@ class DatabaseClient:
         self.migrate_relevance_screen_snapshot()
         self.normalize_metadata_text()
 
-    def _add_column_if_missing(self, column_definition):
+    def _add_column_if_missing(self, column_definition, table_name="papers"):
         """Add a schema column, ignoring only duplicate-column errors.
 
         Parameters
         ----------
         column_definition : str
             Column name followed by its SQLite type/default declaration.
+        table_name : str
+            Existing table to migrate.
 
         Raises
         ------
@@ -435,8 +508,10 @@ class DatabaseClient:
             existing.
         """
         try:
+            if table_name not in {"papers", "fulltext_download_events"}:
+                raise ValueError(f"Unsupported migration table: {table_name}")
             self.conn.execute(
-                f"ALTER TABLE papers ADD COLUMN {column_definition}"
+                f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"
             )
         except sqlite3.OperationalError as error:
             if "duplicate column name" not in str(error).lower():
@@ -604,7 +679,8 @@ class DatabaseClient:
         """
         if skip_crossref_abstract:
             query += """AND NOT (
-                cr_metadata_fetched_status = 'success'
+                (cr_metadata_fetched_status = 'success'
+                 OR openalex_metadata_fetched_status = 'success')
                 AND abstract IS NOT NULL AND abstract != ''
             )"""
         cur = self.conn.execute(query, (publisher,))
@@ -744,7 +820,8 @@ class DatabaseClient:
     # Phase B: CrossRef 元数据更新
     # ==================================================================
 
-    def update_crossref_metadata(self, doi, title, authors_json, published, abstract=""):
+    def update_crossref_metadata(self, doi, title, authors_json, published,
+                                 abstract="", fulltext_links=None):
         """
         Phase B 专用: 用 CrossRef 返回的元数据更新数据库记录。
 
@@ -770,16 +847,158 @@ class DatabaseClient:
             )
         title = clean_extracted_text(title) or ""
         abstract = clean_extracted_text(abstract) or ""
+        existing_row = self.conn.execute(
+            "SELECT metadata_provenance_json FROM papers "
+            "WHERE LOWER(doi) = LOWER(?)", (doi,),
+        ).fetchone()
+        try:
+            provenance = json.loads(
+                existing_row["metadata_provenance_json"] or "{}"
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            provenance = {}
+        if title:
+            provenance["title"] = "crossref"
+        if authors_json and authors_json not in ("[]", "null"):
+            provenance["authors"] = "crossref"
+        if published:
+            provenance["published"] = "crossref"
+        if abstract:
+            provenance["abstract"] = "crossref"
         self.conn.execute(
             """
             UPDATE papers
-            SET title = ?, authors_json = ?, paperdate_crossref = ?,
-                abstract = CASE WHEN ? != '' THEN ? ELSE abstract END
+            SET title = CASE WHEN ? != '' THEN ? ELSE title END,
+                authors_json = CASE
+                    WHEN ? NOT IN ('', '[]', 'null') THEN ? ELSE authors_json END,
+                paperdate_crossref = CASE
+                    WHEN ? != '' THEN ? ELSE paperdate_crossref END,
+                abstract = CASE WHEN ? != '' THEN ? ELSE abstract END,
+                abstract_source = CASE WHEN ? != '' THEN 'crossref'
+                    ELSE abstract_source END,
+                metadata_provenance_json = ?
             WHERE doi = ?
             """,
-            (title, authors_json, published, abstract, abstract, doi),
+            (title, title, authors_json, authors_json, published, published,
+             abstract, abstract, abstract,
+             json.dumps(provenance, ensure_ascii=False), doi),
         )
         self.conn.commit()
+        if fulltext_links:
+            self.add_fulltext_locations(doi, fulltext_links, "crossref")
+
+    def update_openalex_metadata(self, doi, metadata, status_date,
+                                 fulltext_locations=None):
+        """Merge OpenAlex metadata into fields missing from Crossref/RSS.
+
+        Parameters
+        ----------
+        doi : str
+            Existing paper DOI.
+        metadata : object or dict
+            Normalized OpenAlex metadata.
+        status_date : str
+            Fetch timestamp.
+        fulltext_locations : list of dict, optional
+            Candidate locations to persist.
+        """
+        if not self.paper_doi_exists(doi):
+            raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
+        if isinstance(metadata, dict):
+            get_value = metadata.get
+        else:
+            get_value = lambda key, default=None: getattr(metadata, key, default)
+        authors = get_value("authors")
+        authors_json = json.dumps(authors, ensure_ascii=False) if authors else None
+        abstract = clean_extracted_text(get_value("abstract")) or ""
+        existing_row = self.conn.execute(
+            "SELECT title, authors_json, journal, paperdate_crossref, abstract, "
+            "metadata_provenance_json FROM papers WHERE LOWER(doi) = LOWER(?)",
+            (doi,),
+        ).fetchone()
+        try:
+            provenance = json.loads(existing_row["metadata_provenance_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            provenance = {}
+        if not existing_row["abstract"] and abstract:
+            provenance["abstract"] = "openalex"
+        if not existing_row["title"] and get_value("title"):
+            provenance["title"] = "openalex"
+        if not existing_row["authors_json"] and authors_json:
+            provenance["authors"] = "openalex"
+        if not existing_row["journal"] and get_value("journal"):
+            provenance["journal"] = "openalex"
+        if not existing_row["paperdate_crossref"] and get_value("published"):
+            provenance["published"] = "openalex"
+        self.conn.execute(
+            """UPDATE papers SET
+                title = CASE WHEN COALESCE(title, '') = '' THEN ? ELSE title END,
+                authors_json = CASE WHEN COALESCE(authors_json, '') IN ('', '[]', 'null')
+                    THEN ? ELSE authors_json END,
+                journal = CASE WHEN COALESCE(journal, '') = '' THEN ? ELSE journal END,
+                paperdate_crossref = CASE
+                    WHEN COALESCE(paperdate_crossref, '') = '' THEN ?
+                    ELSE paperdate_crossref END,
+                abstract = CASE WHEN COALESCE(abstract, '') = '' AND ? != ''
+                    THEN ? ELSE abstract END,
+                abstract_source = CASE WHEN COALESCE(abstract, '') = '' AND ? != ''
+                    THEN 'openalex' ELSE abstract_source END,
+                openalex_id = ?, metadata_provenance_json = ?
+                WHERE LOWER(doi) = LOWER(?)""",
+            (get_value("title"), authors_json, get_value("journal"),
+             get_value("published"), abstract, abstract, abstract,
+             get_value("openalex_id"), json.dumps(provenance), doi),
+        )
+        self.conn.commit()
+        if fulltext_locations is None:
+            fulltext_locations = get_value("locations")
+        if fulltext_locations:
+            self.add_fulltext_locations(doi, fulltext_locations, "openalex")
+
+    def update_openalex_status(self, doi, status, error, status_date):
+        """Persist the independent OpenAlex fetch status for a paper."""
+        self.update_process_status(
+            doi, "openalex_metadata_fetched_status", status,
+            "openalex_metadata_fetched_date", status_date,
+        )
+        self.conn.execute(
+            "UPDATE papers SET openalex_metadata_fetched_error = ? "
+            "WHERE LOWER(doi) = LOWER(?)", (str(error)[:500] if error else None, doi)
+        )
+        self.conn.commit()
+
+    def add_fulltext_locations(self, doi, locations, source=None):
+        """Store deduplicated full-text URL candidates for a paper."""
+        now = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()
+        for offset, location in enumerate(locations or []):
+            if isinstance(location, str):
+                location = {"url": location}
+            url = location.get("url") or location.get("pdf_url")
+            if not url or "content.openalex.org" in url:
+                continue
+            location_source = location.get("source") or source or "unknown"
+            self.conn.execute(
+                """INSERT OR IGNORE INTO paper_fulltext_locations
+                   (doi, url, source, version, is_oa, license, priority,
+                    discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (doi.lower(), url, location_source, location.get("version"),
+                 int(bool(location.get("is_oa"))), location.get("license"),
+                 int(location.get("priority", offset + {
+                     "crossref": 0,
+                     "openalex": 20,
+                     "publisher": 40,
+                 }.get(location_source, 60))), now),
+            )
+        self.conn.commit()
+
+    def get_fulltext_locations(self, doi):
+        """Return full-text candidates ordered by resolver priority."""
+        rows = self.conn.execute(
+            """SELECT url, source, version, is_oa, license, priority
+               FROM paper_fulltext_locations
+               WHERE LOWER(doi) = LOWER(?) ORDER BY priority, id""", (doi,)
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # ==================================================================
     # Phase C: Publisher 页面信息更新
@@ -816,16 +1035,151 @@ class DatabaseClient:
             """
             UPDATE papers
             SET abstract = CASE WHEN ? != '' THEN ? ELSE abstract END,
+                abstract_source = CASE
+                    WHEN ? != '' AND COALESCE(abstract, '') = ''
+                    THEN 'publisher' ELSE abstract_source END,
                 authors_json = ?, pdf_url = ?,
                 paperdate_page = ?,
                 publisher_page_fetched_status = ?,
-                publisher_page_fetched_date = ?
+                publisher_page_fetched_date = ?,
+                publisher_page_fetched_error = NULL,
+                publisher_page_retry_count = 0,
+                publisher_page_retry_after = NULL,
+                publisher_page_failure_kind = NULL
             WHERE doi = ?
             """,
-            (abstract, abstract, authors_json, pdf_url, paperdate_page,
+            (abstract, abstract, abstract, authors_json, pdf_url, paperdate_page,
              status, status_date, doi),
         )
         self.conn.commit()
+
+    def record_publisher_page_failure(
+            self, doi, error, status_date, failure_kind=None,
+            retry_after=None):
+        """Record a Publisher failure and its retry/quarantine metadata.
+
+        Parameters
+        ----------
+        doi : str
+            DOI of the paper being updated.
+        error : str
+            Human-readable failure message.
+        status_date : str
+            Failure timestamp.
+        failure_kind : str, optional
+            Stable failure class. ``"bot_block"`` enables cooldown and
+            quarantine handling; other values are treated as ordinary
+            retryable failures.
+        retry_after : str, optional
+            Earliest timestamp for the next automatic retry.
+
+        Returns
+        -------
+        int
+            The consecutive Bot-block failure count after this update, or
+            ``0`` for a non-Bot failure.
+        """
+        if not self.paper_doi_exists(doi):
+            raise DataBaseDOINotExists(f"DOI {doi} not found in DB.")
+
+        row = self.conn.execute(
+            """
+            SELECT publisher_page_retry_count, publisher_page_failure_kind
+            FROM papers WHERE LOWER(doi) = LOWER(?)
+            """,
+            (doi,),
+        ).fetchone()
+        previous_count = int(row["publisher_page_retry_count"] or 0)
+        previous_kind = row["publisher_page_failure_kind"]
+        if failure_kind == "bot_block":
+            retry_count = (
+                previous_count + 1
+                if previous_kind == "bot_block" else 1
+            )
+        else:
+            retry_count = 0
+            retry_after = None
+
+        self.conn.execute(
+            """
+            UPDATE papers
+            SET publisher_page_fetched_status = ?,
+                publisher_page_fetched_error = ?,
+                publisher_page_fetched_date = ?,
+                publisher_page_retry_count = ?,
+                publisher_page_retry_after = ?,
+                publisher_page_failure_kind = ?
+            WHERE LOWER(doi) = LOWER(?)
+            """,
+            (
+                FetchStatus.FAILED.value,
+                str(error)[:500],
+                status_date,
+                retry_count,
+                retry_after,
+                failure_kind,
+                doi,
+            ),
+        )
+        self.conn.commit()
+        return retry_count
+
+    def reset_retryable_publisher_pages(
+            self, bot_max_retries, force_bot_blocks=False):
+        """Reset failed Publisher pages that are eligible for retry.
+
+        Ordinary failures remain retryable on the next run. Bot-blocked
+        papers are reset only after their persisted cooldown and before the
+        configured retry limit; once the limit is reached they stay failed
+        until ``force_bot_blocks`` is requested. Legacy rows whose error text
+        already says ``bot block`` are treated as quarantined as well.
+
+        Parameters
+        ----------
+        bot_max_retries : int
+            Maximum automatic Bot-block retries before quarantine.
+        force_bot_blocks : bool, optional
+            Reset Bot-block rows regardless of cooldown or quarantine.
+
+        Returns
+        -------
+        int
+            Number of rows reset to ``pending``.
+        """
+        max_retries = max(1, int(bot_max_retries))
+        conditions = ["publisher_page_fetched_status = 'failed'"]
+        parameters = []
+        if not force_bot_blocks:
+            conditions.append(
+                """
+                (
+                    (
+                        COALESCE(publisher_page_failure_kind, '')
+                            != 'bot_block'
+                        AND LOWER(COALESCE(publisher_page_fetched_error, ''))
+                            NOT LIKE '%bot block%'
+                    )
+                    OR (
+                        publisher_page_failure_kind = 'bot_block'
+                        AND COALESCE(publisher_page_retry_count, 0) < ?
+                        AND (
+                            publisher_page_retry_after IS NULL
+                            OR publisher_page_retry_after <= ?
+                        )
+                    )
+                )
+                """,
+            )
+            parameters.extend([
+                max_retries,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ])
+
+        query = "UPDATE papers SET publisher_page_fetched_status = 'pending'"
+        query += " WHERE " + " AND ".join(conditions)
+        cur = self.conn.execute(query, tuple(parameters))
+        self.conn.commit()
+        return cur.rowcount
 
     def update_publisher_pdf_url(self, doi, pdf_url):
         """
@@ -1211,12 +1565,13 @@ class DatabaseClient:
         try:
             self.conn.execute("BEGIN IMMEDIATE")
             total = self.conn.execute(
-                "SELECT COUNT(*) FROM fulltext_download_events WHERE local_date = ?",
+                "SELECT COUNT(*) FROM fulltext_download_events "
+                "WHERE local_date = ? AND status != 'skipped'",
                 (local_date,),
             ).fetchone()[0]
             source = self.conn.execute(
                 "SELECT COUNT(*) FROM fulltext_download_events "
-                "WHERE local_date = ? AND publisher = ?",
+                "WHERE local_date = ? AND publisher = ? AND status != 'skipped'",
                 (local_date, publisher or "__unknown__"),
             ).fetchone()[0]
             already_claimed = self.conn.execute(
@@ -1243,13 +1598,28 @@ class DatabaseClient:
             self.conn.rollback()
             raise
 
-    def finish_fulltext_download(self, doi, status, error=None):
-        """Update the most recent reservation for ``doi``."""
+    def finish_fulltext_download(self, doi, status, error=None, details=None):
+        """Update the most recent reservation for ``doi``.
+
+        Parameters
+        ----------
+        details : dict, optional
+            Structured transport diagnostics persisted as JSON columns.
+        """
+        details = details or {}
+        import json
         self.conn.execute(
-            """UPDATE fulltext_download_events SET status = ?, error = ?
+            """UPDATE fulltext_download_events SET status = ?, error = ?,
+               location_source = ?, route = ?, requested_url = ?,
+               final_url = ?, http_status = ?, content_type = ?,
+               failure_kind = ?, details_json = ?
                WHERE id = (SELECT id FROM fulltext_download_events
                            WHERE doi = ? ORDER BY id DESC LIMIT 1)""",
-            (status, error, doi),
+            (status, error, details.get("location_source"), details.get("route"),
+             details.get("requested_url"), details.get("final_url"),
+             details.get("http_status"), details.get("content_type"),
+             details.get("failure_kind"), json.dumps(details, ensure_ascii=False),
+             doi),
         )
         self.conn.commit()
 
@@ -1523,6 +1893,7 @@ class DatabaseClient:
             SET mineru_fulltext = ?,
                 mineru_output_dir = ?,
                 mineru_parse_status = ?,
+                mineru_parse_error = NULL,
                 mineru_parse_date = ?
             WHERE doi = ?
             """,

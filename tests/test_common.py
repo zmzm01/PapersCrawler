@@ -86,6 +86,28 @@ def test_build_llm_endpoint_url_preserves_explicit_responses_endpoint():
     assert build_llm_endpoint_url(endpoint, LLM_PROTOCOL_OPENAI_RESPONSES) == endpoint
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "protocol", "expected_url"),
+    [
+        (
+            "https://api.commandcode.ai/provider/v1/chat/completions",
+            LLM_PROTOCOL_OPENAI_CHAT,
+            "https://api.commandcode.ai/provider/v1/chat/completions",
+        ),
+        (
+            "https://api.commandcode.ai/provider/v1/chat/completions",
+            LLM_PROTOCOL_OPENAI_RESPONSES,
+            "https://api.commandcode.ai/provider/v1/responses",
+        ),
+    ],
+)
+def test_build_llm_endpoint_url_accepts_full_chat_endpoint(
+    endpoint, protocol, expected_url,
+):
+    """An endpoint in .env can be reused when a role changes protocol."""
+    assert build_llm_endpoint_url(endpoint, protocol) == expected_url
+
+
 # ---- fix_json_invalid_escapes ----
 
 def test_fix_escapes_valid_json_unchanged():

@@ -39,7 +39,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config import DATA_DIR, AUTO_REPORT_DIR, USER_REPORT_DIR  # noqa: E402
 from pipeline.phase_h import phase_h_email  # noqa: E402
 from config import load_email_recipients  # noqa: E402
-from logging_config import configure_logging  # noqa: E402
+from logging_config import configure_logging, resolve_log_dir  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,11 @@ def _setup_logging(log_level: str) -> None:
     log_level : str
         日志级别（DEBUG / INFO / WARNING / ERROR）。
     """
-    configure_logging(log_level, DATA_DIR / "logs", default_level=logging.INFO)
+    configure_logging(
+        log_level,
+        resolve_log_dir(DATA_DIR / "logs"),
+        default_level=logging.INFO,
+    )
 
 
 def _find_report_file(filename: str) -> Path | None:

@@ -50,7 +50,7 @@ report-site/
 | 阶段 | 作用 | 主要输出 |
 |---|---|---|
 | A-RSS / A-CR | RSS 和 CrossRef 双源发现 | DOI、标题、链接、发现来源 |
-| B | CrossRef 元数据补全 | 作者、日期、期刊、摘要 |
+| B | CrossRef → OpenAlex 元数据补全 | 作者、日期、期刊、摘要、全文候选 |
 | C | Publisher 页面抓取 | 页面摘要、正文链接、PDF 链接 |
 | E | 标题/摘要高召回初筛 | `relevance_screen_*` |
 | E2 | 受持久化配额保护的 PDF 下载和 MinerU 解析 | `mineru_*`、`full.md` |
@@ -83,6 +83,11 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 - E3：`llm_relevance_status/category/confidence/reason/basis`。
 - F：`llm_summary_status/error/date/result`。
 - G：`report_status`、`report_date`。
+- Publisher 重试控制：`publisher_page_retry_count`、`publisher_page_retry_after`、
+  `publisher_page_failure_kind`。Bot Manager/验证码失败使用这三个字段做冷却和隔离；
+  旧记录仍可由错误文本中的 `bot block` 识别。
+- OpenAlex 状态：`openalex_metadata_fetched_*`；字段来源记录在
+  `abstract_source` 与 `metadata_provenance_json`。
 
 状态通常为 `pending`、`success`、`failed` 或 `skipped`。新增字段通过 `DatabaseClient.init_db_papers()` 渐进迁移。
 
@@ -91,6 +96,7 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 | 名称 | 用途 |
 |---|---|
 | `fulltext_download_events` | 每日/每出版社 PDF 尝试配额审计，失败也占额 |
+| `paper_fulltext_locations` | Crossref/OpenAlex/Publisher 全文候选地址及来源优先级 |
 | `relevance_reviews` | 追加式人工审核记录，保存结论、备注、审核人及 LLM 快照 |
 | `skipped_dois` | 永久跳过的非研究文章 DOI |
 | `data/email.yaml` | Phase H 收件人配置 |
@@ -108,7 +114,7 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 
 | 文件 | 内容 |
 |---|---|
-| `.env` | API Key、MinerU Token、CrossRef 邮箱、SMTP 和 ntfy topic/token |
+| `.env` | LLM endpoint/API Key、模型目录 URL、MinerU Token、CrossRef 邮箱、SMTP 和 ntfy topic/token |
 | `configs/settings.yaml` | 阶段开关、模型、配额、延迟、重试、邮件、通知 |
 | `configs/publishers.yaml` | 期刊、RSS、ISSN、Publisher 和启用状态 |
 | `configs/keywords.yaml` | `context_gates`、`irrelevant_fields`、`keyword_catalog`、`scope_definition` |
@@ -128,7 +134,9 @@ LLM 调用在 `common.call_llm_api_with_retry` 统一执行重试、熔断和响
 - `openai_responses` 将 system 消息转换为 `instructions`、其余消息转换为 `input`，发送到 `/responses`，并从 `output_text` 或 `output[].content[].text` 提取回答；`response_format` 转换为 Responses API 的 `text.format`。
 - `anthropic_messages` 将 system 消息拆为顶层 `system`，发送 `max_tokens` 和 `messages` 到 `/messages`，并从 `content` 文本块提取回答。
 
-协议适配层负责请求头（Bearer 或 `x-api-key`）、端点和响应结构转换，因此模型名称不会散落在代码中形成特殊分支。Responses 与 Messages 的思考参数不直接发送 OpenAI Chat 的 `thinking` 字段；Responses 可选用 `reasoning_effort`。Anthropic Messages 不支持 OpenAI 的 `response_format`，结构化任务继续由 Prompt 约束 JSON；思考块只在提取文本时被忽略。严格 JSON 的任务默认使用 `thinking: disabled`，而需要推理时可按协议配置。
+协议适配层负责请求头（Bearer 或 `x-api-key`）、端点和响应结构转换，因此模型名称不会散落在代码中形成特殊分支。`LLM_BASE_URL` 优先从 `.env` 读取，可填写 `/v1` 基础地址或完整的 `/chat/completions` endpoint；若角色切换协议，适配层会先去除已有端点后再追加目标路径。`LLM_MODEL_LIST` 是可选的模型目录 endpoint，供用户查询可用模型，流水线不会因目录请求失败而中断。Responses 与 Messages 的思考参数不直接发送 OpenAI Chat 的 `thinking` 字段；Responses 可选用 `reasoning_effort`。Anthropic Messages 不支持 OpenAI 的 `response_format`，结构化任务继续由 Prompt 约束 JSON；思考块只在提取文本时被忽略。严格 JSON 的任务默认使用 `thinking: disabled`，而需要推理时可按协议配置。
+
+当前 Command Code 配置使用其 OpenAI-compatible Chat Completions endpoint，并按任务分层选择模型：Phase E 高频初筛使用低成本快速的 `Qwen/Qwen3.7-Flash`，Phase E3 正文终审使用更强且适合长上下文推理的 `claude-sonnet-5`，Phase F 中文结构化总结使用兼顾质量与成本的 `MiniMaxAI/MiniMax-M3`，FormulaFixer 使用 `Qwen/Qwen3.7-Flash` 处理短文本修复。模型均采用服务返回的精确 ID，可在 `.env` 的 `LLM_MODEL_LIST` endpoint 查询；更换 Provider 时只需替换 endpoint、API Key 和角色模型，不需要修改处理器代码。高频角色关闭思考以降低延迟和输出成本，全文终审保留思考以提高边界案例判定质量。
 
 LLM 文本进入 JSON 解析前还会做一次边界清洗：提取 Markdown ` ```json ... ``` ` 或前后夹杂说明中的 JSON 对象，修复常见的裸 LaTeX 反斜杠和字符串内英文引号，再交给标准 JSON 解析器。该兼容层只修复明确的格式问题，无法替代模型输出校验；解析失败仍会按单篇错误隔离并保留 pending/failed 状态。
 
@@ -152,28 +160,55 @@ FormulaFixer 是 Phase F 总结后的可选文本后处理，不复用相关性�
 
 E 只用标题和摘要做高召回筛选。A/B/C 和低置信 D 进入 E2/E3；高/中置信 D 直接终止。E3 使用全文作最终判断，避免摘要降级入报。
 
-### 2. 关键词不是单独的过滤器
+人工审核是 E3 之后的可选覆盖层。审核记录采用追加式审计，按同一 DOI 的最大 `id` 取最新决定；
+Phase F 的待总结查询、Phase G 自动/用户选定报告查询以及预览报告均复用有效分类，避免人工降级后
+仍因历史 Summary 成功而进入报告。
+
+### 2. CrossRef 摘要优先与延迟页面访问
+
+Publisher 页面不是相关性初筛的硬依赖。若 B 阶段已经成功写入有效 CrossRef 摘要，C 阶段默认
+跳过该论文的浏览器访问；E 直接使用摘要完成初筛。只有 E2 需要 PDF 且数据库没有 `pdf_url`
+时，才对这类论文执行延迟页面访问，尝试补齐 PDF 链接。全局开关为
+`publisher.skip_if_crossref_abstract`，特殊 Scraper 可在类级别声明不适用。
+
+CrossRef 请求失败或任一关键字段（标题、作者、日期、摘要）缺失时，B 阶段对同一 DOI 查询 OpenAlex singleton Work。OpenAlex 只补充数据库
+中缺失的字段，不覆盖 CrossRef 非空值；`abstract_inverted_index` 会重建为纯文本摘要。两者
+都没有摘要时才进入 Publisher Scraper。CrossRef `link` 和 OpenAlex 外部 OA locations 会进入
+`paper_fulltext_locations`，默认排除 `content.openalex.org` 托管下载。Phase C 摘要代理与
+Phase E2 PDF 路由隔离：E2 启动无代理浏览器，HTTP Session 设置 `trust_env=False`，强制使用
+机构网络出口；多个候选地址按来源优先级依次尝试。
+
+元数据合并采用非空覆盖：CrossRef 空字段不擦除 RSS 已有信息，OpenAlex 仅填空。OpenAlex
+网络查询按配置并发执行，数据库合并仍在主线程串行完成。E2 后续成功时清除先前的 MinerU
+错误，避免状态与错误信息矛盾。
+
+### 3. 关键词不是单独的过滤器
 
 术语目录与领域化筛选分离。这样 `plasma`、`diagnostics`、`EMP` 等多义词不会因为一次字符串命中直接进入报告；目录负责可见性和审计，`context_gates`、`irrelevant_fields` 和 `scope_definition` 负责语境、主贡献和分类。
 
-### 3. 全文下载配额
+### 4. 全文下载配额
 
-E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自然日限制总尝试数和单 Publisher 尝试数。同一 DOI 当天最多尝试一次，失败也计入配额。
+E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自然日限制总尝试数和单 Publisher 尝试数。同一 DOI 当天最多进行一次实际下载，失败也计入配额；重定向后才确认的 Accepted Paper 记为 `skipped/not_yet_published`，不计入配额。
 
-### 4. 错误隔离与重试
+### 5. 错误隔离与重试
 
 - Phase 级异常由 runner 收集并继续后续阶段。
 - 单篇异常写入对应 error 字段，不影响同阶段其他论文。
-- CLI daily 默认重置 Publisher、MinerU 和 LLM 相关性的 failed 状态。
+- CLI daily 默认重置普通 Publisher、MinerU 和 LLM 相关性的 failed 状态。Publisher 页面被
+  Bot Manager/验证码拦截时，C 阶段将 `failure_kind` 记为 `bot_block`，递增重试次数并写入
+  `retry_after`；daily 只在冷却结束且未达到 `publisher.bot_max_retries` 时自动重置，达到上限
+  后保持隔离，不再无限重复启动浏览器。历史错误文本含 `bot block` 的旧记录也按隔离处理。
+  `tools/run_pipeline.py --retry-bot-blocks` 可显式绕过冷却和隔离，并仅让已标记为 Bot 阻断的论文
+  绕过摘要短路，执行一次人工强制重试；其他已有摘要的论文仍保持短路。
 - Publisher 支持 Cloudflare challenge reload、失败熔断、持久化浏览器上下文和 HTML 错误快照；常规抓取重试耗尽后，可用 `publisher.fallback_proxy_url` 启动独立代理上下文再尝试一次。`BasePublisherScraper` 在构造时初始化空 HTML，错误快照优先使用缓存内容，并在页面/事件循环已关闭时跳过 live content 读取，确保导航在生成页面内容前失败时不会被二次快照异常遮蔽。`import_local_pdf.py` 将 PDF 落盘和 MinerU 状态重置作为一次明确提交的数据库操作。
 - LLM 请求支持指数退避和 circuit breaker。
 - LLM 支持按角色切换 OpenAI Chat Completions 与 Anthropic Messages 协议；HTTP 4xx 错误会保留有限长度的服务端响应正文，便于定位网关参数不兼容。
 
-### 5. 报告分离
+### 6. 报告分离
 
 报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；只有显式指定 `--export-public` 才会同步到公开站点。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
 
-### 6. Phase F 总结 schema
+### 7. Phase F 总结 schema
 
 Phase F 将 LLM 返回值规范化为 `summary_schema` v3 后再写入
 `llm_summary_result`。顶层固定为 `one_sentence`、`motivation_and_goal`、
@@ -294,7 +329,8 @@ Hugo 部署。无头服务器运行 Phase C 需要 `xvfb-run`。Astro 站点目�
 
 日志由 `src/logging_config.py` 统一配置，按自然日写入
 `data/logs/PaperCrawler-YYYY-MM-DD.log`；单日文件使用 10MB 大小上限并保留一个
-备份，旧日志默认保留 14 天。`LOG_LEVEL` 控制日志级别。旧的
+备份，旧日志默认保留 14 天。`LOG_LEVEL` 控制日志级别；`PAPERSCRAWLER_LOG_DIR`
+可覆盖日志目录，测试用例通过它写入临时目录，避免污染正式日志。旧的
 `data/PaperCrawler.log` 仅作为历史聚合日志保留，不再写入。运维通过
 `tools/log_report.py` 按日期、级别和关键词读取这些文件，避免依赖手工 grep；该工具
 只读日志，不改变流水线状态。

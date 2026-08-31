@@ -54,6 +54,17 @@ def test_download_quota_persists_failed_attempts_and_publisher_limit(db):
     ).fetchone()[0] == 3
 
 
+def test_accepted_paper_audit_does_not_consume_quota(db):
+    """A post-redirect Accepted Paper remains audited but frees capacity."""
+    assert db.claim_fulltext_download("10/x/accepted", "aps", 1, 1)
+    db.finish_fulltext_download(
+        "10/x/accepted", "skipped", "not_yet_published: Accepted Paper",
+        {"failure_kind": "not_yet_published"},
+    )
+
+    assert db.claim_fulltext_download("10/x/published", "aps", 1, 1)
+
+
 def test_failed_download_history_keeps_doi_and_local_date(db):
     """MinerU failure history exposes DOI-level dates for alerting."""
     db.conn.execute(

@@ -102,10 +102,11 @@ class BasePublisherScraper:
     http_fallback_strategy: str = "fallback"
 
     # ── Phase C 跳过配置 ──
-    # 设为 True 时，Phase C 会检查该 publisher 的论文是否已从 CrossRef 获取到
-    # 有效摘要，若是则跳过浏览器访问（减少反爬消耗、加速 Pipeline）。
-    # Optica (OA) 使用此优化，其他 publisher 默认为 False。
-    skip_phase_c_if_crossref_abstract: bool = False
+    # 默认情况下，Phase C 会检查论文是否已有有效 CrossRef 摘要；有摘要时
+    # 直接跳过浏览器访问，减少反爬消耗并加速 Pipeline。全局行为由
+    # ``publisher.skip_if_crossref_abstract`` 控制，特殊 Publisher 可将此类
+    # 属性覆盖为 False，声明页面仍是其唯一可靠元数据来源。
+    skip_phase_c_if_crossref_abstract: bool = True
 
     # ── PDF 下载时是否从文章页提取同域 PDF 链接 ──
     # 仅 APS 需要：其 citation_pdf_url 是 link.aps.org 跨域重定向链接，
@@ -139,6 +140,7 @@ class BasePublisherScraper:
         # Keep the latest HTML available even when navigation fails before
         # ``fetch_page`` can capture page.content().
         self.html = ""
+        self.last_download_diagnostics = {}
 
     def start_browser(self, proxy=None):
         """启动 Chromium 浏览器（通过 cloakbrowser）。
@@ -649,6 +651,9 @@ class BasePublisherScraper:
         try:
             cookies = self.context.cookies()
             session = py_requests.Session()
+            # PDF retrieval must use the institution's network exit.  Never
+            # inherit HTTP(S)_PROXY used by Phase C abstract scraping.
+            session.trust_env = False
             for c in cookies:
                 # requests 的 cookie 需要 domain 与目标主机匹配才会发送；
                 # domain 为空的 cookie 设置后也不会生效，直接跳过。
@@ -663,6 +668,13 @@ class BasePublisherScraper:
                 "Referer": page_url or "",
             })
             resp = session.get(pdf_url, timeout=timeout_sec)
+            self.last_download_diagnostics = {
+                "route": "requests_direct",
+                "requested_url": pdf_url,
+                "final_url": resp.url,
+                "http_status": resp.status_code,
+                "content_type": resp.headers.get("Content-Type", ""),
+            }
             resp.raise_for_status()
             return resp.content
         except Exception as err:
@@ -690,6 +702,15 @@ class BasePublisherScraper:
             resp = self.context.request.get(
                 pdf_url, headers=headers, timeout=timeout,
             )
+            self.last_download_diagnostics = {
+                "route": "browser_context_direct",
+                "requested_url": pdf_url,
+                "final_url": getattr(resp, "url", pdf_url),
+                "http_status": getattr(resp, "status", None),
+                "content_type": (getattr(resp, "headers", {}) or {}).get(
+                    "content-type", ""
+                ),
+            }
             return resp.body()
         except Exception as err:
             logger.debug(f"Context request download failed ({err})")
@@ -708,6 +729,10 @@ class BasePublisherScraper:
             bytes: PDF 字节流，失败返回 None。
         """
         logger = logging.getLogger(__name__)
+        self.last_download_diagnostics = {
+            "requested_url": pdf_url,
+            "route": "publisher_browser_direct",
+        }
         try:
             with self.page.expect_download(timeout=timeout) as download_info:
                 self.page.goto(
@@ -756,9 +781,15 @@ class BasePublisherScraper:
         # 先在论文页面建立上下文（referrer / cookie / session）
         if page_url:
             logger.debug(f"访问论文页面建立上下文: {page_url}")
-            self.page.goto(page_url, wait_until="domcontentloaded",
-                           timeout=max(timeout, 120000))
-            self.page.wait_for_timeout(15000)
+            try:
+                self.page.goto(page_url, wait_until="domcontentloaded",
+                               timeout=max(timeout, 120000))
+                self.page.wait_for_timeout(15000)
+            except Exception as error:
+                # A DOI landing page may timeout or be blocked while the
+                # actual PDF endpoint is still reachable.  Keep trying the
+                # supplied PDF URL instead of aborting the whole chain.
+                logger.warning("论文页预热失败，继续尝试 PDF URL: %s", error)
 
             # 仅 APS 需要：从文章页提取同域 PDF 直链，改写 link.aps.org
             # 跨域重定向链接（其他 publisher 关闭，避免误选配图链接）。
@@ -785,6 +816,15 @@ class BasePublisherScraper:
                 if on_page_url:
                     logger.debug(f"页面中找到同域 PDF 链接: {on_page_url}")
                     pdf_url = on_page_url
+
+        # Accepted Papers intentionally have no published PDF.  Check both
+        # the requested and the post-redirect URL, plus the visible marker.
+        final_url = getattr(self.page, "url", "") or ""
+        page_text = (self.html or "").lower()
+        if "/accepted/" in final_url.lower() or "/accepted/" in str(pdf_url).lower():
+            raise RuntimeError("not_yet_published: Accepted Paper has no PDF")
+        if "accepted paper" in page_text and not self._is_pdf_bytes(None):
+            raise RuntimeError("not_yet_published: Accepted Paper has no PDF")
 
         logger.debug(f"下载 PDF: {pdf_url}")
         try:

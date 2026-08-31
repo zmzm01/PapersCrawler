@@ -38,6 +38,8 @@
 
 参数 ``--reset-publisher`` / ``--reset-mineru`` / ``--reset-relevance`` 控制是否在运行前
 自动重置失败的 Publisher 抓取、MinerU 解析和 LLM 相关性判断（默认均开启）。
+Publisher Bot 阻断失败遵循冷却和隔离策略；需要人工立即重试时使用
+``--retry-bot-blocks``。
 """
 
 import argparse
@@ -66,7 +68,7 @@ from processors.ntfy_notifier import (  # noqa: E402
     NtfyNotifier,
     format_pipeline_summary,
 )
-from logging_config import configure_logging  # noqa: E402
+from logging_config import configure_logging, resolve_log_dir  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +161,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="不重置失败的 LLM 相关性判断",
     )
     parser.add_argument(
+        "--retry-bot-blocks",
+        action="store_true",
+        help="强制重试被 Bot Manager/验证码隔离的 Publisher 页面",
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default=os.getenv("LOG_LEVEL", "DEBUG"),
@@ -177,10 +184,15 @@ def _setup_logging(log_level: str) -> None:
     log_level : str
         日志级别（DEBUG / INFO / WARNING / ERROR）。
     """
-    configure_logging(log_level, DATA_DIR / "logs")
+    configure_logging(log_level, resolve_log_dir(DATA_DIR / "logs"))
 
 
-def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: bool, dry_run: bool) -> None:
+def _run_auto_reset(
+        reset_publisher: bool,
+        reset_mineru: bool,
+        reset_relevance: bool,
+        dry_run: bool,
+        force_publisher_retry: bool = False) -> None:
     """自动重置失败的论文状态，使其重新进入待处理队列。
 
     Parameters
@@ -193,6 +205,8 @@ def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: 
         是否重置失败的 LLM 相关性判断。
     dry_run : bool
         干跑模式不实际执行。
+    force_publisher_retry : bool, optional
+        是否绕过 Bot 阻断的冷却和隔离状态，强制重试。
     """
     if dry_run:
         logger.info(
@@ -205,12 +219,21 @@ def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: 
     reset_db.init_db_papers()
 
     if reset_publisher:
-        count = reset_db.batch_reset_status(
-            [("publisher_page_fetched_status", "pending")],
-            "publisher_page_fetched_status = 'failed'",
+        count = reset_db.reset_retryable_publisher_pages(
+            CFG.PUBLISHER_BOT_MAX_RETRIES,
+            force_bot_blocks=force_publisher_retry,
         )
         if count:
-            logger.info("Auto-reset %d failed publisher pages for retry", count)
+            logger.info(
+                "Auto-reset %d retryable publisher pages%s",
+                count,
+                (
+                    " (including forced Bot blocks)"
+                    if force_publisher_retry else ""
+                ),
+            )
+        elif force_publisher_retry:
+            logger.info("No failed publisher pages available for forced retry")
     else:
         logger.info("Auto-reset publisher: disabled")
 
@@ -244,7 +267,9 @@ def _run_auto_reset(reset_publisher: bool, reset_mineru: bool, reset_relevance: 
         logger.info("Auto-reset relevance: disabled")
 
 
-def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru, reset_relevance):
+def _dry_run_summary(
+        phase_list, force, reset_publisher, reset_mineru, reset_relevance,
+        force_publisher_retry=False):
     """打印干跑模式摘要。
 
     Parameters
@@ -256,6 +281,7 @@ def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru, reset_rel
     reset_publisher : bool
     reset_mineru : bool
     reset_relevance : bool
+    force_publisher_retry : bool, optional
     """
     logger.info("Would run phases: %s", phase_list)
 
@@ -270,8 +296,10 @@ def _dry_run_summary(phase_list, force, reset_publisher, reset_mineru, reset_rel
     logger.info("Force mode: %s", force)
 
     logger.info(
-        "Would reset: publisher=%s, mineru=%s, relevance=%s",
+        "Would reset: publisher=%s, mineru=%s, relevance=%s, "
+        "force_bot_blocks=%s",
         reset_publisher, reset_mineru, reset_relevance,
+        force_publisher_retry,
     )
 
 
@@ -347,28 +375,46 @@ def main(argv=None) -> int:
     # 执行
     if args.dry_run:
         if args.phases is not None:
-            _dry_run_summary(phase_list, force, args.reset_publisher, args.reset_mineru, args.reset_relevance)
+            _dry_run_summary(
+                phase_list, force, args.reset_publisher,
+                args.reset_mineru, args.reset_relevance,
+                args.retry_bot_blocks,
+            )
         elif args.all or (not args.daily and not args.weekly and args.phases is None):
             # --all 或默认模式下使用 run_pipeline(force=True)
             logger.info("Would run: run_pipeline(force=True) — all phases")
             _dry_run_summary(
                 list(_PHASE_KEY_MAP.keys()), True,
                 args.reset_publisher, args.reset_mineru, args.reset_relevance,
+                args.retry_bot_blocks,
             )
         elif args.daily:
-            _dry_run_summary(DAILY_PHASES, False, args.reset_publisher, args.reset_mineru, args.reset_relevance)
+            _dry_run_summary(
+                DAILY_PHASES, False, args.reset_publisher,
+                args.reset_mineru, args.reset_relevance,
+                args.retry_bot_blocks,
+            )
         elif args.weekly:
-            _dry_run_summary(WEEKLY_PHASES, False, args.reset_publisher, args.reset_mineru, args.reset_relevance)
+            _dry_run_summary(
+                WEEKLY_PHASES, False, args.reset_publisher,
+                args.reset_mineru, args.reset_relevance,
+                args.retry_bot_blocks,
+            )
         # 不调用 auto-reset
         logger.info("Dry-run mode — no changes were made")
         return 0
 
     result = None
+    previous_force_bot_retry = getattr(
+        CFG, "PUBLISHER_FORCE_BOT_RETRY", False,
+    )
+    CFG.PUBLISHER_FORCE_BOT_RETRY = args.retry_bot_blocks
     try:
         # 自动重置
         _run_auto_reset(
             args.reset_publisher, args.reset_mineru, args.reset_relevance,
             dry_run=False,
+            force_publisher_retry=args.retry_bot_blocks,
         )
 
         # 实际运行
@@ -393,6 +439,7 @@ def main(argv=None) -> int:
             mode = "custom"
         result = PipelineRunResult.failed_run(mode, error)
     finally:
+        CFG.PUBLISHER_FORCE_BOT_RETRY = previous_force_bot_retry
         # A notifier outage is contained by NtfyNotifier. This is the only
         # notification call in the automatic execution path.
         if result is not None:

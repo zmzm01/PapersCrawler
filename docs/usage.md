@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 
 # 编辑 .env，至少填写：
-# CROSSREF_MAILTO / MINERU_TOKEN / DEEPSEEK_API_KEY
+# CROSSREF_MAILTO / MINERU_TOKEN / LLM_BASE_URL / LLM_API_KEY
 vim configs/keywords.yaml
 
 # 桌面环境
@@ -54,6 +54,7 @@ xvfb-run -a python tools/run_pipeline.py --all
 |---|---|
 | `--dry-run` | 只显示计划 |
 | `--reset-publisher` / `--no-reset-publisher` | 是否自动重置 Publisher failed |
+| `--retry-bot-blocks` | 绕过 Bot Manager/验证码失败的冷却和隔离，强制重试 |
 | `--reset-mineru` / `--no-reset-mineru` | 是否自动重置 MinerU failed/skipped |
 | `--reset-relevance` / `--no-reset-relevance` | 是否自动重置 E/E3 failed |
 | `--log-level LEVEL` | DEBUG/INFO/WARNING/ERROR |
@@ -78,6 +79,17 @@ skip_phases:
 
 `--daily` 和 `--weekly` 遵守这些开关；`--all` 忽略它们。每阶段处理上限由 `pipeline.max_papers_per_phase` 控制，按整个阶段计算而不是按 Publisher 重置，0 表示不限制。
 
+### OpenAlex 元数据补全
+
+Phase B 对 CrossRef 请求失败，或标题、作者、日期、摘要任一关键字段缺失的 DOI 使用 OpenAlex singleton 查询。
+查询不下载 OpenAlex 托管 PDF；只合并缺失字段，并将外部 OA 地址作为全文候选。默认最多 4
+并发、8 requests/s，429/5xx 自动退避。可在 `configs/settings.yaml` 调整 `openalex.enabled`、
+`max_concurrency`、`requests_per_second`、`timeout_seconds`、`max_attempts` 和
+`backoff_max_seconds`；可选的 `OPENALEX_API_KEY` 放在 `.env`。CrossRef/OpenAlex 任何一个
+已有有效摘要时，Phase C 均会跳过 Publisher 页面；E2 的 PDF 下载始终使用校园网直连，不
+继承摘要阶段代理或系统代理。
+CrossRef 的空字段不会覆盖 RSS 已有值；OpenAlex 同样只填补仍为空的字段。
+
 ### Cron
 
 ```cron
@@ -92,6 +104,12 @@ skip_phases:
 日志按自然日写入 `data/logs/PaperCrawler-YYYY-MM-DD.log`，单日文件达到 10MB
 后最多保留一个 `.1` 备份，默认保留最近 14 天。旧的 `data/PaperCrawler.log`
 是历史聚合日志，不再作为新入口的写入目标。设置 `LOG_LEVEL=INFO` 可减少输出。
+如需临时改变日志目录（例如测试或诊断），设置 `PAPERSCRAWLER_LOG_DIR`；未设置时仍使用
+`data/logs/`。测试套件会自动将该变量指向临时目录，不会把测试输出写入正式日志。
+
+```bash
+PAPERSCRAWLER_LOG_DIR=/tmp/paperscrawler-logs python tools/run_pipeline.py --daily --dry-run
+```
 
 不需要手工 `cat`/`grep` 时，直接运行日志统计工具：
 
@@ -220,6 +238,31 @@ python tools/reset_pipeline.py reset-publisher --publisher aps
 python tools/run_pipeline.py --all
 ```
 
+Phase C 默认对所有 Publisher 生效：只要 CrossRef 已成功返回非空摘要，就跳过页面浏览器访问；
+摘要仍可直接供 Phase E 使用，需要 PDF 时再由 Phase E2 延迟访问页面补齐链接。若某个特殊
+Publisher 必须依赖页面元数据，可在对应 Scraper 类中关闭该能力。
+
+Bot Manager、验证码等反爬页面会被标记为 `bot_block`，记录连续失败次数和下一次重试时间。
+daily 的自动重置只处理冷却已结束且尚未达到 `publisher.bot_max_retries` 的记录；达到上限后
+进入隔离，不再每天重复启动浏览器。现有历史错误文本中含 `bot block` 的记录也按隔离处理。
+需要立即重新验证时使用：
+
+```bash
+python tools/run_pipeline.py --daily --retry-bot-blocks
+```
+
+该参数只让明确标记为 Bot 阻断的论文绕过 CrossRef 摘要短路；其他已有摘要的论文仍不会
+启动 Publisher 浏览器。
+
+相关配置（默认冷却 72 小时、最多自动重试 3 次）：
+
+```yaml
+publisher:
+  skip_if_crossref_abstract: true
+  bot_retry_cooldown_hours: 72
+  bot_max_retries: 3
+```
+
 Cloudflare/Radware 或早期导航失败时先查看 `data/raw/page/error/` 和同一时间段的 `data/logs/PaperCrawler-YYYY-MM-DD.log`，再调整 `publisher.page_delay_*`、`publisher.proxy` 或挑战页 reload 参数。错误快照是诊断辅助；即使浏览器在页面 HTML 生成前失败，日志也应保留原始导航异常，而不是被快照保存错误覆盖。若 fallback 浏览器已经关闭，快照保存会只使用此前缓存的 HTML，不再调用已关闭页面的 `content()`。
 
 Phase C 的常规浏览器重试全部失败后，还可以配置一个末级代理 fallback。该 fallback 会用新浏览器上下文重试当前论文一次；成功会写入正常成功状态，失败仍按原错误流程落库。代理 URL 为空时关闭：
@@ -239,7 +282,7 @@ python tools/run_pipeline.py --phases E2,E3,F
 ```
 
 导入工具会先校验并复制 PDF，再将对应 DOI 的 `mineru_parse_status` 设为 `pending`、清空旧错误和日期，并立即提交事务；正常输出应包含 `数据库状态已更新 ... 影响行数=1`。导入的 PDF 会被 E2 校验并直接复用，即使数据库中的 `pdf_url` 为空也不再触发下载失败；只有没有合法本地 PDF 时才要求网络 PDF URL。
-Optica 通常需要代理；APS 会尝试改写跨域 PDF 链接。失败尝试会消耗当日 E2 配额。
+Optica 的摘要页面通常需要代理；APS 会尝试改写跨域 PDF 链接。PDF 始终使用校园网直连。实际下载失败会消耗当日 E2 配额，Accepted Paper 则记录为尚未出版并释放配额。
 
 ### 预览报告
 
@@ -334,7 +377,11 @@ python3 tools/evaluate_relevance.py --db data/papers.db
 |---|---|
 | `CROSSREF_MAILTO` | CrossRef API 联系邮箱 |
 | `MINERU_TOKEN` | MinerU Token |
-| `DEEPSEEK_API_KEY` | 默认 LLM API Key |
+| `LLM_BASE_URL` | LLM 服务地址；可填 `/v1` 基础地址或完整 `/chat/completions` endpoint |
+| `LLM_MODEL_LIST` | 可选的 `/models` 目录 endpoint，用于查询可用模型 |
+| `LLM_API_KEY` | LLM API Key |
+| `DEEPSEEK_API_KEY` | 旧版兼容变量；仅在未设置 `LLM_API_KEY` 时使用 |
+| `PAPERSCRAWLER_LOG_DIR` | 可选日志目录覆盖；测试默认自动指向临时目录 |
 | `SMTP_HOST/PORT/USE_TLS` | SMTP 连接 |
 | `SMTP_USERNAME/PASSWORD` | SMTP 凭据 |
 | `SMTP_FROM_ADDR` | 发件人 |
@@ -348,35 +395,48 @@ python3 tools/evaluate_relevance.py --db data/papers.db
 | 组 | 关键字段 |
 |---|---|
 | `skip_phases` | A_RSS、A_CR、B、C、E、E2、E3、F、G、H |
-| `llm` | base_url、relevance、fulltext_relevance、summary、concurrent_max、retry |
+| `llm` | 可选 base_url 回退、relevance、fulltext_relevance、summary、concurrent_max、retry |
 | `fulltext_download` | daily_max、publisher_daily_max、delay_min/max_seconds |
 | `pipeline` | CrossRef 回溯、处理上限、Nature 过滤、非研究过滤、解释页开关 |
-| `publisher` | 页面延迟、失败熔断、challenge reload、常规 proxy、末级 fallback proxy URL |
+| `publisher` | 页面延迟、CrossRef 摘要短路、失败熔断、Bot 阻断冷却/隔离、challenge reload、常规 proxy、末级 fallback proxy URL |
 | `email` | 模板名 |
 | `formula_fix` | skip、force、concurrent_max、llm |
 | `ntfy` | enabled、timeout、title、priority |
 
 #### LLM 协议与模型配置
 
-`llm.base_url` 是服务基础地址；每个角色可以通过 `protocol` 选择请求协议：
+`LLM_BASE_URL` 是优先级最高的服务地址配置；每个角色可以通过 `protocol` 选择请求协议。`base_url` 仍可写在 `settings.yaml` 作为没有环境变量时的回退，但生产配置建议放在 `.env`。地址既可以是 `/v1` 基础地址，也可以是完整 `/chat/completions` endpoint。
 
 - `openai_chat`：发送到 `/chat/completions`，兼容 OpenAI、DeepSeek 及多数网关。
 - `openai_responses`：发送到 `/responses`，使用 Responses API 的 `instructions`、`input`、`text.format` 和 `output` 响应结构；适用于 OpenCode Zen 的 Muse Spark Contributor。
 - `anthropic_messages`：发送到 `/messages`，使用 `x-api-key`、`anthropic-version` 和 Anthropic Messages 响应格式。
 
-配置支持全局 `llm.protocol`，也支持在 `relevance`、`fulltext_relevance`、`summary` 中分别覆写。下面是 OpenCode Go 使用 MiniMax M3 的示例：
+配置支持全局 `llm.protocol`，也支持在 `relevance`、`fulltext_relevance`、`summary` 中分别覆写。Command Code 的 `.env` 示例：
+
+```dotenv
+LLM_BASE_URL=https://api.commandcode.ai/provider/v1/chat/completions
+LLM_MODEL_LIST=https://api.commandcode.ai/provider/v1/models
+LLM_API_KEY=your-command-code-api-key
+```
+
+对应的角色配置示例：
 
 ```yaml
 llm:
-  base_url: https://opencode.ai/zen/go/v1
   relevance:
     protocol: openai_chat
-    model: mimo-v2.5
+    model: Qwen/Qwen3.7-Flash
   summary:
     protocol: openai_chat
-    model: minimax-m3
+    model: MiniMaxAI/MiniMax-M3
     thinking: disabled
     max_tokens: 65536
+
+  fulltext_relevance:
+    protocol: openai_chat
+    model: claude-sonnet-5
+    thinking: enabled
+    evidence_max_chars: 200000
 
 formula_fix:
   skip: false
@@ -385,7 +445,7 @@ formula_fix:
   max_repair_rounds: 1
   llm:
     protocol: openai_chat
-    model: mimo-v2.5
+    model: Qwen/Qwen3.7-Flash
     thinking: disabled
     max_tokens: 4096
     timeout: 120
@@ -411,7 +471,7 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 
 模型返回值在标准 JSON 解析前会自动提取 ` ```json ... ``` ` 围栏或前后夹杂说明中的 JSON 对象，并兼容常见的裸 LaTeX 反斜杠和字符串内英文引号。若仍解析失败，查看日志中的 `Invalid escape` 或 `LLM non-JSON response`，该篇不会污染其他论文的状态。
 
-如果使用 Muse Spark Contributor，summary 角色改为 `protocol: openai_responses`、模型 `muse-spark-1.2-contributor`；endpoint 为 `https://opencode.ai/zen/go/v1/responses`。若只写 `base_url: https://opencode.ai/zen/go/v1`，程序会按角色自动追加对应端点。若日志出现 HTTP 403，先确认当前角色、模型和 endpoint 是否匹配；若 HTTP 200 后出现 `Invalid escape`，则查看 JSON 解析兼容层日志。
+如果使用其他 OpenAI-compatible 网关，只需替换 `.env` 中的 `LLM_BASE_URL`、`LLM_API_KEY` 和角色模型 ID。若角色配置使用 `openai_responses` 或 `anthropic_messages`，程序会根据协议把已配置的 `/chat/completions` endpoint 规范化为对应路径。若日志出现 HTTP 401/403，先确认 API Key、角色模型和 endpoint 是否匹配；若 HTTP 200 后出现 `Invalid escape`，则查看 JSON 解析兼容层日志。
 
 ### 期刊和研究范围
 

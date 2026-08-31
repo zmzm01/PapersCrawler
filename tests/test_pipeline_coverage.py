@@ -346,6 +346,7 @@ def test_phase_b_all_error_classes(monkeypatch):
     class FakeDB:
         def __init__(self):
             self.errors = []
+            self.partial_updates = []
 
         def get_pendings(self, status):
             return papers
@@ -354,7 +355,7 @@ def test_phase_b_all_error_classes(monkeypatch):
             self.errors.append(args)
 
         def update_crossref_metadata(self, *args):
-            raise AssertionError("all fake responses are error paths")
+            self.partial_updates.append(args)
 
         def update_process_status(self, *args):
             raise AssertionError("all fake responses are error paths")
@@ -365,6 +366,7 @@ def test_phase_b_all_error_classes(monkeypatch):
     database = FakeDB()
     phase_b.phase_b_crossref(database)
     assert len(database.errors) == 5
+    assert len(database.partial_updates) == 1
     monkeypatch.setattr(phase_b.CFG, "SKIP_PHASE_B", True)
     assert phase_b.phase_b_crossref(database) is None
 
@@ -496,6 +498,8 @@ def test_phase_c_fallback_proxy_recovers(monkeypatch):
     calls = []
 
     class FakeScraper:
+        skip_phase_c_if_crossref_abstract = False
+
         def __init__(self, fallback=False):
             self.fallback = fallback
             self.html = "<title>captcha</title> cf-ray"

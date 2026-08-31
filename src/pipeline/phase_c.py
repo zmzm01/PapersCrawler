@@ -7,7 +7,7 @@ import logging
 import random
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import CFG
 from db.database import FetchStatus
@@ -102,6 +102,58 @@ def _has_bot_markers(html, page_title=""):
     )
 
 
+def _record_publisher_failure(
+        db, doi, error, status_date, failure_kind=None, retry_after=None):
+    """Persist a Publisher failure with retry metadata when supported.
+
+    The fallback keeps lightweight test doubles and third-party callers that
+    implement only the historical ``update_error_message`` API compatible.
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        Database client or compatible test double.
+    doi : str
+        DOI of the failed paper.
+    error : str
+        Human-readable failure message.
+    status_date : str
+        Failure timestamp.
+    failure_kind : str, optional
+        Stable failure class, such as ``"bot_block"``.
+    retry_after : str, optional
+        Earliest automatic retry timestamp.
+
+    Returns
+    -------
+    int or None
+        Consecutive Bot-block count when the database supports it.
+    """
+    recorder = getattr(db, "record_publisher_page_failure", None)
+    if callable(recorder):
+        return recorder(
+            doi, error, status_date,
+            failure_kind=failure_kind,
+            retry_after=retry_after,
+        )
+    db.update_error_message(
+        doi, "publisher_page_fetched_status", FetchStatus.FAILED.value,
+        "publisher_page_fetched_error", str(error)[:500],
+        "publisher_page_fetched_date", status_date,
+    )
+    return None
+
+
+def _row_value(row, column, default=None):
+    """Read a mapping-like database row while tolerating legacy test doubles."""
+    if hasattr(row, "keys") and column not in row.keys():
+        return default
+    try:
+        return row[column]
+    except (KeyError, IndexError):
+        return default
+
+
 def phase_c_publisher(db, publishers):
     """Scrape publisher pages for abstracts and PDF links.
 
@@ -161,8 +213,13 @@ def phase_c_publisher(db, publishers):
         # ── 检查该 publisher 是否有论文待抓取 ──
         scraper_class = SCRAPER_MAP.get(publisher_key, (None,))[0]
         should_skip_cr = (
-            scraper_class is not None
-            and getattr(scraper_class, 'skip_phase_c_if_crossref_abstract', False)
+            bool(getattr(
+                CFG, "PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT", True,
+            ))
+            and scraper_class is not None
+            and getattr(
+                scraper_class, "skip_phase_c_if_crossref_abstract", True,
+            )
         )
 
         papers = db.get_pending_publisher_papers(
@@ -171,15 +228,40 @@ def phase_c_publisher(db, publishers):
 
         if should_skip_cr:
             # 记录因已有 CrossRef 摘要而被过滤的论文数
-            all_for_pub = db.get_papers_by_status_and_publisher(
-                "publisher_page_fetched_status", "pending", publisher_key,
+            status_query = getattr(
+                db, "get_papers_by_status_and_publisher", None,
             )
-            filtered = len(all_for_pub) - len(papers)
-            if filtered:
-                logger.info(
-                    f"{publisher_key}: {filtered}/{len(all_for_pub)} papers "
-                    f"skipped (CrossRef has abstract)"
+            if callable(status_query):
+                all_for_pub = status_query(
+                    "publisher_page_fetched_status", "pending", publisher_key,
                 )
+                if getattr(CFG, "PUBLISHER_FORCE_BOT_RETRY", False):
+                    # 显式强制重试只恢复 Bot 阻断论文，不让所有已有
+                    # CrossRef 摘要的论文同时失去页面短路优化。
+                    pending_dois = {paper["doi"] for paper in papers}
+                    bot_papers = [
+                        paper for paper in all_for_pub
+                        if paper["doi"] not in pending_dois
+                        and (
+                            _row_value(
+                                paper, "publisher_page_failure_kind",
+                            ) == "bot_block"
+                            or "bot block" in (
+                                _row_value(
+                                    paper,
+                                    "publisher_page_fetched_error",
+                                    "",
+                                ) or ""
+                            ).lower()
+                        )
+                    ]
+                    papers.extend(bot_papers)
+                filtered = len(all_for_pub) - len(papers)
+                if filtered:
+                    logger.info(
+                        f"{publisher_key}: {filtered}/{len(all_for_pub)} papers "
+                        f"skipped (CrossRef has abstract)"
+                    )
 
         papers = _limit_phase_papers(papers, processed_count, phase_limit)
 
@@ -256,6 +338,7 @@ def phase_c_publisher(db, publishers):
                 last_error = None
                 last_scraper = scraper
                 fallback_attempted = False
+                bot_block_detected = False
 
                 # Pre-fetch non-research detection: check DB title before browser launch
                 if CFG.PREFETCH_NON_RESEARCH:
@@ -348,6 +431,7 @@ def phase_c_publisher(db, publishers):
                                 attempt_scraper.html,
                                 page_title=page_title_snippet,
                             )
+                            bot_block_detected = bot_block_detected or bot_blocked
 
                             if is_fallback:
                                 attempt_label = "fallback"
@@ -436,6 +520,7 @@ def phase_c_publisher(db, publishers):
                                 page_title=page_title_snippet,
                             )
                             if is_bot:
+                                bot_block_detected = True
                                 if is_fallback:
                                     attempt_label = "fallback"
                                 elif len(normal_retry_attempts) == 1:
@@ -510,12 +595,53 @@ def phase_c_publisher(db, publishers):
                         )
                     if page_title_snippet:
                         logger.debug(f"Phase C page title [{paperDOI}]: {page_title_snippet}")
-                    db.update_error_message(
-                        paperDOI, "publisher_page_fetched_status",
-                        FetchStatus.FAILED.value,
-                        "publisher_page_fetched_error", error_msg[:500],
-                        "publisher_page_fetched_date", timestamp,
+                    failure_kind = "bot_block" if bot_block_detected else None
+                    retry_after = None
+                    if failure_kind == "bot_block":
+                        cooldown_hours = max(
+                            1,
+                            int(getattr(
+                                CFG,
+                                "PUBLISHER_BOT_RETRY_COOLDOWN_HOURS",
+                                72,
+                            )),
+                        )
+                        retry_after = str(
+                            datetime.now()
+                            + timedelta(hours=cooldown_hours)
+                        )
+                    retry_count = _record_publisher_failure(
+                        db,
+                        paperDOI,
+                        error_msg,
+                        timestamp,
+                        failure_kind=failure_kind,
+                        retry_after=retry_after,
                     )
+                    if failure_kind == "bot_block":
+                        max_retries = max(
+                            1,
+                            int(getattr(
+                                CFG, "PUBLISHER_BOT_MAX_RETRIES", 3,
+                            )),
+                        )
+                        if (
+                            retry_count is not None
+                            and retry_count >= max_retries
+                        ):
+                            logger.warning(
+                                "Publisher Bot block quarantined [%s] "
+                                "after %d failure(s); use "
+                                "--retry-bot-blocks to force a retry",
+                                paperDOI,
+                                retry_count,
+                            )
+                        else:
+                            logger.info(
+                                "Publisher Bot block cooldown [%s] until %s",
+                                paperDOI,
+                                retry_after,
+                            )
                     consecutive_failures += 1
                     if consecutive_failures >= CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES:
                         logger.warning(f"Publisher {publisher_key}: {consecutive_failures} consecutive failures, aborting")

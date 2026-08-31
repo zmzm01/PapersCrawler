@@ -292,11 +292,11 @@ if __name__ == "__main__":
     ]
 
     # 如果使用 LLM，请配置真实 API（示例使用 OpenAI）
-    # 注意：实际使用时请将 api_key 替换为有效的 DeepSeek API Key
+    # 注意：实际使用时请将 api_key 替换为有效的 LLM API Key
     LLM_API_CONFIG_DICT = {
         "api_url": "https://api.deepseek.com/chat/completions",
-        "api_key": os.getenv("DEEPSEEK_API_KEY", "sk-placeholder"),
-        "model_name": "deepseek-v4-flash", # or deepseek-v4-pro stronger
+        "api_key": os.getenv("LLM_API_KEY", "sk-placeholder"),
+        "model_name": "deepseek/deepseek-v4-flash", # or another configured model
         "thinking": "enabled",
         "timeout": 300,
     }

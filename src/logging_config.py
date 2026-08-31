@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import date, timedelta
 from logging.handlers import RotatingFileHandler
@@ -12,6 +13,26 @@ from pathlib import Path
 _LOG_DATE_PATTERN = re.compile(
     r"^PaperCrawler-(?P<date>\d{4}-\d{2}-\d{2})\.log(?:\.\d+)?$"
 )
+
+
+def resolve_log_dir(default_dir: Path) -> Path:
+    """Resolve the application log directory, honoring an environment override.
+
+    Parameters
+    ----------
+    default_dir : Path
+        Directory used when ``PAPERSCRAWLER_LOG_DIR`` is not set.
+
+    Returns
+    -------
+    Path
+        The configured log directory. Relative override paths are interpreted
+        relative to the current working directory.
+    """
+    configured_dir = os.getenv("PAPERSCRAWLER_LOG_DIR", "").strip()
+    if not configured_dir:
+        return Path(default_dir)
+    return Path(configured_dir).expanduser()
 
 
 class DailyLogHandler(logging.Handler):

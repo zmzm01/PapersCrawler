@@ -44,6 +44,32 @@ def test_init_creates_table(db):
     assert db.paper_doi_exists("10.0000/test") is True
 
 
+def test_init_migrates_legacy_fulltext_audit_table(db):
+    """Legacy download audit tables gain structured diagnostic columns."""
+    db.conn.execute("DROP TABLE fulltext_download_events")
+    db.conn.execute(
+        """CREATE TABLE fulltext_download_events (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               doi TEXT NOT NULL,
+               publisher TEXT,
+               local_date TEXT NOT NULL,
+               attempted_at TEXT NOT NULL,
+               status TEXT NOT NULL,
+               error TEXT
+           )"""
+    )
+    db.conn.commit()
+
+    db.init_db_papers()
+
+    columns = {
+        row["name"] for row in db.conn.execute(
+            "PRAGMA table_info(fulltext_download_events)"
+        )
+    }
+    assert {"location_source", "route", "final_url", "failure_kind"} <= columns
+
+
 def test_doi_not_exists(db):
     """验证不存在的 DOI 返回 False。"""
     assert db.paper_doi_exists("10.0000/nonexist") is False
@@ -120,6 +146,18 @@ def test_update_crossref_metadata(db):
     assert papers[0]["title"] == "New Title"
     assert papers[0]["paperdate_crossref"] == "2025-06-15"
     assert papers[0]["abstract"] == "This is the abstract."
+
+
+def test_crossref_empty_fields_do_not_erase_existing_metadata(db):
+    """Partial Crossref responses preserve useful discovery metadata."""
+    db.insert_rss_basicinfo(
+        "10.0000/partial", "RSS Title", "http://b", "J.B", "pubB", "2025",
+    )
+    db.update_crossref_metadata("10.0000/partial", "", "", "", "")
+
+    paper = db.get_all_papers()[0]
+    assert paper["title"] == "RSS Title"
+    assert paper["authors_json"] is None
 
 
 def test_update_crossref_nonexistent_doi_raises(db):
@@ -452,6 +490,70 @@ def test_update_error_message(db):
     papers = db.get_all_papers()
     assert papers[0]["publisher_page_fetched_status"] == "failed"
     assert papers[0]["publisher_page_fetched_error"] == "Connection refused"
+
+
+def test_publisher_bot_failure_uses_cooldown_and_quarantine(db):
+    """Bot-blocked Publisher pages stop retrying after the configured limit."""
+    db.insert_rss_basicinfo(
+        "10.0000/bot", "Bot page", "http://bot", "J", "pub", "2025",
+    )
+    db.record_publisher_page_failure(
+        "10.0000/bot", "Captcha (bot block)", "2025-01-01 00:00:00",
+        failure_kind="bot_block", retry_after="2999-01-01 00:00:00",
+    )
+    assert db.reset_retryable_publisher_pages(3) == 0
+
+    db.record_publisher_page_failure(
+        "10.0000/bot", "Captcha (bot block)", "2025-01-02 00:00:00",
+        failure_kind="bot_block", retry_after="2000-01-01 00:00:00",
+    )
+    assert db.get_all_papers()[0]["publisher_page_retry_count"] == 2
+    # A cooldown-expired retry is eligible while it is below the limit.
+    assert db.reset_retryable_publisher_pages(3) == 1
+
+    db.record_publisher_page_failure(
+        "10.0000/bot", "Captcha (bot block)", "2025-01-03 00:00:00",
+        failure_kind="bot_block", retry_after="2000-01-01 00:00:00",
+    )
+    assert db.get_all_papers()[0]["publisher_page_retry_count"] == 3
+    assert db.reset_retryable_publisher_pages(3) == 0
+    assert db.reset_retryable_publisher_pages(3, force_bot_blocks=True) == 1
+
+
+def test_publisher_success_clears_bot_retry_state(db):
+    """A successful page fetch clears previous Bot-block quarantine state."""
+    db.insert_rss_basicinfo(
+        "10.0000/bot-success", "Bot page", "http://bot", "J", "pub", "2025",
+    )
+    db.record_publisher_page_failure(
+        "10.0000/bot-success", "Captcha (bot block)",
+        "2025-01-01 00:00:00", failure_kind="bot_block",
+        retry_after="2999-01-01 00:00:00",
+    )
+    db.update_publisher_page(
+        "10.0000/bot-success", "abstract", "[]", "https://x/pdf",
+        "2025", FetchStatus.SUCCESS.value, "2025-01-02 00:00:00",
+    )
+    paper = db.get_all_papers()[0]
+    assert paper["publisher_page_fetched_error"] is None
+    assert paper["publisher_page_retry_count"] == 0
+    assert paper["publisher_page_retry_after"] is None
+    assert paper["publisher_page_failure_kind"] is None
+
+
+def test_legacy_bot_error_is_quarantined_until_forced(db):
+    """Existing pre-migration ``(bot block)`` rows are not retried daily."""
+    db.insert_rss_basicinfo(
+        "10.0000/legacy-bot", "Bot page", "http://bot", "J", "pub", "2025",
+    )
+    db.update_error_message(
+        "10.0000/legacy-bot", "publisher_page_fetched_status",
+        FetchStatus.FAILED.value, "publisher_page_fetched_error",
+        "Title and abstract empty (bot block)",
+        "publisher_page_fetched_date", "2025-01-01 00:00:00",
+    )
+    assert db.reset_retryable_publisher_pages(3) == 0
+    assert db.reset_retryable_publisher_pages(3, force_bot_blocks=True) == 1
 
 
 # ---- get_papers / get_papers_count 测试 ----

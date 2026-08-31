@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 import logging
 
-from logging_config import DailyLogHandler
+from logging_config import DailyLogHandler, resolve_log_dir
 
 
 def test_daily_log_handler_writes_date_specific_file(tmp_path):
@@ -34,3 +34,19 @@ def test_daily_log_handler_prunes_old_managed_logs(tmp_path):
 
     assert not old_path.exists()
     assert unrelated_path.exists()
+
+
+def test_resolve_log_dir_honors_environment_override(tmp_path, monkeypatch):
+    """The environment override redirects entry-point logs when configured."""
+    override = tmp_path / "test-logs"
+    monkeypatch.setenv("PAPERSCRAWLER_LOG_DIR", str(override))
+
+    assert resolve_log_dir(tmp_path / "production-logs") == override
+
+
+def test_resolve_log_dir_uses_default_when_override_is_empty(tmp_path, monkeypatch):
+    """An empty override leaves the caller-provided production path unchanged."""
+    monkeypatch.setenv("PAPERSCRAWLER_LOG_DIR", "   ")
+    default_dir = tmp_path / "production-logs"
+
+    assert resolve_log_dir(default_dir) == default_dir

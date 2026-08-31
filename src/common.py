@@ -194,11 +194,11 @@ def build_llm_endpoint_url(base_url: str, protocol: str = LLM_PROTOCOL_OPENAI_CH
         LLM_PROTOCOL_OPENAI_RESPONSES: "/responses",
         LLM_PROTOCOL_ANTHROPIC_MESSAGES: "/messages",
     }[protocol]
-    if endpoint_path := parsed_url.path.rstrip("/"):
-        if endpoint_path.endswith(endpoint_suffix):
-            return urlunsplit(parsed_url)
-    else:
-        endpoint_path = ""
+    endpoint_path = parsed_url.path.rstrip("/")
+    for known_suffix in ("/chat/completions", "/responses", "/messages"):
+        if endpoint_path.endswith(known_suffix):
+            endpoint_path = endpoint_path[: -len(known_suffix)].rstrip("/")
+            break
     return urlunsplit((
         parsed_url.scheme,
         parsed_url.netloc,

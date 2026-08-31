@@ -12,8 +12,30 @@ from db.database import FetchStatus
 from pipeline.base import SCRAPER_MAP
 from processors.mineru_paper_parser import MinerUParser
 from sources.publisher import BasePublisherScraper
+from sources.fulltext import resolve_candidates
 
 logger = logging.getLogger(__name__)
+
+
+def _failure_kind(error):
+    """Classify a download error for audit and future retry policy."""
+    message = str(error).lower()
+    if "accepted paper" in message or "not_yet_published" in message:
+        return "not_yet_published"
+    if "403" in message or "401" in message or "login" in message:
+        return "auth_required"
+    if "429" in message or "rate" in message:
+        return "rate_limited"
+    if "timeout" in message:
+        return "timeout"
+    if "invalid pdf" in message or "no pdf" in message:
+        return "invalid_pdf"
+    return "download_error"
+
+
+def _is_accepted_url(url):
+    """Return whether a Publisher URL denotes an unpublished accepted paper."""
+    return "/accepted/" in str(url or "").lower()
 
 
 def _is_valid_pdf_file(file_path):
@@ -58,16 +80,26 @@ def phase_e2_mineru(db):
     # do not consume quota; failed network attempts do.
     reserved = []
     for paper in papers_with_pdf:
+        candidates = resolve_candidates(db, paper)
+        paper = dict(paper)
+        paper["_pdf_candidates"] = candidates
+        if not paper.get("pdf_url") and candidates:
+            paper["pdf_url"] = candidates[0]["url"]
         safe_doi = paper["doi"].replace("/", "_").replace("\\", "_").replace("..", "_")
         local_pdf = MINERU_OUTPUT_DIR / safe_doi / "paper.pdf"
         if _is_valid_pdf_file(local_pdf):
             reserved.append(dict(paper, _quota_reserved=False))
             continue
-        if not paper["pdf_url"] and paper["publisher"] != "optica":
-            db.update_mineru_error(
-                paper["doi"], "No PDF URL available",
-                FetchStatus.SKIPPED.value, str(datetime.now()),
-            )
+        # Papers without a URL may still obtain one through the delayed
+        # publisher page resolver below.  Do not reserve quota yet.
+        if not paper["pdf_url"]:
+            if _is_accepted_url(paper.get("page_url")):
+                db.update_mineru_error(
+                    paper["doi"], "not_yet_published: Accepted Paper",
+                    FetchStatus.SKIPPED.value, str(datetime.now()),
+                )
+                continue
+            reserved.append(dict(paper, _quota_reserved=False))
             continue
         if db.claim_fulltext_download(
                 paper["doi"], paper["publisher"],
@@ -103,15 +135,24 @@ def phase_e2_mineru(db):
         # 如 publisher 启用了 skip_phase_c_if_crossref_abstract，则需使用
         # 具体 Scraper 类（有 parse_page() 能力）做延迟页面访问补齐 pdf_url。
         # 其他 publisher 使用 BasePublisherScraper（无 parse_page() 开销）。
-        has_parse = (scraper_class
-                     and getattr(scraper_class, 'skip_phase_c_if_crossref_abstract', False))
+        has_parse = (
+            scraper_class
+            and bool(getattr(
+                CFG, "PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT", True,
+            ))
+            and getattr(
+                scraper_class, "skip_phase_c_if_crossref_abstract", True,
+            )
+        )
         if has_parse:
             downloader = scraper_class(dl_dir)
         else:
             downloader = BasePublisherScraper(dl_dir)
 
         # 从 SCRAPER_MAP 查代理配置，不复用 session
-        proxy = scraper_config[2] if scraper_config else None
+        # Phase E2 is always on the campus route.  Publisher proxies are
+        # reserved for Phase C abstract retrieval only.
+        proxy = None
 
         logger.info(f"Phase E2: launching browser for '{publisher}' ({len(group)} papers)")
         try:
@@ -161,6 +202,11 @@ def phase_e2_mineru(db):
                     if parsed and parsed.pdf_url:
                         db.update_publisher_pdf_url(doi, parsed.pdf_url)
                         paper["pdf_url"] = parsed.pdf_url
+                        paper["_pdf_candidates"] = [{
+                            "url": parsed.pdf_url,
+                            "source": "publisher",
+                            "priority": 100,
+                        }]
                         logger.info(
                             f"Lazy fetch OK: {doi} → {parsed.pdf_url}"
                         )
@@ -204,6 +250,15 @@ def phase_e2_mineru(db):
                         db.finish_fulltext_download(doi, "failed", "No PDF URL")
                     continue
 
+                if not local_pdf_is_valid and not paper.get("_quota_reserved"):
+                    if not db.claim_fulltext_download(
+                            doi, paper["publisher"],
+                            CFG.FULLTEXT_DOWNLOAD_DAILY_MAX,
+                            CFG.FULLTEXT_DOWNLOAD_PUBLISHER_MAX):
+                        logger.info("Phase E2 daily download quota exhausted: %s", doi)
+                        continue
+                    paper["_quota_reserved"] = True
+
                 try:
                     # Reuse existing PDF if already downloaded and valid
                     if local_pdf_is_valid:
@@ -215,16 +270,32 @@ def phase_e2_mineru(db):
                         )
                         pdf_save_path.unlink()
                     if not pdf_save_path.exists():
-                        logger.info(f"Downloading PDF: {doi} ← {pdf_url}")
-                        pdf_bytes = downloader.download_pdf(pdf_url, page_url=page_url)
-
-                        # Validate PDF content before saving
-                        if not pdf_bytes or pdf_bytes[:5] != b'%PDF-':
-                            raise RuntimeError(
-                                f"Downloaded content is not a valid PDF "
-                                f"({len(pdf_bytes)} bytes, "
-                                f"header: {pdf_bytes[:20]!r})"
-                            )
+                        download_errors = []
+                        pdf_bytes = None
+                        candidates = paper.get("_pdf_candidates") or [
+                            {"url": pdf_url, "source": "publisher"}
+                        ]
+                        for candidate in candidates:
+                            candidate_url = candidate.get("url")
+                            if not candidate_url:
+                                continue
+                            try:
+                                logger.info("Downloading PDF: %s ← %s", doi, candidate_url)
+                                candidate_bytes = downloader.download_pdf(
+                                    candidate_url, page_url=page_url,
+                                )
+                                if candidate_bytes and candidate_bytes[:5] == b"%PDF-":
+                                    pdf_bytes = candidate_bytes
+                                    paper["_selected_location"] = candidate
+                                    break
+                                download_errors.append(
+                                    f"{candidate_url}: invalid PDF content"
+                                )
+                            except Exception as error:
+                                download_errors.append(f"{candidate_url}: {error}")
+                        if not pdf_bytes:
+                            raise RuntimeError("; ".join(download_errors)[:500] or
+                                               "No PDF candidate succeeded")
 
                         pdf_save_path.write_bytes(pdf_bytes)
                         logger.info(f"PDF saved ({len(pdf_bytes)} bytes): {pdf_save_path}")
@@ -243,19 +314,51 @@ def phase_e2_mineru(db):
                         )
                         success_count += 1
                         if paper.get("_quota_reserved"):
-                            db.finish_fulltext_download(doi, "success")
+                            diagnostics = dict(
+                                getattr(downloader, "last_download_diagnostics", {})
+                            )
+                            diagnostics.update({
+                                "location_source": (paper.get(
+                                    "_selected_location", {}
+                                ).get("source", "publisher")),
+                                "failure_kind": None,
+                            })
+                            db.finish_fulltext_download(
+                                doi, "success", details=diagnostics,
+                            )
                         logger.info(f"MinerU success: {doi} ({full_md_path.stat().st_size} bytes)")
                     else:
                         raise RuntimeError("MinerU output missing full.md")
 
                 except Exception as e:
                     logger.warning(f"MinerU failed [{doi}]: {e}")
-                    db.update_mineru_error(
-                        doi, str(e)[:500], FetchStatus.FAILED.value, timestamp,
+                    failure_kind = _failure_kind(e)
+                    terminal_status = (
+                        FetchStatus.SKIPPED.value
+                        if failure_kind == "not_yet_published"
+                        else FetchStatus.FAILED.value
                     )
-                    failed_count += 1
+                    db.update_mineru_error(
+                        doi, str(e)[:500], terminal_status, timestamp,
+                    )
+                    if terminal_status == FetchStatus.FAILED.value:
+                        failed_count += 1
                     if paper.get("_quota_reserved"):
-                        db.finish_fulltext_download(doi, "failed", str(e)[:500])
+                        diagnostics = dict(
+                            getattr(downloader, "last_download_diagnostics", {})
+                        )
+                        diagnostics.update({
+                            "location_source": (paper.get(
+                                "_selected_location", {}
+                            ).get("source", "publisher")),
+                            "failure_kind": failure_kind,
+                        })
+                        db.finish_fulltext_download(
+                            doi,
+                            "skipped" if failure_kind == "not_yet_published"
+                            else "failed",
+                            str(e)[:500], diagnostics,
+                        )
 
                 delay = random.uniform(
                     CFG.FULLTEXT_DOWNLOAD_DELAY_MIN,
