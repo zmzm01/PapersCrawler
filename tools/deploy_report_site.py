@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build and optionally deploy the independent Astro report site.
+"""Build and deploy the independent Astro report site to Cloudflare Pages.
 
 The legacy Hugo site remains available through ``tools/convert_reports_to_hugo.py``.
 This command publishes only the Astro site under ``report-site/`` and never
-touches the ``gh-pages`` branch.
+touches the ``gh-pages`` branch. Cloudflare API credentials and the Pages
+project are read from the repository's local, gitignored ``.env`` file.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_SITE_DIR = PROJECT_ROOT / "report-site"
@@ -102,7 +105,7 @@ def _deploy(
     branch: str | None,
     env: dict[str, str],
 ) -> None:
-    """Upload the built static site to Cloudflare Pages."""
+    """Upload the built static site to a configured Cloudflare Pages project."""
     npx = node_bin / "npx"
     command = [
         str(npx),
@@ -116,6 +119,44 @@ def _deploy(
     if branch:
         command.extend(["--branch", branch])
     _run(command, REPORT_SITE_DIR, env)
+
+
+def _load_deploy_credentials(environment: dict[str, str]) -> tuple[str, str, str]:
+    """Load required Cloudflare deployment values from the environment.
+
+    Parameters
+    ----------
+    environment : dict[str, str]
+        Process environment, including values loaded from the project ``.env``.
+
+    Returns
+    -------
+    tuple[str, str, str]
+        Account ID, API token, and Pages project name.
+
+    Raises
+    ------
+    RuntimeError
+        If a required deployment value is missing.
+    """
+    values = {
+        "CLOUDFLARE_ACCOUNT_ID": environment.get("CLOUDFLARE_ACCOUNT_ID"),
+        "CLOUDFLARE_API_TOKEN": environment.get("CLOUDFLARE_API_TOKEN"),
+        "CLOUDFLARE_PAGES_PROJECT": environment.get("CLOUDFLARE_PAGES_PROJECT"),
+    }
+    missing = [
+        name for name, value in values.items() if not str(value or "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Cloudflare Pages deployment values missing from .env: "
+            + ", ".join(missing)
+        )
+    return (
+        str(values["CLOUDFLARE_ACCOUNT_ID"]).strip(),
+        str(values["CLOUDFLARE_API_TOKEN"]).strip(),
+        str(values["CLOUDFLARE_PAGES_PROJECT"]).strip(),
+    )
 
 
 def _validate_output(output_dir: Path) -> None:
@@ -161,6 +202,12 @@ def main() -> int:
     if not REPORT_SITE_DIR.exists():
         raise SystemExit(f"Report site directory does not exist: {REPORT_SITE_DIR}")
 
+    load_dotenv(PROJECT_ROOT / ".env")
+    env = os.environ.copy()
+    account_id, api_token, project_name = _load_deploy_credentials(env)
+    env["CLOUDFLARE_ACCOUNT_ID"] = account_id
+    env["CLOUDFLARE_API_TOKEN"] = api_token
+
     sources = [AUTO_REPORT_DIR]
     if args.include_user_reports:
         sources.append(USER_REPORT_DIR)
@@ -168,25 +215,16 @@ def main() -> int:
     print(f"Exported {exported} public report(s) to {REPORT_DATA_DIR}")
 
     node_bin = _resolve_node_bin()
-    env = os.environ.copy()
     env["PATH"] = f"{node_bin}:{env.get('PATH', '')}"
     output_dir = _build_site(node_bin, args.install, env)
     _validate_output(output_dir)
 
-    project_name = os.environ.get("CLOUDFLARE_PAGES_PROJECT", "")
     if args.dry_run:
         print(
-            "[DRY-RUN] Would deploy "
-            f"{output_dir} to Cloudflare Pages project "
-            f"{project_name or '<unset>'}"
+            f"[DRY-RUN] Would deploy {output_dir} to Cloudflare Pages project "
+            f"{project_name}"
         )
         return 0
-    if not project_name:
-        raise SystemExit("CLOUDFLARE_PAGES_PROJECT is required for deployment")
-    if not os.environ.get("CLOUDFLARE_API_TOKEN"):
-        raise SystemExit("CLOUDFLARE_API_TOKEN is required for unattended deployment")
-    if not os.environ.get("CLOUDFLARE_ACCOUNT_ID"):
-        raise SystemExit("CLOUDFLARE_ACCOUNT_ID is required for unattended deployment")
     _deploy(output_dir, node_bin, project_name, args.branch, env)
     return 0
 

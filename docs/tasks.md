@@ -2,6 +2,12 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-08-31：Cloudflare Pages Token 统一使用 `.env`
+
+- 按项目既有密钥管理方式，部署所需的 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN` 和
+  `CLOUDFLARE_PAGES_PROJECT` 统一由根目录 gitignored 的 `.env` 管理，不再维护单独 YAML 配置文件。
+- 部署脚本显式从项目根 `.env` 加载这三个值，日常命令无需手动 export；CI 可直接注入同名变量。
+
 ## 2026-08-31：统一错误记录与跨日通知修复
 
 - 新增 `common.format_error_for_record()`，各论文阶段将错误以 `异常类名: 消息` 的稳定格式写入

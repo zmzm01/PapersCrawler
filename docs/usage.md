@@ -624,24 +624,36 @@ cd /path/to/PapersCrawler
 python3 tools/export_public_reports.py --out report-site/src/data/reports
 ```
 
-一键构建并检查 Cloudflare 上传参数，但不上传：
+一键构建并检查输出，但不上传：
 
 ```bash
 python3 tools/deploy_report_site.py --dry-run
 ```
 
-正式 Direct Upload 需要设置以下环境变量：
+首次部署前，在根目录 `.env` 填入以下三项（可参考 [`.env.example`](../.env.example) 的注释）：
 
-```bash
-export CLOUDFLARE_ACCOUNT_ID="..."
-export CLOUDFLARE_API_TOKEN="..."
-export CLOUDFLARE_PAGES_PROJECT="paperscrawler-reports"
-python3 tools/deploy_report_site.py
+```dotenv
+CLOUDFLARE_ACCOUNT_ID="..."
+CLOUDFLARE_API_TOKEN="..."
+CLOUDFLARE_PAGES_PROJECT="paperscrawler-reports"
 ```
 
-API Token 只应授予 Cloudflare Pages 写权限，不要写入仓库或普通配置文件。部署脚本默认
-加载 `NVM_DIR=/path/to/nvm`，也可通过 `NVM_DIR` 覆盖。`--branch NAME` 用于上传预览
-分支，未指定时上传生产部署。当前该命令不会修改 Hugo 或 `gh-pages`。
+Token 仅授予目标账户的 **Cloudflare Pages 编辑**权限。`.env` 已被 Git 忽略，禁止提交。之后日常生产部署只需：
+
+```bash
+/path/to/paperscrawler-venv/bin/python tools/deploy_report_site.py
+```
+
+脚本依次导出公开报告、运行 `npm run build`，再以 `npx wrangler pages deploy` 上传
+`report-site/dist/`。Wrangler 是 `report-site/package-lock.json` 锁定的开发依赖；首次缺少
+`node_modules` 时脚本才会执行一次 `npm ci`，后续不会额外下载部署工具。
+
+脚本会从固定的项目根目录 `.env` 自动读取并将值传给 Wrangler，不必在 shell 中 `export` 任何变量。
+任何字段未填写时，脚本会在构建前明确指出缺失变量。CI 可安全注入同名的
+`CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_PAGES_PROJECT`，不需要 `.env` 文件。
+
+`--branch NAME` 用于上传预览分支，未指定时上传生产部署。当前该命令不会修改 Hugo 或
+`gh-pages`。
 
 ### Prince PDF 导出
 

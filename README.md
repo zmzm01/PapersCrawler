@@ -98,7 +98,7 @@ LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 80
 - **PDF 解析**：MinerU API
 - **LLM**：多协议 API（OpenAI Chat / Anthropic Messages；默认 DeepSeek）
 - **配置**：YAML + `.env`（密钥 gitignored）
-- **报告站点**：Astro + Node.js/npm；可通过 Wrangler 上传到 Cloudflare Pages
+- **报告站点**：Astro + Node.js/npm；通过项目内 Wrangler 和 `.env` 配置上传到 Cloudflare Pages
 
 ## 部署
 
