@@ -176,6 +176,7 @@ def test_run_pipeline_reset_relevance_flagged_off():
             tools.run_pipeline.main(["--phases", "A", "--no-reset-relevance"])
             mock_auto_reset.assert_called_once_with(
                 True, True, False, dry_run=False,
+                force_publisher_retry=False,
             )
             mock_run_phases.assert_called_once_with(phase_list=["A"], force=False)
 
@@ -188,6 +189,7 @@ def test_run_pipeline_reset_relevance_enabled_flag():
             tools.run_pipeline.main(["--phases", "A"])
             mock_auto_reset.assert_called_once_with(
                 True, True, True, dry_run=False,
+                force_publisher_retry=False,
             )
             mock_run_phases.assert_called_once_with(phase_list=["A"], force=False)
 
@@ -215,6 +217,23 @@ def test_auto_reset_retries_screen_and_final_relevance_failures():
             "llm_relevance_status = 'failed'",
         ),
     ]
+
+
+def test_auto_reset_uses_bot_aware_publisher_reset():
+    """Publisher reset delegates cooldown/quarantine filtering to the DB."""
+    import tools.run_pipeline
+
+    with patch("tools.run_pipeline.DatabaseClient") as client_class:
+        client = client_class.return_value
+        client.reset_retryable_publisher_pages.return_value = 2
+        tools.run_pipeline._run_auto_reset(
+            True, False, False, dry_run=False,
+        )
+
+    client.reset_retryable_publisher_pages.assert_called_once_with(
+        tools.run_pipeline.CFG.PUBLISHER_BOT_MAX_RETRIES,
+        force_bot_blocks=False,
+    )
 
 
 # ===================================================================

@@ -418,8 +418,18 @@ def test_phase_c_uses_configured_proxy_after_normal_retry(monkeypatch):
     class FakeDatabase:
         def __init__(self):
             self.updated = []
+            self.skip_crossref_abstract = []
 
         def get_pending_publisher_papers(self, publisher, skip_crossref_abstract):
+            self.skip_crossref_abstract.append(skip_crossref_abstract)
+            return [{
+                "doi": "10.0000/fallback",
+                "page_url": "https://example.test/paper",
+                "title": "Pending article",
+            }]
+
+        def get_papers_by_status_and_publisher(self, *args):
+            del args
             return [{
                 "doi": "10.0000/fallback",
                 "page_url": "https://example.test/paper",
@@ -476,3 +486,160 @@ def test_phase_c_uses_configured_proxy_after_normal_retry(monkeypatch):
     assert database.updated[0][0] == "10.0000/fallback"
     assert database.updated[0][-2] == "success"
     assert scrapers[1].closed is True
+    assert database.skip_crossref_abstract == [True]
+
+
+def test_phase_c_bot_failure_records_quarantine_metadata(monkeypatch):
+    """A detected Bot page is persisted as a cooldown/quarantine failure."""
+
+    class FakeScraper:
+        def __init__(self):
+            self.html = ""
+            self.page_url = ""
+
+        def prewarm(self):
+            return True
+
+        def fetch_page(self, url, timeout):
+            del timeout
+            self.page_url = url
+            self.html = "<title>Radware Bot Manager Captcha</title>"
+
+        def parse_page(self):
+            return Paper()
+
+        def close(self):
+            return None
+
+        def _save_error_html(self, url, name):
+            del url, name
+            return False
+
+    class FakeDatabase:
+        def __init__(self):
+            self.failure = None
+
+        def get_pending_publisher_papers(self, publisher, skip_crossref_abstract):
+            del publisher, skip_crossref_abstract
+            return [{
+                "doi": "10.0000/bot",
+                "page_url": "https://example.test/paper",
+                "title": "Blocked article",
+            }]
+
+        def get_papers_by_status_and_publisher(self, *args):
+            del args
+            return []
+
+        def get_papers_by_status(self, *args):
+            del args
+            return []
+
+        def record_publisher_page_failure(self, *args, **kwargs):
+            self.failure = (args, kwargs)
+            return 3
+
+    monkeypatch.setattr(phase_c_module, "create_scraper", lambda *args, **kwargs: FakeScraper())
+    monkeypatch.setattr(phase_c_module, "SCRAPER_MAP", {"iop": (FakeScraper, None, None)})
+    monkeypatch.setattr(phase_c_module.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(phase_c_module.CFG, "SKIP_PHASE_C", False)
+    monkeypatch.setattr(phase_c_module.CFG, "MAX_PAPERS_PER_PHASE", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PREFETCH_NON_RESEARCH", False)
+    monkeypatch.setattr(phase_c_module.CFG, "POSTFETCH_NON_RESEARCH", True)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_FALLBACK_PROXY_URL", "")
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_MAX_CONSECUTIVE_FAILURES", 3)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_PAGE_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_PAGE_DELAY_MAX", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_BOT_MAX_RETRIES", 3)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_BOT_RETRY_COOLDOWN_HOURS", 72)
+
+    database = FakeDatabase()
+    phase_c_module.phase_c_publisher(
+        database, [{"publisher": "iop", "enabled": True}],
+    )
+
+    assert database.failure is not None
+    args, kwargs = database.failure
+    assert args[0] == "10.0000/bot"
+    assert kwargs["failure_kind"] == "bot_block"
+    assert kwargs["retry_after"] is not None
+
+
+def test_force_bot_retry_includes_crossref_short_circuited_paper(monkeypatch):
+    """Explicit Bot retry can revisit a blocked paper despite its abstract."""
+
+    class FakeScraper:
+        def __init__(self):
+            self.html = ""
+            self.page_url = ""
+
+        def prewarm(self):
+            return True
+
+        def fetch_page(self, url, timeout):
+            del timeout
+            self.page_url = url
+            self.html = "<html><title>Article</title></html>"
+
+        def parse_page(self):
+            return Paper(
+                doi="10.0000/forced",
+                title="Forced article",
+                abstract="Page abstract",
+                authors=[],
+            )
+
+        def close(self):
+            return None
+
+    class FakeDatabase:
+        def __init__(self):
+            self.updated = []
+
+        def get_pending_publisher_papers(self, publisher, skip_crossref_abstract):
+            del publisher, skip_crossref_abstract
+            return []
+
+        def get_papers_by_status_and_publisher(self, *args):
+            del args
+            return [{
+                "doi": "10.0000/forced",
+                "page_url": "https://example.test/forced",
+                "title": "Forced article",
+                "publisher_page_failure_kind": "bot_block",
+                "publisher_page_fetched_error": "Captcha (bot block)",
+            }]
+
+        def get_papers_by_status(self, *args):
+            del args
+            return []
+
+        def update_publisher_page(self, *args):
+            self.updated.append(args)
+
+    monkeypatch.setattr(
+        phase_c_module, "create_scraper", lambda *args, **kwargs: FakeScraper(),
+    )
+    monkeypatch.setattr(
+        phase_c_module, "SCRAPER_MAP", {"iop": (FakeScraper, None, None)},
+    )
+    monkeypatch.setattr(phase_c_module.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(phase_c_module.CFG, "SKIP_PHASE_C", False)
+    monkeypatch.setattr(phase_c_module.CFG, "MAX_PAPERS_PER_PHASE", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PREFETCH_NON_RESEARCH", False)
+    monkeypatch.setattr(phase_c_module.CFG, "POSTFETCH_NON_RESEARCH", True)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_FALLBACK_PROXY_URL", "")
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_MAX_CONSECUTIVE_FAILURES", 3)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_PAGE_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_c_module.CFG, "PUBLISHER_PAGE_DELAY_MAX", 0)
+    monkeypatch.setattr(
+        phase_c_module.CFG, "PUBLISHER_FORCE_BOT_RETRY", True, raising=False,
+    )
+
+    database = FakeDatabase()
+    phase_c_module.phase_c_publisher(
+        database, [{"publisher": "iop", "enabled": True}],
+    )
+
+    assert len(database.updated) == 1
+    assert database.updated[0][0] == "10.0000/forced"

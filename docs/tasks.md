@@ -2,6 +2,19 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-08-30：OpenAlex 元数据 fallback 与全文候选解析
+
+- B 阶段形成 CrossRef → OpenAlex → Publisher 的字段级链路：CrossRef 非空字段优先，OpenAlex
+  仅补缺失字段并重建 `abstract_inverted_index`；记录独立状态与字段来源。
+- CrossRef `link` 和 OpenAlex 外部 OA locations 写入 `paper_fulltext_locations`，默认不下载
+  `content.openalex.org`。E2 依来源优先级依次尝试候选地址，保留旧 `papers.pdf_url` 兼容。
+- 验收补强：CrossRef 缺作者时也保存其余非空字段并调用 OpenAlex；任何关键字段缺失都会触发
+  字段级补全，空字段不会擦除 RSS 现有值；OpenAlex 网络请求按配置并发、DB 合并串行。
+  下载/解析重试成功会清除旧错误。Accepted Paper 即使在重定向后才识别，也标记为 skipped
+  并释放当日配额。
+- E2 PDF 浏览器强制不配置 Publisher 代理；requests Session 设置 `trust_env=False`。文章页
+  导航失败不阻断 PDF 尝试，Accepted Paper URL 不进入下载配额。
+
 ## 2026-08-30：人工审核覆盖总结与报告筛选
 
 - 报告、报告预览和 Dashboard 的 reportable 统计统一使用有效相关性分类：无人工审核时采用 E3
@@ -20,6 +33,36 @@
 - WebUI 推荐由 systemd 用户级服务常驻管理；日常/每周流水线继续由 cron 调度。
 - E3 正文终审是报告硬门槛：必须 `fulltext`、有效 A/B 且 F 总结成功；有人工审核时以最新人工分类为准。
 - 自动运行结束最多发送一条 ntfy 汇总，详细错误写本地日志。
+
+## 2026-08-29：通用 CrossRef 摘要短路与 Publisher Bot 阻断隔离
+
+- Phase C 不再把“Publisher 页面成功”作为标题/摘要相关性初筛的前置条件。新增
+  `publisher.skip_if_crossref_abstract`（默认 `true`）：只要 B 阶段已有有效 CrossRef 摘要，
+  所有 Publisher 默认跳过浏览器抓取；E2 在确实需要 PDF 且缺少 `pdf_url` 时再延迟访问页面。
+  Scraper 类保留类属性覆写能力，特殊站点可声明必须访问页面。
+- 为避免 Radware Bot Manager、验证码等页面每天被完整重试，`papers` 新增
+  `publisher_page_retry_count`、`publisher_page_retry_after`、`publisher_page_failure_kind`。
+  Phase C 检测到 Bot 阻断时记录 `bot_block`、递增次数并写入冷却时间；daily 自动重置只处理
+  冷却结束且未达 `publisher.bot_max_retries` 的记录，达到上限后隔离。迁移前错误文本含
+  `bot block` 的历史记录同样按隔离处理。
+- `tools/run_pipeline.py` 新增 `--retry-bot-blocks`，用于人工绕过冷却/隔离并让 Bot 阻断论文
+  绕过摘要短路强制重试；普通
+  `--reset-publisher` 保留对非 Bot 失败的自动重试。
+- 新增数据库、Phase C 和 CLI 回归测试，验证通用摘要短路、Bot 状态迁移/冷却/隔离及强制重试。
+
+## 2026-08-29：隔离测试日志
+
+- 新增 `PAPERSCRAWLER_LOG_DIR` 日志目录覆盖项，所有 CLI、兼容入口和 WebUI 均遵循该设置。
+- pytest 在收集测试模块前将该变量指向临时目录；通过子进程启动 CLI 的测试不再把模拟错误、dry-run
+  和测试夹具写入 `data/logs/`。
+
+## 2026-08-29：Command Code LLM endpoint 与模型 ID 配置
+
+- LLM endpoint 和 API Key 改为优先从 `.env` 的 `LLM_BASE_URL`、`LLM_API_KEY` 读取；`LLM_BASE_URL` 可以是 `/v1` 基础地址，也可以是完整的 `/chat/completions` endpoint。
+- 新增 `LLM_MODEL_LIST` 作为可选模型目录 endpoint；流水线不在启动时强制请求模型目录，避免目录服务故障阻塞抓取和总结。
+- 根据 Command Code `/models` 返回的精确 ID 更新当前角色：Phase E 使用 `Qwen/Qwen3.7-Flash`，Phase E3 使用 `claude-sonnet-5`，Phase F 使用 `MiniMaxAI/MiniMax-M3`，FormulaFixer 使用 `Qwen/Qwen3.7-Flash`。
+- 按调用量和任务难度重新分层：高频的 E/FormulaFixer 关闭思考并使用低成本 Flash 模型；E3 正文终审使用更强的 Sonnet 5 并保留思考；F 总结继续使用支持长上下文、中文结构化输出且成本可控的 MiniMax M3。
+- 保留 `DEEPSEEK_API_KEY` 作为未设置 `LLM_API_KEY` 时的兼容回退；旧的 YAML `llm.base_url` 只作为环境变量缺失时的回退。
 
 ## 2026-08-29：静态 KaTeX 公式校验与 Prince PDF 导出
 

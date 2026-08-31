@@ -24,10 +24,12 @@ def _make_paper(authors=None):
     return p
 
 
+@patch("pipeline.phase_b.OpenAlexClient")
 @patch("pipeline.phase_b.CrossrefClient")
 @patch("pipeline.phase_b.DatabaseClient")
-def test_phase_b_marks_failed_when_authors_missing(mock_db_cls, mock_cr_cls):
-    """Missing authors → FAILED status, not SUCCESS."""
+def test_phase_b_marks_failed_when_authors_missing(
+        mock_db_cls, mock_cr_cls, mock_openalex_cls):
+    """Missing authors stays FAILED while OpenAlex fills missing fields."""
     from pipeline.phase_b import phase_b_crossref
 
     mock_db = MagicMock()
@@ -37,6 +39,7 @@ def test_phase_b_marks_failed_when_authors_missing(mock_db_cls, mock_cr_cls):
     mock_cr = MagicMock()
     mock_cr.fetch_by_doi.return_value = _make_paper(authors=None)
     mock_cr_cls.return_value = mock_cr
+    mock_openalex_cls.return_value.fetch_many.return_value = ({}, {})
 
     phase_b_crossref(mock_db)
 
@@ -54,8 +57,13 @@ def test_phase_b_marks_failed_when_authors_missing(mock_db_cls, mock_cr_cls):
     ]
     assert success_calls == [], f"Unexpected SUCCESS calls: {success_calls}"
 
-    # Must NOT write partial metadata
-    mock_db.update_crossref_metadata.assert_not_called()
+    # Preserve useful Crossref fields and invoke the field-level fallback.
+    mock_db.update_crossref_metadata.assert_called_once()
+    fetch_args, fetch_kwargs = (
+        mock_openalex_cls.return_value.fetch_many.call_args
+    )
+    assert fetch_args[0] == ["10.1234/test"]
+    assert fetch_kwargs["return_errors"] is True
 
 
 @patch("pipeline.phase_b.CrossrefClient")

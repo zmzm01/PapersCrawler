@@ -151,11 +151,28 @@ def load_prompt(name):
 
 CFG = SimpleNamespace()
 
+
+def _get_llm_api_key() -> str:
+    """Read the provider-agnostic LLM key with legacy fallback support."""
+    return os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
+
+
+DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
+
 # ---------- HTTP 请求 ----------
 CFG.REQUEST_TIMEOUT = 30
 
 # ---------- CrossRef API ----------
 CFG.CROSSREF_MAILTO = os.getenv("CROSSREF_MAILTO", "your_email@example.com")
+
+# ---------- OpenAlex API fallback ----------
+CFG.OPENALEX_ENABLED = True
+CFG.OPENALEX_API_KEY = os.getenv("OPENALEX_API_KEY", "").strip()
+CFG.OPENALEX_MAX_CONCURRENCY = 4
+CFG.OPENALEX_REQUESTS_PER_SECOND = 8
+CFG.OPENALEX_TIMEOUT = 30
+CFG.OPENALEX_MAX_ATTEMPTS = 3
+CFG.OPENALEX_BACKOFF_MAX_SECONDS = 30
 
 # ---------- MinerU ----------
 CFG.MINERU_TOKEN = os.getenv("MINERU_TOKEN", "")
@@ -172,10 +189,12 @@ CFG.NTFY_TITLE = "PapersCrawler 运行汇总"
 CFG.NTFY_PRIORITY = "default"
 
 # ---------- Multi-protocol LLM API ----------
-CFG.LLM_BASE_URL = "https://api.deepseek.com"
+CFG.LLM_BASE_URL = os.getenv("LLM_BASE_URL") or DEFAULT_LLM_BASE_URL
+CFG.LLM_MODEL_LIST_URL = os.getenv("LLM_MODEL_LIST", "").strip()
+CFG.LLM_API_KEY = _get_llm_api_key()
 CFG.LLM_API_CONFIG_DICT_RELE = {
     "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
-    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "api_key": CFG.LLM_API_KEY,
     "model": "deepseek-v4-flash",
     "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "disabled",
@@ -185,7 +204,7 @@ CFG.LLM_API_CONFIG_DICT_RELE = {
 }
 CFG.LLM_API_CONFIG_DICT_FULLTEXT = {
     "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
-    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "api_key": CFG.LLM_API_KEY,
     "model": "deepseek-v4-pro",
     "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "enabled",
@@ -195,7 +214,7 @@ CFG.LLM_API_CONFIG_DICT_FULLTEXT = {
 }
 CFG.LLM_API_CONFIG_DICT_SUMM = {
     "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
-    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "api_key": CFG.LLM_API_KEY,
     "model": "deepseek-v4-pro",
     "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "enabled",
@@ -205,7 +224,7 @@ CFG.LLM_API_CONFIG_DICT_SUMM = {
 }
 CFG.LLM_API_CONFIG_DICT_FORMULA = {
     "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
-    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "api_key": CFG.LLM_API_KEY,
     "model": "deepseek-v4-flash",
     "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "disabled",
@@ -315,6 +334,14 @@ CFG.PUBLISHER_PROXY = {
     "optica": {"server": "http://127.0.0.1:10808"},
 }
 CFG.PUBLISHER_FALLBACK_PROXY_URL = ""
+# Publisher 页面已有 CrossRef 摘要时直接跳过 Phase C。出版商仍可通过
+# Scraper 类属性显式关闭该优化（例如页面摘要是唯一可靠来源的站点）。
+CFG.PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT = True
+# Bot Manager/验证码失败不应在每次 daily 运行中重复消耗浏览器时间。
+CFG.PUBLISHER_BOT_RETRY_COOLDOWN_HOURS = 72
+CFG.PUBLISHER_BOT_MAX_RETRIES = 3
+# CLI 运行时临时覆盖：只让明确标记为 Bot 阻断的待办论文绕过摘要短路。
+CFG.PUBLISHER_FORCE_BOT_RETRY = False
 
 # ---------- LLM 公式修复 ----------
 CFG.SKIP_FORMULA_FIX = False
@@ -377,8 +404,11 @@ def _apply_settings(settings):
 
     # LLM API 配置
     llm_cfg = settings.get("llm", {})
-    base_url = llm_cfg.get("base_url", CFG.LLM_BASE_URL)
+    env_base_url = os.getenv("LLM_BASE_URL", "").strip()
+    base_url = env_base_url or llm_cfg.get("base_url", CFG.LLM_BASE_URL)
     CFG.LLM_BASE_URL = str(base_url).strip()
+    CFG.LLM_MODEL_LIST_URL = os.getenv("LLM_MODEL_LIST", "").strip()
+    CFG.LLM_API_KEY = _get_llm_api_key()
     default_protocol = llm_cfg.get("protocol", LLM_PROTOCOL_OPENAI_CHAT)
     rele = llm_cfg.get("relevance", {})
     summ = llm_cfg.get("summary", {})
@@ -413,6 +443,7 @@ def _apply_settings(settings):
                         CFG.LLM_API_CONFIG_DICT_SUMM,
                         CFG.LLM_API_CONFIG_DICT_FULLTEXT,
                         CFG.LLM_API_CONFIG_DICT_FORMULA):
+        config_dict["api_key"] = CFG.LLM_API_KEY
         config_dict["retry_max_attempts"] = retry_cfg.get(
             "max_attempts", config_dict["retry_max_attempts"],
         )
@@ -464,6 +495,31 @@ def _apply_settings(settings):
     CFG.FULLTEXT_DOWNLOAD_DELAY_MIN = download.get("delay_min_seconds", CFG.FULLTEXT_DOWNLOAD_DELAY_MIN)
     CFG.FULLTEXT_DOWNLOAD_DELAY_MAX = download.get("delay_max_seconds", CFG.FULLTEXT_DOWNLOAD_DELAY_MAX)
 
+    openalex = settings.get("openalex", {})
+    CFG.OPENALEX_ENABLED = bool(openalex.get("enabled", CFG.OPENALEX_ENABLED))
+    CFG.OPENALEX_API_KEY = str(openalex.get(
+        "api_key", CFG.OPENALEX_API_KEY,
+    ) or os.getenv("OPENALEX_API_KEY", "")).strip()
+    CFG.OPENALEX_MAX_CONCURRENCY = max(
+        1, int(openalex.get("max_concurrency", CFG.OPENALEX_MAX_CONCURRENCY)),
+    )
+    CFG.OPENALEX_REQUESTS_PER_SECOND = max(
+        0.1, float(openalex.get(
+            "requests_per_second", CFG.OPENALEX_REQUESTS_PER_SECOND,
+        )),
+    )
+    CFG.OPENALEX_TIMEOUT = max(
+        1, int(openalex.get("timeout_seconds", CFG.OPENALEX_TIMEOUT)),
+    )
+    CFG.OPENALEX_MAX_ATTEMPTS = max(
+        1, int(openalex.get("max_attempts", CFG.OPENALEX_MAX_ATTEMPTS)),
+    )
+    CFG.OPENALEX_BACKOFF_MAX_SECONDS = max(
+        0, float(openalex.get(
+            "backoff_max_seconds", CFG.OPENALEX_BACKOFF_MAX_SECONDS,
+        )),
+    )
+
     # 爬虫参数
     ps = settings.get("publisher", {})
     CFG.PUBLISHER_PAGE_DELAY_MIN = ps.get("page_delay_min", CFG.PUBLISHER_PAGE_DELAY_MIN)
@@ -478,6 +534,21 @@ def _apply_settings(settings):
         "fallback_proxy_url", CFG.PUBLISHER_FALLBACK_PROXY_URL,
     )
     CFG.PUBLISHER_FALLBACK_PROXY_URL = str(fallback_proxy_url or "").strip()
+    CFG.PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT = bool(ps.get(
+        "skip_if_crossref_abstract",
+        CFG.PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT,
+    ))
+    CFG.PUBLISHER_BOT_RETRY_COOLDOWN_HOURS = max(
+        1,
+        int(ps.get(
+            "bot_retry_cooldown_hours",
+            CFG.PUBLISHER_BOT_RETRY_COOLDOWN_HOURS,
+        )),
+    )
+    CFG.PUBLISHER_BOT_MAX_RETRIES = max(
+        1,
+        int(ps.get("bot_max_retries", CFG.PUBLISHER_BOT_MAX_RETRIES)),
+    )
 
     # 公式修复
     CFG.FORMULA_FIX_CONCURRENT_MAX = max(

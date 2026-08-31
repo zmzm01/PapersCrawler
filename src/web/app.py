@@ -24,9 +24,12 @@ import os
 from pydantic import BaseModel
 
 from config import DATA_DIR
-from logging_config import configure_logging
+from logging_config import configure_logging, resolve_log_dir
 
-configure_logging(os.getenv("LOG_LEVEL", "DEBUG"), DATA_DIR / "logs")
+configure_logging(
+    os.getenv("LOG_LEVEL", "DEBUG"),
+    resolve_log_dir(DATA_DIR / "logs"),
+)
 logger = logging.getLogger(__name__)
 
 # 在 logging.basicConfig 配置完成后再检测 token，避免 warning 偷装默认 handler
@@ -361,6 +364,7 @@ async def relevance_review_page(
         "confidence_filter": confidence,
         "disagreement_only": disagreement,
         "search_text": search,
+        "sort_by": sort_by,
         "page": min(page, total_pages),
         "per_page": per_page,
         "total_count": total_count,

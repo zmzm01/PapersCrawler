@@ -25,6 +25,7 @@ DB_PATH = PROJECT_ROOT / "data" / "papers.db"
 FORBIDDEN_OUTPUT_MARKERS = (
     "CLOUDFLARE_API_TOKEN",
     "DEEPSEEK_API_KEY",
+    "LLM_API_KEY",
     "MINERU_TOKEN",
     "report_explained",
     "full.md",

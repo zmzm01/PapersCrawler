@@ -400,11 +400,11 @@ class FormulaFixer:
 
 if __name__ == "__main__":
     # ===== 配置和运行示例 =====
-    # 实际运行前需要设置有效的 DEEPSEEK_API_KEY 环境变量或直接填入 api_key
+    # 实际运行前需要设置有效的 LLM_API_KEY 环境变量或直接填入 api_key
     LLM_API_CONFIG_DICT = {
         "api_url": "https://api.deepseek.com/chat/completions",
-        "api_key": os.getenv("DEEPSEEK_API_KEY", "sk-placeholder"),
-        "model_name": "deepseek-v4-pro", # or deepseek-v4-pro stronger
+        "api_key": os.getenv("LLM_API_KEY", "sk-placeholder"),
+        "model_name": "deepseek/deepseek-v4-pro", # or another configured model
         "thinking": "enabled",
         "timeout": 300,
     }
@@ -412,7 +412,7 @@ if __name__ == "__main__":
     # 从配置加载系统提示词（如文件不存在则使用内嵌后备值）
     from config import CFG
     SUMMARIES_PROMPT = CFG.SUMMARIES_PROMPT
-    # 示例：请先设置 export DEEPSEEK_API_KEY="your-key"
+    # 示例：请先设置 export LLM_API_KEY="your-key"
     summarizer = DeepSeekPaperSummarizer(llm_api_config=LLM_API_CONFIG_DICT)
     paperMDpath = Path("./TEST/MinerU_Paper_Parser/qdgp-tydj/full.md")
     full_text = paperMDpath.read_text()

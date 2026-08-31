@@ -11,10 +11,70 @@ import requests
 from config import CFG
 from db.database import DatabaseClient, FetchStatus
 from sources.crossref import CrossrefClient, NotFoundError
+from sources.openalex import OpenAlexClient, OpenAlexNotFoundError
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["phase_b_crossref", "DatabaseClient"]
+
+
+def _crossref_links(metadata):
+    """Extract external full-text links from a Crossref metadata object."""
+    links = []
+    for link in (getattr(metadata, "raw", None) or {}).get("link", []):
+        url = link.get("URL") if isinstance(link, dict) else None
+        if url:
+            links.append({
+                "url": url,
+                "source": "crossref",
+                "is_oa": bool(link.get("content-version") == "vor"),
+                "version": link.get("content-version"),
+                "license": None,
+            })
+    return links
+
+
+def _fetch_openalex_fallbacks(db, fallback_tasks):
+    """Fetch queued OpenAlex fallbacks concurrently, then merge serially."""
+    if (not fallback_tasks or not CFG.OPENALEX_ENABLED
+            or not hasattr(db, "update_openalex_metadata")):
+        return
+    client = OpenAlexClient(
+        api_key=CFG.OPENALEX_API_KEY,
+        timeout=CFG.OPENALEX_TIMEOUT,
+        max_retries=CFG.OPENALEX_MAX_ATTEMPTS,
+        requests_per_second=CFG.OPENALEX_REQUESTS_PER_SECOND,
+        backoff_max_seconds=CFG.OPENALEX_BACKOFF_MAX_SECONDS,
+    )
+    try:
+        metadata_by_doi, errors_by_doi = client.fetch_many(
+            [doi for doi, _ in fallback_tasks],
+            max_concurrency=CFG.OPENALEX_MAX_CONCURRENCY,
+            return_errors=True,
+        )
+        for doi, timestamp in fallback_tasks:
+            metadata = metadata_by_doi.get(doi)
+            if metadata is not None:
+                db.update_openalex_metadata(doi, metadata, timestamp)
+                db.update_openalex_status(
+                    doi, FetchStatus.SUCCESS.value, None, timestamp,
+                )
+                continue
+            error = errors_by_doi.get(doi, RuntimeError("No OpenAlex result"))
+            if isinstance(error, OpenAlexNotFoundError):
+                status = FetchStatus.SKIPPED.value
+            else:
+                status = FetchStatus.FAILED.value
+                logger.warning("OpenAlex fallback failed [%s]: %s", doi, error)
+            db.update_openalex_status(doi, status, str(error), timestamp)
+    except Exception as error:
+        logger.warning("OpenAlex fallback batch failed: %s", error)
+        for doi, timestamp in fallback_tasks:
+            db.update_openalex_status(
+                doi, FetchStatus.FAILED.value, str(error), timestamp,
+            )
+    finally:
+        client.close()
 
 
 def phase_b_crossref(db):
@@ -38,6 +98,7 @@ def phase_b_crossref(db):
         return
 
     logger.info(f"Phase B: {len(paper_tasks)} papers pending")
+    openalex_fallback_tasks = []
 
     for paper_task in paper_tasks:
         paperDOI = paper_task["doi"]
@@ -56,18 +117,42 @@ def phase_b_crossref(db):
                     "cr_metadata_fetched_error", "CrossRef returned no authors",
                     "cr_metadata_fetched_date", timestamp,
                 )
+                # Crossref can still provide useful title/abstract/links even
+                # when its author list is incomplete. Persist those fields,
+                # then let OpenAlex fill only what remains missing.
+                db.update_crossref_metadata(
+                    paperDOI, crossrefPaper.title, "",
+                    crossrefPaper.published, crossrefPaper.abstract or "",
+                    _crossref_links(crossrefPaper),
+                )
+                openalex_fallback_tasks.append((paperDOI, timestamp))
             else:
                 authors_json = json.dumps(crossrefPaper.authors, ensure_ascii=False)
                 db.update_crossref_metadata(
                     paperDOI, crossrefPaper.title,
                     authors_json, crossrefPaper.published,
                     crossrefPaper.abstract or "",
+                    _crossref_links(crossrefPaper),
                 )
                 db.update_process_status(
                     paperDOI, "cr_metadata_fetched_status",
                     FetchStatus.SUCCESS.value,
                     "cr_metadata_fetched_date", timestamp,
                 )
+                missing_crossref_fields = any((
+                    not crossrefPaper.title,
+                    not crossrefPaper.authors,
+                    not crossrefPaper.published,
+                    not crossrefPaper.abstract,
+                ))
+                if not missing_crossref_fields:
+                    if hasattr(db, "update_openalex_status"):
+                        db.update_openalex_status(
+                            paperDOI, FetchStatus.SKIPPED.value,
+                            "Crossref abstract available", timestamp,
+                        )
+                else:
+                    openalex_fallback_tasks.append((paperDOI, timestamp))
 
         except NotFoundError as e:
             logger.warning(f"CrossRef no record: {paperDOI}")
@@ -77,6 +162,7 @@ def phase_b_crossref(db):
                 "cr_metadata_fetched_error", str(e),
                 "cr_metadata_fetched_date", timestamp,
             )
+            openalex_fallback_tasks.append((paperDOI, timestamp))
 
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429:
@@ -89,6 +175,7 @@ def phase_b_crossref(db):
                 "cr_metadata_fetched_error", str(e),
                 "cr_metadata_fetched_date", timestamp,
             )
+            openalex_fallback_tasks.append((paperDOI, timestamp))
 
         except Exception as e:
             logger.error(f"CrossRef failed [{paperDOI}]: {e}")
@@ -98,5 +185,7 @@ def phase_b_crossref(db):
                 "cr_metadata_fetched_error", str(e),
                 "cr_metadata_fetched_date", timestamp,
             )
+            openalex_fallback_tasks.append((paperDOI, timestamp))
 
+    _fetch_openalex_fallbacks(db, openalex_fallback_tasks)
     logger.info("Phase B done")

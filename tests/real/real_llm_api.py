@@ -1,13 +1,13 @@
 """
-T3 真实测试：调用 DeepSeek API (相关性 + 总结) 并捕获响应作为 fixture。
+T3 真实测试：调用配置的 LLM API (相关性 + 总结) 并捕获响应作为 fixture。
 
 用法:
   python tests/real/real_llm_api.py
 
 前置条件:
-  - .env 中配置了 DEEPSEEK_API_KEY
+  - .env 中配置了 LLM_API_KEY
   - 网络连接正常
-  - DeepSeek 账户有余额
+  - LLM Provider 账户有余额
 
 输出:
   - tests/fixtures/llm_relevance_response.json
@@ -33,7 +33,7 @@ def run_relevance():
 
     config = dict(CFG.LLM_API_CONFIG_DICT_RELE)
     if not config.get("api_key"):
-        print("[SKIP] DEEPSEEK_API_KEY not configured in .env")
+        print("[SKIP] LLM_API_KEY not configured in .env")
         return False
 
     keywords = ["laser plasma", "wakefield acceleration", "proton acceleration"]
@@ -67,7 +67,7 @@ def run_summary():
 
     config = dict(CFG.LLM_API_CONFIG_DICT_SUMM)
     if not config.get("api_key"):
-        print("[SKIP] DEEPSEEK_API_KEY not configured for summary")
+        print("[SKIP] LLM_API_KEY not configured for summary")
         return False
 
     summarizer = DeepSeekPaperSummarizer(llm_api_config=config)
