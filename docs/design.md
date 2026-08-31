@@ -311,7 +311,9 @@ Phase H 从 `data/email.yaml` 读取收件人，失败时回退 `.env` 的 `SMTP
 
 Astro 使用静态输出，不读取 SQLite、API 密钥或内部 WebUI 数据。`tools/deploy_report_site.py`
 负责将自动报告导出到 Astro 数据目录、加载 nvm 中的 Node.js、构建 `report-site/dist/`，
-并可选上传 Cloudflare Pages。
+并通过项目锁定的 Wrangler 上传 Cloudflare Pages。账户 ID、API Token 和 Pages 项目名保存在
+根目录 gitignored 的 `.env`；脚本从固定项目路径加载后注入 Wrangler 进程，避免日常部署手动设置环境变量。
+CI 可直接提供同名 `CLOUDFLARE_*` 环境变量，不需要 `.env` 文件。
 
 ## 部署与运维
 
