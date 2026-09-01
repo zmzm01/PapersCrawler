@@ -2,6 +2,12 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-09-01：来源站点访问策略与 Optica E2 路由统一
+
+- 配置根键由 `publisher` 更名为 `source_access`，明确其描述的是访问论文来源站点的策略，而非仅 Phase C；保留旧键读取兼容并在使用时输出迁移警告。
+- `source_access.routes.<source>` 定义来源专属主路由。Phase C 与 E2 延迟解析文章页、下载 PDF 时共用，Optica 因中国地区出口信誉较低而配置的代理不再被 E2 忽略。
+- `source_access.fallback_proxy_url` 保持为仅供 Phase C 常规重试耗尽后的末级代理，不与来源专属主路由混淆。
+
 ## 2026-08-31：Cloudflare Pages Token 统一使用 `.env`
 
 - 按项目既有密钥管理方式，部署所需的 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN` 和

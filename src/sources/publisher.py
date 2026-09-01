@@ -104,7 +104,7 @@ class BasePublisherScraper:
     # ── Phase C 跳过配置 ──
     # 默认情况下，Phase C 会检查论文是否已有有效 CrossRef 摘要；有摘要时
     # 直接跳过浏览器访问，减少反爬消耗并加速 Pipeline。全局行为由
-    # ``publisher.skip_if_crossref_abstract`` 控制，特殊 Publisher 可将此类
+    # ``source_access.skip_if_crossref_abstract`` 控制，特殊 Publisher 可将此类
     # 属性覆盖为 False，声明页面仍是其唯一可靠元数据来源。
     skip_phase_c_if_crossref_abstract: bool = True
 

@@ -525,14 +525,25 @@ def _apply_settings(settings):
         )),
     )
 
-    # 爬虫参数
-    ps = settings.get("publisher", {})
+    # Source access 参数。``publisher`` 为迁移前的旧键，保留读取兼容，
+    # 以免现有部署升级后丢失访问路由；新配置应使用 ``source_access``。
+    source_access = settings.get("source_access")
+    if source_access is None:
+        source_access = settings.get("publisher", {})
+        if source_access:
+            logging.getLogger(__name__).warning(
+                "Deprecated settings key 'publisher'; use 'source_access' instead"
+            )
+    if not isinstance(source_access, dict):
+        source_access = {}
+
+    ps = source_access
     CFG.PUBLISHER_PAGE_DELAY_MIN = ps.get("page_delay_min", CFG.PUBLISHER_PAGE_DELAY_MIN)
     CFG.PUBLISHER_PAGE_DELAY_MAX = ps.get("page_delay_max", CFG.PUBLISHER_PAGE_DELAY_MAX)
     CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES = ps.get("max_consecutive_failures", CFG.PUBLISHER_MAX_CONSECUTIVE_FAILURES)
     CFG.PUBLISHER_CHALLENGE_MAX_RELOADS = ps.get("challenge_max_reloads", CFG.PUBLISHER_CHALLENGE_MAX_RELOADS)
     CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS = ps.get("challenge_reload_wait_ms", CFG.PUBLISHER_CHALLENGE_RELOAD_WAIT_MS)
-    cfg_proxy = ps.get("proxy", {})
+    cfg_proxy = ps.get("routes", ps.get("proxy", {}))
     if cfg_proxy:
         CFG.PUBLISHER_PROXY = cfg_proxy
     fallback_proxy_url = ps.get(

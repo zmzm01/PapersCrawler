@@ -200,11 +200,11 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
   ``MissingPageURL``，不会只留下 failed 状态。
 - CLI daily 默认重置普通 Publisher、MinerU 和 LLM 相关性的 failed 状态。Publisher 页面被
   Bot Manager/验证码拦截时，C 阶段将 `failure_kind` 记为 `bot_block`，递增重试次数并写入
-  `retry_after`；daily 只在冷却结束且未达到 `publisher.bot_max_retries` 时自动重置，达到上限
+  `retry_after`；daily 只在冷却结束且未达到 `source_access.bot_max_retries` 时自动重置，达到上限
   后保持隔离，不再无限重复启动浏览器。历史错误文本含 `bot block` 的旧记录也按隔离处理。
   `tools/run_pipeline.py --retry-bot-blocks` 可显式绕过冷却和隔离，并仅让已标记为 Bot 阻断的论文
   绕过摘要短路，执行一次人工强制重试；其他已有摘要的论文仍保持短路。
-- Publisher 支持 Cloudflare challenge reload、失败熔断、持久化浏览器上下文和 HTML 错误快照；常规抓取重试耗尽后，可用 `publisher.fallback_proxy_url` 启动独立代理上下文再尝试一次。`BasePublisherScraper` 在构造时初始化空 HTML，错误快照优先使用缓存内容，并在页面/事件循环已关闭时跳过 live content 读取，确保导航在生成页面内容前失败时不会被二次快照异常遮蔽。`import_local_pdf.py` 将 PDF 落盘和 MinerU 状态重置作为一次明确提交的数据库操作。
+- 来源站点访问支持 Cloudflare challenge reload、失败熔断、持久化浏览器上下文和 HTML 错误快照。`source_access.routes.<source>` 定义该来源的主访问路由，Phase C 与 E2 的延迟页面解析及 PDF 下载共用；常规 Phase C 抓取重试耗尽后，可用 `source_access.fallback_proxy_url` 启动独立代理上下文再尝试一次。`BasePublisherScraper` 在构造时初始化空 HTML，错误快照优先使用缓存内容，并在页面/事件循环已关闭时跳过 live content 读取，确保导航在生成页面内容前失败时不会被二次快照异常遮蔽。`import_local_pdf.py` 将 PDF 落盘和 MinerU 状态重置作为一次明确提交的数据库操作。
 - LLM 请求支持指数退避和 circuit breaker。
 - LLM 支持按角色切换 OpenAI Chat Completions 与 Anthropic Messages 协议；HTTP 4xx 错误会保留有限长度的服务端响应正文，便于定位网关参数不兼容。
 
