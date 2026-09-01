@@ -124,6 +124,9 @@ cron 调度。WebUI 不启动浏览器抓取；无头服务器的 `xvfb-run` 只
 
 详见 [`docs/usage.md`](docs/usage.md#典型工作流)。
 
+公共仓库保留项目开发历史，但提交使用 GitHub 无回复邮箱；`.env`、运行数据库、报告数据和
+机器专属路径不纳入版本控制。
+
 报告站点由周任务自动构建并部署至 Cloudflare Pages。详见
 [`docs/usage.md`](docs/usage.md#公开-astro-报告站点)。
 

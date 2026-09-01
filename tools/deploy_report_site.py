@@ -32,7 +32,8 @@ FORBIDDEN_OUTPUT_MARKERS = (
     "MINERU_TOKEN",
     "report_explained",
     "full.md",
-    "/path/to/Applications/",
+    "/home/",
+    "/Users/",
 )
 
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -52,7 +53,7 @@ def _resolve_node_bin() -> Path:
     RuntimeError
         If neither the configured nvm installation nor PATH provides Node.js.
     """
-    nvm_dir = Path(os.environ.get("NVM_DIR", "/path/to/nvm"))
+    nvm_dir = Path(os.environ.get("NVM_DIR", str(Path.home() / ".nvm")))
     nvm_script = nvm_dir / "nvm.sh"
     if nvm_script.exists():
         command = (

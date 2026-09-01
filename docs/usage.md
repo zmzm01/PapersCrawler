@@ -635,11 +635,11 @@ python tools/export_public_reports.py \
 ### 公开 Astro 报告站点
 
 新站点源码位于 `report-site/`，不依赖 `../MySite`。它使用 Node.js/npm，当前服务器通过
-`/path/to/nvm` 管理 Node；非交互 shell 需要显式加载 nvm：
+`$HOME/.nvm` 管理 Node；非交互 shell 需要显式加载 nvm：
 
 ```bash
 cd report-site
-. /path/to/nvm/nvm.sh
+. "$HOME/.nvm/nvm.sh"
 nvm use default
 npm ci
 npm run check
@@ -685,6 +685,13 @@ Token 仅授予目标账户的 **Cloudflare Pages 编辑**权限。`.env` 已被
 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_PAGES_PROJECT`，不需要 `.env` 文件。
 
 `--branch NAME` 用于上传 Cloudflare Pages 预览分支，未指定时上传生产部署。该命令不会操作 GitHub Pages 或 `gh-pages`。
+
+### 公开仓库隐私检查
+
+公共仓库保留开发历史，但不应提交个人邮箱、API 密钥、SMTP/ntfy 凭据、SQLite 数据库、报告
+输出或机器专属绝对路径。真实运行配置放在根目录 `.env`，项目配置只提交 `.example` 模板；
+systemd 和文档中的路径使用 `/path/to/...` 占位符，代码默认路径通过环境变量或用户主目录解析。
+发布前应同时检查当前文件和全部 Git 历史，确认没有被删除文件或旧提交重新暴露敏感内容。
 
 ### Prince PDF 导出
 
