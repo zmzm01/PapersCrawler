@@ -77,6 +77,26 @@ def test_fetch_papers_before_date_can_combine_with_week_scope(db):
     assert [paper["doi"] for paper in papers] == ["10.0000/inside"]
 
 
+def test_fetch_papers_supports_inclusive_historical_date_window(db):
+    """Historical rebuilds select exactly one inclusive created_date window."""
+    _insert_reportable_paper(db, "10.0000/old", "20260809")
+    _insert_reportable_paper(db, "10.0000/start", "20260810")
+    _insert_reportable_paper(db, "10.0000/end", "2026-08-16")
+    _insert_reportable_paper(db, "10.0000/new", "20260817")
+
+    papers = _fetch_papers(
+        db,
+        "all",
+        datetime(2026, 8, 16),
+        from_date="2026-08-10",
+        through_date="2026-08-16",
+    )
+
+    assert {paper["doi"] for paper in papers} == {
+        "10.0000/start", "10.0000/end"
+    }
+
+
 def test_fetch_papers_uses_latest_manual_decision(db):
     """Preview selection follows manual downgrades and promotions."""
     _insert_reportable_paper(db, "10.0000/manual-c", "20260820")

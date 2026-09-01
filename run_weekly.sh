@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 每周运行包装脚本 - 报告生成 + 邮件推送 + GitHub Pages 部署
+# 每周运行包装脚本 - 报告生成 + 邮件推送 + Cloudflare Pages 部署
 # 可通过 PAPERSCRAWLER_PYTHON 指定项目 Python；默认使用 PATH 中的 python。
 # Phase G/H 不需要浏览器，无需 xvfb-run。
 # =============================================================================
@@ -10,7 +10,7 @@ set -euo pipefail
 PYTHON="${PAPERSCRAWLER_PYTHON:-python}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 
-# crontab 下 PATH 极简，补充 hugo(/usr/local/bin) 和 conda bin(ghp-import等)
+# crontab 下 PATH 极简，补充项目 Python 所在目录。
 PYTHON_BIN_DIR="$(dirname "${PYTHON}")"
 export PATH="/usr/local/bin:${PYTHON_BIN_DIR}:${PATH:-}"
 
@@ -23,5 +23,5 @@ export LOG_LEVEL
 echo "[run_weekly] Phase G + H: report generation and email delivery"
 "${PYTHON}" tools/run_pipeline.py --weekly
 
-echo "[run_weekly] Deploying latest report to GitHub Pages"
-"${PYTHON}" tools/convert_reports_to_hugo.py --all --hugo --deploy
+echo "[run_weekly] Building and deploying public reports to Cloudflare Pages"
+"${PYTHON}" tools/deploy_report_site.py

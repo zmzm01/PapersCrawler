@@ -19,6 +19,7 @@ const currentYear = new Date().getFullYear();
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width" />
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<meta name="description" content={description} />
 		{noindex && <meta name="robots" content="noindex, nofollow" />}
 		{canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
@@ -69,6 +70,7 @@ const currentYear = new Date().getFullYear();
 		--accent-soft: #d8e5e6;
 		--warm: #e8d8b9;
 		--display: Iowan Old Style, Baskerville, "Noto Serif SC", Georgia, serif;
+		--reading-size: 1rem;
 		font-family: Inter, "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
 		color: var(--ink);
 		background: radial-gradient(circle at 100% 0%, #dbe7e7 0, transparent 30rem), var(--wash);
@@ -76,7 +78,7 @@ const currentYear = new Date().getFullYear();
 
 	* { box-sizing: border-box; }
 	html { scroll-behavior: smooth; }
-	body { margin: 0; min-width: 320px; }
+	body { font-size: 16px; line-height: 1.65; margin: 0; min-width: 320px; }
 	[id] { scroll-margin-top: 5.5rem; }
 	a { color: inherit; }
 	a, button { -webkit-tap-highlight-color: transparent; }
@@ -160,7 +162,7 @@ const currentYear = new Date().getFullYear();
 	.paper-item h3 a { text-decoration: none; }
 	.paper-item h3 a:hover, .links a:hover { color: var(--accent); }
 	.external { color: var(--accent); font-family: sans-serif; font-size: .8em; margin-left: .2rem; }
-	.paper-summary { font-size: .98rem; line-height: 1.7; margin: .5rem 0 .65rem; overflow-wrap: anywhere; }
+	.paper-summary { font-size: var(--reading-size); line-height: 1.7; margin: .5rem 0 .65rem; overflow-wrap: anywhere; }
 	.paper-meta { display: flex; flex-wrap: wrap; gap: .55rem; }
 	.chips { align-items: center; display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .8rem; }
 	.chips span { background: var(--tag); border-radius: .35rem; color: var(--muted); display: inline-flex; font-size: .72rem; line-height: 1.2; min-height: 1.4rem; overflow-wrap: anywhere; padding: .24rem .55rem; }
@@ -171,9 +173,9 @@ const currentYear = new Date().getFullYear();
 	summary { color: var(--accent); cursor: pointer; font-size: .87rem; font-weight: 700; }
 	.paper-details { background: var(--surface-muted); border-left: 2px solid var(--accent); border-radius: 0 .35rem .35rem 0; padding: .85rem 1rem; }
 	.paper-details > div { margin-top: 1.2rem; }
-	.paper-details h4 { color: var(--accent); font-size: 1rem; line-height: 1.4; margin: 0 0 .55rem; }
-	.paper-details p { font-size: .9rem; line-height: 1.75; margin: .8rem 0 0; }
-	.markdown-body { font-size: 1rem; line-height: 1.82; }
+	.paper-details h4 { color: var(--accent); font-size: 1.05rem; line-height: 1.4; margin: 0 0 .55rem; }
+	.paper-details p { font-size: var(--reading-size); line-height: 1.75; margin: .8rem 0 0; }
+	.markdown-body { font-size: var(--reading-size); line-height: 1.82; }
 	.markdown-body p { font-size: inherit; line-height: inherit; margin: .75rem 0 0; }
 	.markdown-body .report-markdown-heading { color: var(--ink); font-family: var(--display); font-weight: 700; letter-spacing: -.015em; line-height: 1.35; margin: 1.35rem 0 .5rem; }
 	.markdown-body .report-markdown-heading-3 { font-size: 1.22rem; }

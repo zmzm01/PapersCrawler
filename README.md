@@ -39,7 +39,8 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **可验证公式与印刷级 PDF**：FormulaFixer 可配置 KaTeX 校验驱动的 LLM 修复轮数；Markdown 可离线预渲染为静态 KaTeX HTML，再由 Prince 生成 PDF（免费版带水印）
 - **多协议 LLM 接入**：按角色支持 Chat Completions、OpenAI Responses 和 Anthropic Messages；可接入 Command Code、OpenCode Zen 等 OpenAI-compatible 网关及其模型，并兼容模型偶发的 Markdown/JSON 格式包装；FormulaFixer 使用独立模型和并发池
 - **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
-- **独立报告站点**：`report-site/` 使用 Astro 静态构建，借鉴报告归档、论文目录和折叠解读设计；旧 Hugo 站点暂时保留
+- **历史周报重建**：`tools/rebuild_historical_reports.py` 可按相邻周报日期划分的 `created_date` 窗口，批量补建旧报告的当前 JSON sidecar，并跳过无合格论文的空周报
+- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，带独立 favicon 和统一阅读字号；自动报告和公开历史归档可见，组内特别报告保持隔离
 - **报告解释页**：`report_YYYYMMDD_explained.html` 展示 LLM prompt 快照
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
 - **ntfy 单条运行汇总**：自动运行结束时以 Web 端友好的 Markdown 展示状态、阶段、相关性、总结和问题；失败不阻塞流水线
@@ -114,7 +115,7 @@ cron 调度。WebUI 不启动浏览器抓取；无头服务器的 `xvfb-run` 只
 # 每日 Phase A→F（发现 → LLM 总结）
 0 10 * * * /path/to/PapersCrawler/run_daily.sh
 
-# 每周日 20:00（Asia/Shanghai）Phase G→H + 当前 Hugo 部署
+# 每周日 20:00（Asia/Shanghai）Phase G→H + Cloudflare Pages 部署
 0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh
 ```
 
@@ -123,8 +124,8 @@ cron 调度。WebUI 不启动浏览器抓取；无头服务器的 `xvfb-run` 只
 
 详见 [`docs/usage.md`](docs/usage.md#典型工作流)。
 
-新 Astro 报告站点目前独立预览，不会替换上述 Hugo 周任务。详见
-[`docs/usage.md`](docs/usage.md#独立-astro-报告站点)。
+报告站点由周任务自动构建并部署至 Cloudflare Pages。详见
+[`docs/usage.md`](docs/usage.md#公开-astro-报告站点)。
 
 ## 测试
 

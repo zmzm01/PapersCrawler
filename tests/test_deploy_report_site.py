@@ -73,6 +73,7 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
     node_bin = tmp_path / "node-bin"
     node_bin.mkdir()
     monkeypatch.setattr(deploy_report_site, "AUTO_REPORT_DIR", tmp_path)
+    monkeypatch.setattr(deploy_report_site, "LEGACY_REPORT_DIR", tmp_path / "legacy")
     monkeypatch.setattr(deploy_report_site, "REPORT_SITE_DIR", tmp_path)
     monkeypatch.setattr(deploy_report_site, "REPORT_DATA_DIR", tmp_path / "reports")
     monkeypatch.setattr(deploy_report_site.sys, "argv", ["deploy_report_site.py"])
@@ -81,7 +82,7 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
     monkeypatch.setenv("CLOUDFLARE_PAGES_PROJECT", "site-name")
 
     with (
-        patch("tools.deploy_report_site.export_reports", return_value=1),
+        patch("tools.deploy_report_site.export_reports", return_value=1) as export,
         patch("tools.deploy_report_site._resolve_node_bin", return_value=node_bin),
         patch("tools.deploy_report_site._build_site", return_value=output_dir) as build,
         patch("tools.deploy_report_site._validate_output"),
@@ -93,3 +94,4 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
     assert build_environment["CLOUDFLARE_ACCOUNT_ID"] == "account-id"
     assert build_environment["CLOUDFLARE_API_TOKEN"] == "token-value"
     assert deploy.call_args.args[2] == "site-name"
+    assert export.call_args.args[1] == [tmp_path]

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build and deploy the independent Astro report site to Cloudflare Pages.
+"""Build and deploy the public Astro report site to Cloudflare Pages.
 
-The legacy Hugo site remains available through ``tools/convert_reports_to_hugo.py``.
-This command publishes only the Astro site under ``report-site/`` and never
-touches the ``gh-pages`` branch. Cloudflare API credentials and the Pages
-project are read from the repository's local, gitignored ``.env`` file.
+The site publishes automatic reports and the public legacy archive only. Group
+special reports under ``data/reports/user`` are deliberately never exported.
+Cloudflare API credentials and the Pages project are read from the repository's
+local, gitignored ``.env`` file.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_SITE_DIR = PROJECT_ROOT / "report-site"
 REPORT_DATA_DIR = REPORT_SITE_DIR / "src" / "data" / "reports"
 AUTO_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "auto"
-USER_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "user"
+LEGACY_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "legacy"
 DB_PATH = PROJECT_ROOT / "data" / "papers.db"
 FORBIDDEN_OUTPUT_MARKERS = (
     "CLOUDFLARE_API_TOKEN",
@@ -187,11 +187,6 @@ def main() -> int:
         help="Run npm ci before building, even when node_modules exists.",
     )
     parser.add_argument(
-        "--include-user-reports",
-        action="store_true",
-        help="Also export explicitly generated user reports.",
-    )
-    parser.add_argument(
         "--branch",
         help="Upload as a Cloudflare preview branch instead of production.",
     )
@@ -209,8 +204,8 @@ def main() -> int:
     env["CLOUDFLARE_API_TOKEN"] = api_token
 
     sources = [AUTO_REPORT_DIR]
-    if args.include_user_reports:
-        sources.append(USER_REPORT_DIR)
+    if LEGACY_REPORT_DIR.exists():
+        sources.append(LEGACY_REPORT_DIR)
     exported = export_reports(REPORT_DATA_DIR, sources, DB_PATH)
     print(f"Exported {exported} public report(s) to {REPORT_DATA_DIR}")
 
