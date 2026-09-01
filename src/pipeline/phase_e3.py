@@ -87,6 +87,36 @@ def _normalise_result(result, domain_config):
     return category, json.dumps(fields, ensure_ascii=False), confidence, str(result.get("Notes", ""))
 
 
+def _call_with_transition_review(checker, prompt, paper, circuit_breaker):
+    """Run full-text adjudication and review configured category transitions."""
+    initial_response = checker.call_deepseek_api(
+        prompt, CFG.LLM_API_CONFIG_DICT_FULLTEXT, circuit_breaker,
+    )
+    initial_result = json.loads(initial_response)
+    screen_category = str(paper["relevance_screen_category"] or "").upper()
+    initial_category = str(
+        initial_result.get("PredictedCategory", "D")
+    ).upper()
+    transition = f"{screen_category}->{initial_category}"
+    if (
+            not CFG.RELEVANCE_ESCALATION_ENABLED
+            or transition not in CFG.RELEVANCE_ESCALATION_TRANSITIONS
+    ):
+        return initial_response, None, None
+    review_prompt = checker.build_transition_review_prompt(
+        prompt, screen_category, initial_result,
+    )
+    reviewed_response = checker.call_deepseek_api(
+        review_prompt, CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION,
+        circuit_breaker,
+    )
+    return (
+        reviewed_response,
+        CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION.get("model"),
+        initial_category,
+    )
+
+
 def phase_e3_fulltext_relevance(db):
     """Adjudicate screened candidates only when full-text evidence is available."""
     logger.info("--- Phase E3: full-text relevance adjudication ---")
@@ -136,19 +166,24 @@ def phase_e3_fulltext_relevance(db):
     breaker = LLMCircuitBreaker(CFG.LLM_CIRCUIT_BREAKER_THRESHOLD)
     with ThreadPoolExecutor(max_workers=min(len(tasks), CFG.LLM_CONCURRENT_MAX)) as executor:
         futures = {
-            executor.submit(checker.call_deepseek_api, prompt,
-                            CFG.LLM_API_CONFIG_DICT_FULLTEXT, breaker): paper
+            executor.submit(
+                _call_with_transition_review, checker, prompt, paper, breaker,
+            ): paper
             for paper, prompt in tasks
         }
         for future in as_completed(futures):
             paper = futures[future]
             timestamp = str(datetime.now())
             try:
-                result = json.loads(future.result())
+                response, review_model_id, pre_review_category = future.result()
+                result = json.loads(response)
                 category, fields, confidence, notes = _normalise_result(result, domain_config)
                 db.update_llm_relevance(
                     paper["doi"], category, fields, confidence, notes,
                     FetchStatus.SUCCESS.value, timestamp, basis="fulltext",
+                    model_id=CFG.LLM_API_CONFIG_DICT_FULLTEXT.get("model"),
+                    review_model_id=review_model_id,
+                    pre_review_category=pre_review_category,
                 )
             except (LLMAPICallError, LLMResponseParseError, json.JSONDecodeError) as error:
                 if isinstance(error, LLMServiceUnavailableError) and breaker.is_open:

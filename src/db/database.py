@@ -141,11 +141,13 @@ class DatabaseClient:
         "llm_relevance_category", "llm_relevance_subfields",
         "llm_relevance_confidence",
         "llm_relevance_reason", "llm_summary_result",
-        "llm_relevance_basis",
+        "llm_relevance_basis", "llm_relevance_model",
+        "llm_relevance_review_model", "llm_relevance_pre_review_category",
         "relevance_screen_status", "relevance_screen_error",
         "relevance_screen_date", "relevance_screen_category",
         "relevance_screen_subfields", "relevance_screen_confidence",
-        "relevance_screen_reason", "relevance_screen_is_backfill",
+        "relevance_screen_reason", "relevance_screen_model",
+        "relevance_screen_is_backfill",
         "mineru_fulltext", "mineru_output_dir",
     })
 
@@ -299,6 +301,9 @@ class DatabaseClient:
             llm_relevance_confidence TEXT,
             llm_relevance_reason TEXT,
             llm_relevance_basis TEXT,             -- fulltext/abstract_clear_reject
+            llm_relevance_model TEXT,             -- primary final-adjudication model
+            llm_relevance_review_model TEXT,      -- optional transition reviewer
+            llm_relevance_pre_review_category TEXT,
             llm_relevance_error TEXT,
             llm_relevance_date TEXT,
 
@@ -308,6 +313,7 @@ class DatabaseClient:
             relevance_screen_subfields TEXT,
             relevance_screen_confidence TEXT,
             relevance_screen_reason TEXT,
+            relevance_screen_model TEXT,
             relevance_screen_error TEXT,
             relevance_screen_date TEXT,
             relevance_screen_is_backfill INTEGER DEFAULT 0,
@@ -403,9 +409,20 @@ class DatabaseClient:
             reviewer TEXT NOT NULL DEFAULT '',
             source_final_category TEXT,
             source_final_confidence TEXT,
+            source_screen_model TEXT,
+            source_final_model TEXT,
+            source_review_model TEXT,
             created_date TEXT NOT NULL
         )
         """)
+        for col_def in [
+            "source_screen_model TEXT",
+            "source_final_model TEXT",
+            "source_review_model TEXT",
+        ]:
+            self._add_column_if_missing(
+                col_def, table_name="relevance_reviews",
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_relevance_reviews_doi_id "
             "ON relevance_reviews(doi, id DESC)"
@@ -474,11 +491,15 @@ class DatabaseClient:
         # ---- 迁移：摘要初筛与最终判定依据列 ----
         for col_def in [
             "llm_relevance_basis TEXT",
+            "llm_relevance_model TEXT",
+            "llm_relevance_review_model TEXT",
+            "llm_relevance_pre_review_category TEXT",
             "relevance_screen_status TEXT DEFAULT 'pending'",
             "relevance_screen_category TEXT",
             "relevance_screen_subfields TEXT",
             "relevance_screen_confidence TEXT",
             "relevance_screen_reason TEXT",
+            "relevance_screen_model TEXT",
             "relevance_screen_error TEXT",
             "relevance_screen_date TEXT",
             "relevance_screen_is_backfill INTEGER DEFAULT 0",
@@ -508,7 +529,9 @@ class DatabaseClient:
             existing.
         """
         try:
-            if table_name not in {"papers", "fulltext_download_events"}:
+            if table_name not in {
+                    "papers", "fulltext_download_events", "relevance_reviews",
+            }:
                 raise ValueError(f"Unsupported migration table: {table_name}")
             self.conn.execute(
                 f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"
@@ -1211,7 +1234,7 @@ class DatabaseClient:
 
     def update_relevance_screen(
             self, doi, category, subfields, confidence, notes, status,
-            status_date):
+            status_date, model_id=None):
         """Persist the title/abstract relevance screening result.
 
         Parameters
@@ -1230,6 +1253,8 @@ class DatabaseClient:
             FetchStatus value.
         status_date : str
             Timestamp of the screening operation.
+        model_id : str, optional
+            Exact configured model identifier that produced the result.
         """
         if not self.paper_doi_exists(doi):
             raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
@@ -1237,9 +1262,11 @@ class DatabaseClient:
             """UPDATE papers SET relevance_screen_category = ?,
                 relevance_screen_subfields = ?, relevance_screen_confidence = ?,
                 relevance_screen_reason = ?, relevance_screen_status = ?,
-                relevance_screen_date = ?, relevance_screen_error = NULL
+                relevance_screen_date = ?, relevance_screen_model = ?,
+                relevance_screen_error = NULL
                 WHERE doi = ?""",
-            (category, subfields, confidence, notes, status, status_date, doi),
+            (category, subfields, confidence, notes, status, status_date,
+             model_id, doi),
         )
         self.conn.commit()
 
@@ -1380,11 +1407,15 @@ class DatabaseClient:
                    p.relevance_screen_category,
                    p.relevance_screen_confidence,
                    p.relevance_screen_reason,
+                   p.relevance_screen_model,
                    p.llm_relevance_category,
                    p.llm_relevance_subfields,
                    p.llm_relevance_confidence,
                    p.llm_relevance_reason,
                    p.llm_relevance_basis,
+                   p.llm_relevance_model,
+                   p.llm_relevance_review_model,
+                   p.llm_relevance_pre_review_category,
                    p.llm_relevance_date,
                    latest_review.id AS review_id,
                    latest_review.decision AS review_decision,
@@ -1397,15 +1428,18 @@ class DatabaseClient:
                      ELSE 1
                    END AS is_reviewed,
                    CASE
+                     WHEN p.relevance_screen_category = 'C'
+                          AND p.llm_relevance_pre_review_category IN ('A', 'B')
+                       THEN 0
                      WHEN p.llm_relevance_category = 'B'
                           AND p.llm_relevance_confidence = 'medium'
-                       THEN 0
-                     WHEN p.relevance_screen_category != p.llm_relevance_category
                        THEN 1
+                     WHEN p.relevance_screen_category != p.llm_relevance_category
+                       THEN 2
                      WHEN p.llm_relevance_category = 'A'
                           AND p.llm_relevance_confidence = 'medium'
-                       THEN 2
-                     ELSE 3
+                       THEN 3
+                     ELSE 4
                    END AS review_priority
             FROM papers AS p
             LEFT JOIN latest_review
@@ -1513,7 +1547,9 @@ class DatabaseClient:
             raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
         paper = self.conn.execute(
             """SELECT llm_relevance_status, llm_relevance_basis,
-                      llm_relevance_category, llm_relevance_confidence
+                      llm_relevance_category, llm_relevance_confidence,
+                      relevance_screen_model, llm_relevance_model,
+                      llm_relevance_review_model
                FROM papers WHERE LOWER(doi) = LOWER(?)""",
             (normalized_doi,),
         ).fetchone()
@@ -1533,12 +1569,15 @@ class DatabaseClient:
         cursor = self.conn.execute(
             """INSERT INTO relevance_reviews
                (doi, decision, notes, reviewer, source_final_category,
-                source_final_confidence, created_date)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                source_final_confidence, source_screen_model,
+                source_final_model, source_review_model, created_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (normalized_doi, stored_decision,
              (notes or "").strip(), (reviewer or "").strip(),
              paper["llm_relevance_category"],
-             paper["llm_relevance_confidence"], timestamp),
+             paper["llm_relevance_confidence"],
+             paper["relevance_screen_model"], paper["llm_relevance_model"],
+             paper["llm_relevance_review_model"], timestamp),
         )
         self.conn.commit()
         return cursor.lastrowid
@@ -1694,6 +1733,9 @@ class DatabaseClient:
                 llm_relevance_confidence = NULL,
                 llm_relevance_reason = NULL,
                 llm_relevance_basis = NULL,
+                llm_relevance_model = NULL,
+                llm_relevance_review_model = NULL,
+                llm_relevance_pre_review_category = NULL,
                 llm_relevance_error = NULL,
                 llm_relevance_date = NULL,
                 llm_summary_status = 'pending',
@@ -1703,18 +1745,36 @@ class DatabaseClient:
             WHERE llm_relevance_basis = 'abstract_fallback'""")
         self.conn.commit()
 
-    def update_llm_relevance(self, doi, category, subfields, confidence, notes, status, status_date, basis=None):
-        """
-        Phase E 专用: 记录 LLM 相关性判断结果。
+    def update_llm_relevance(
+            self, doi, category, subfields, confidence, notes, status,
+            status_date, basis=None, model_id=None, review_model_id=None,
+            pre_review_category=None):
+        """Persist the final LLM relevance decision and model provenance.
 
-        Args:
-            doi:        论文 DOI
-            category:   "A" / "B" / "C" / "D" — LLM 判定的相关性类别
-            subfields:  JSON 字符串，匹配的子领域列表
-            confidence: "high" / "medium" / "low" — LLM 的置信度
-            notes:      判断依据说明 (LLM 返回的 Notes 字段)
-            status:     FetchStatus 状态值
-            status_date: 处理日期时间字符串
+        Parameters
+        ----------
+        doi : str
+            Paper DOI.
+        category : str
+            Final A/B/C/D category.
+        subfields : str
+            JSON encoded matched subfield keys.
+        confidence : str
+            Model-reported confidence.
+        notes : str
+            Evidence note returned by the final decision model.
+        status : str
+            FetchStatus value.
+        status_date : str
+            Processing timestamp.
+        basis : str, optional
+            Evidence basis such as ``fulltext``.
+        model_id : str, optional
+            Primary model used for full-text adjudication.
+        review_model_id : str, optional
+            Independent model used for a configured transition review.
+        pre_review_category : str, optional
+            Primary model category before transition review.
         """
         if not self.paper_doi_exists(doi):
             raise DataBaseDOINotExists(
@@ -1728,11 +1788,15 @@ class DatabaseClient:
                 llm_relevance_confidence = ?,
                 llm_relevance_reason = ?,
                 llm_relevance_basis = ?,
+                llm_relevance_model = ?,
+                llm_relevance_review_model = ?,
+                llm_relevance_pre_review_category = ?,
                 llm_relevance_status = ?,
                 llm_relevance_date = ?
             WHERE doi = ?
             """,
-            (category, subfields, confidence, notes, basis, status, status_date, doi),
+            (category, subfields, confidence, notes, basis, model_id,
+             review_model_id, pre_review_category, status, status_date, doi),
         )
         self.conn.commit()
 

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config import CFG
 from db.database import DatabaseClient
 from pipeline.phase_e import phase_e_llm_relevance
 from pipeline.phase_e3 import phase_e3_fulltext_relevance
@@ -191,6 +192,29 @@ def test_phase_e_terminal_medium_d_sets_final_result(db, monkeypatch):
     assert row["llm_relevance_basis"] == "abstract_clear_reject"
 
 
+def test_phase_e_records_screen_model_id(db, monkeypatch):
+    """The exact configured model ID must accompany a screening decision."""
+    _paper(db, "10/x/model-id")
+    db.conn.execute(
+        "UPDATE papers SET abstract = 'Laser ion acceleration' WHERE doi = ?",
+        ("10/x/model-id",),
+    )
+    db.conn.commit()
+    monkeypatch.setattr(
+        PaperRelevanceChecker, "call_deepseek_api",
+        lambda *args, **kwargs: (
+            '{"PredictedCategory":"A","MatchedSubfields":[],'
+            '"Confidence":"high","Notes":"core"}'
+        ),
+    )
+    monkeypatch.setitem(CFG.LLM_API_CONFIG_DICT_RELE, "model", "screen/model")
+    phase_e_llm_relevance(db)
+    row = db.conn.execute(
+        "SELECT * FROM papers WHERE doi = ?", ("10/x/model-id",),
+    ).fetchone()
+    assert row["relevance_screen_model"] == "screen/model"
+
+
 def test_phase_e3_waits_for_candidate_pending_download(db):
     """Quota-deferred candidates remain pending instead of falling back."""
     _paper(db, "10/x/wait")
@@ -222,6 +246,56 @@ def test_phase_e3_keeps_terminal_parse_failure_pending(db):
     assert row["llm_relevance_status"] == "pending"
     assert row["llm_relevance_category"] is None
     assert row["llm_relevance_basis"] is None
+
+
+def test_phase_e3_reviews_c_to_ab_and_records_model_provenance(db, monkeypatch):
+    """A configured C-to-A/B transition gets an independent second decision."""
+    doi = "10/x/cross-boundary"
+    _paper(db, doi)
+    db.update_relevance_screen(
+        doi, "C", "[]", "high", "screen C", "success", "now",
+        model_id="screen/model",
+    )
+    db.update_mineru_result(
+        doi, "# Full text\nLaser apparatus is mentioned.",
+        "mineru_output/cross-boundary", "success", "now",
+    )
+    calls = []
+
+    def fake_call(_checker, prompt, config, _breaker=None):
+        calls.append((prompt, config))
+        if len(calls) == 1:
+            return (
+                '{"PredictedCategory":"A","MatchedSubfields":[],'
+                '"Confidence":"high","Notes":"primary upgrade"}'
+            )
+        return (
+            '{"PredictedCategory":"C","MatchedSubfields":[],'
+            '"Confidence":"high","Notes":"apparatus only"}'
+        )
+
+    monkeypatch.setattr(PaperRelevanceChecker, "call_deepseek_api", fake_call)
+    monkeypatch.setattr(CFG, "RELEVANCE_ESCALATION_ENABLED", True)
+    monkeypatch.setattr(
+        CFG, "RELEVANCE_ESCALATION_TRANSITIONS", frozenset({"C->A", "C->B"}),
+    )
+    monkeypatch.setitem(
+        CFG.LLM_API_CONFIG_DICT_FULLTEXT, "model", "fulltext/model",
+    )
+    monkeypatch.setitem(
+        CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION, "model", "review/model",
+    )
+
+    phase_e3_fulltext_relevance(db)
+
+    row = db.conn.execute(
+        "SELECT * FROM papers WHERE doi = ?", (doi,),
+    ).fetchone()
+    assert len(calls) == 2
+    assert row["llm_relevance_category"] == "C"
+    assert row["llm_relevance_model"] == "fulltext/model"
+    assert row["llm_relevance_review_model"] == "review/model"
+    assert row["llm_relevance_pre_review_category"] == "A"
 
 
 def test_phase_e2_reuses_imported_pdf_without_pdf_url(db, tmp_path, monkeypatch):

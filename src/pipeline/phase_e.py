@@ -104,8 +104,8 @@ def phase_e_llm_relevance(db):
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
-                checker.call_deepseek_api, prompt, CFG.LLM_API_CONFIG_DICT_RELE,
-                circuit_breaker,
+                checker.call_deepseek_api, prompt,
+                CFG.LLM_API_CONFIG_DICT_RELE, circuit_breaker,
             ): (paper, prompt)
             for paper, prompt in tasks
         }
@@ -155,6 +155,7 @@ def phase_e_llm_relevance(db):
                 db.update_relevance_screen(
                     doi, category, subfields, confidence, notes,
                     FetchStatus.SUCCESS.value, timestamp,
+                    model_id=CFG.LLM_API_CONFIG_DICT_RELE.get("model"),
                 )
                 # Only low-confidence D remains a full-text candidate. A
                 # medium/high D is a terminal abstract decision and must not
@@ -164,6 +165,7 @@ def phase_e_llm_relevance(db):
                         doi, "D", "[]", confidence, notes,
                         FetchStatus.SUCCESS.value, timestamp,
                         basis="abstract_clear_reject",
+                        model_id=CFG.LLM_API_CONFIG_DICT_RELE.get("model"),
                     )
                 success_count += 1
 

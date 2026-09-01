@@ -207,10 +207,20 @@ CFG.LLM_API_CONFIG_DICT_RELE = {
     "retry_max_attempts": 3,
     "retry_backoff_max_seconds": 30,
 }
-CFG.LLM_API_CONFIG_DICT_FULLTEXT = {
+CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION = {
     "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
     "api_key": CFG.LLM_API_KEY,
     "model": "deepseek-v4-pro",
+    "protocol": LLM_PROTOCOL_OPENAI_CHAT,
+    "thinking": "enabled",
+    "timeout": 300,
+    "retry_max_attempts": 3,
+    "retry_backoff_max_seconds": 30,
+}
+CFG.LLM_API_CONFIG_DICT_FULLTEXT = {
+    "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
+    "api_key": CFG.LLM_API_KEY,
+    "model": "deepseek-v4-flash",
     "protocol": LLM_PROTOCOL_OPENAI_CHAT,
     "thinking": "enabled",
     "timeout": 300,
@@ -302,6 +312,11 @@ CFG.LLM_CONCURRENT_MAX = 20
 CFG.FORMULA_FIX_CONCURRENT_MAX = 10
 CFG.FORMULA_FIX_MAX_REPAIR_ROUNDS = 1
 CFG.LLM_CIRCUIT_BREAKER_THRESHOLD = 5
+CFG.RELEVANCE_ESCALATION_ENABLED = False
+CFG.RELEVANCE_ESCALATION_TRANSITIONS = frozenset({
+    "A->C", "A->D", "B->C", "B->D",
+    "C->A", "C->B", "D->A", "D->B",
+})
 
 # ---------- 流水线参数 ----------
 # 日常回溯天数（默认 1 天，与「每日增量」语义一致）
@@ -416,12 +431,32 @@ def _apply_settings(settings):
     CFG.LLM_API_KEY = _get_llm_api_key()
     default_protocol = llm_cfg.get("protocol", LLM_PROTOCOL_OPENAI_CHAT)
     rele = llm_cfg.get("relevance", {})
+    rele_escalation = llm_cfg.get("relevance_escalation", {})
     summ = llm_cfg.get("summary", {})
     fulltext = llm_cfg.get("fulltext_relevance", {})
     formula_cfg = settings.get("formula_fix", {})
     formula_llm = formula_cfg.get("llm", {})
     _apply_llm_role_settings(
         CFG.LLM_API_CONFIG_DICT_RELE, rele, CFG.LLM_BASE_URL, default_protocol,
+    )
+    CFG.RELEVANCE_ESCALATION_ENABLED = bool(
+        rele_escalation.get("enabled", CFG.RELEVANCE_ESCALATION_ENABLED)
+    )
+    configured_transitions = rele_escalation.get(
+        "transitions", CFG.RELEVANCE_ESCALATION_TRANSITIONS,
+    )
+    if isinstance(configured_transitions, str):
+        configured_transitions = [configured_transitions]
+    CFG.RELEVANCE_ESCALATION_TRANSITIONS = frozenset(
+        str(value).strip().upper()
+        for value in configured_transitions
+        if str(value).strip()
+    )
+    _apply_llm_role_settings(
+        CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION,
+        rele_escalation,
+        CFG.LLM_BASE_URL,
+        default_protocol,
     )
     _apply_llm_role_settings(
         CFG.LLM_API_CONFIG_DICT_SUMM, summ, CFG.LLM_BASE_URL, default_protocol,
@@ -445,6 +480,7 @@ def _apply_settings(settings):
     CFG.LLM_CONCURRENT_MAX = llm_cfg.get("concurrent_max", CFG.LLM_CONCURRENT_MAX)
     retry_cfg = llm_cfg.get("retry", {})
     for config_dict in (CFG.LLM_API_CONFIG_DICT_RELE,
+                        CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION,
                         CFG.LLM_API_CONFIG_DICT_SUMM,
                         CFG.LLM_API_CONFIG_DICT_FULLTEXT,
                         CFG.LLM_API_CONFIG_DICT_FORMULA):

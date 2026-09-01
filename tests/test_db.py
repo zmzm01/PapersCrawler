@@ -188,11 +188,13 @@ def test_update_llm_relevance(db):
     """验证 LLM 相关性结果更新（新 A/B/C/D 格式）。"""
     db.insert_rss_basicinfo("10.0000/e", "T", "http://e", "J", "pub", "2025")
     db.update_llm_relevance("10.0000/e", "A", '["test"]', "high", "Very relevant",
-                            FetchStatus.SUCCESS.value, "2025")
+                            FetchStatus.SUCCESS.value, "2025",
+                            model_id="fulltext/model")
     papers = db.get_all_papers()
     assert papers[0]["llm_relevance_category"] == "A"
     assert papers[0]["llm_relevance_confidence"] == "high"
     assert papers[0]["llm_relevance_status"] == "success"
+    assert papers[0]["llm_relevance_model"] == "fulltext/model"
 
 
 def test_update_llm_relevance_error(db):
@@ -219,16 +221,21 @@ def _insert_review_candidate(db, doi, category, confidence, screen_category=None
         )
 
 
-def test_relevance_review_queue_prioritizes_unreviewed_medium_b(db):
-    """Manual queue should put unreviewed B/medium papers first."""
+def test_relevance_review_queue_prioritizes_c_to_ab_review(db):
+    """Manual queue should put reviewed C-to-A/B upgrades first."""
     _insert_review_candidate(db, "10.0000/review-c", "C", "high", "C")
     _insert_review_candidate(db, "10.0000/review-b", "B", "medium", "B")
     _insert_review_candidate(db, "10.0000/review-a", "A", "medium", "C")
+    db.conn.execute(
+        "UPDATE papers SET llm_relevance_pre_review_category = 'A' "
+        "WHERE doi = '10.0000/review-a'"
+    )
+    db.conn.commit()
 
     rows = db.get_relevance_review_queue(status_filter="pending")
     assert [row["doi"] for row in rows] == [
-        "10.0000/review-b",
         "10.0000/review-a",
+        "10.0000/review-b",
         "10.0000/review-c",
     ]
     assert db.count_relevance_review_queue(status_filter="pending") == 3
@@ -240,6 +247,14 @@ def test_relevance_review_queue_prioritizes_unreviewed_medium_b(db):
 def test_save_relevance_review_preserves_history_and_snapshot(db):
     """Repeated submissions append audit rows without changing LLM output."""
     _insert_review_candidate(db, "10.0000/review-history", "B", "medium", "A")
+    db.conn.execute(
+        """UPDATE papers
+           SET relevance_screen_model = 'screen/model',
+               llm_relevance_model = 'fulltext/model',
+               llm_relevance_review_model = 'review/model'
+           WHERE doi = '10.0000/review-history'"""
+    )
+    db.conn.commit()
 
     first_id = db.save_relevance_review(
         "10.0000/REVIEW-HISTORY", "B", "具体算法可迁移", "alice",
@@ -259,6 +274,15 @@ def test_save_relevance_review_preserves_history_and_snapshot(db):
         ("10.0000/review-history",),
     ).fetchone()[0]
     assert history == 2
+    snapshot = db.conn.execute(
+        """SELECT source_screen_model, source_final_model,
+                  source_review_model
+           FROM relevance_reviews WHERE id = ?""",
+        (second_id,),
+    ).fetchone()
+    assert tuple(snapshot) == (
+        "screen/model", "fulltext/model", "review/model",
+    )
 
 
 def test_save_relevance_review_rejects_invalid_decision(db):

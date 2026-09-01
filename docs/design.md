@@ -79,9 +79,9 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 
 - 标识与元数据：`id`、`doi`、`title`、`abstract`、`journal`、`publisher`、作者、日期和 URL。
 - 发现来源：`discovery_source`，可为 RSS、CrossRef 或二者。
-- E 初筛：`relevance_screen_status/category/confidence/reason`。
+- E 初筛：`relevance_screen_status/category/confidence/reason/model`。
 - E2：`mineru_parse_status/error/date`、`mineru_output_dir`。
-- E3：`llm_relevance_status/category/confidence/reason/basis`。
+- E3：`llm_relevance_status/category/confidence/reason/basis/model`；发生独立复核时另存 `llm_relevance_review_model` 与 `llm_relevance_pre_review_category`。
 - F：`llm_summary_status/error/date/result`。
 - G：`report_status`、`report_date`。
 - Publisher 重试控制：`publisher_page_retry_count`、`publisher_page_retry_after`、
@@ -98,7 +98,7 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 |---|---|
 | `fulltext_download_events` | 每日/每出版社 PDF 尝试配额审计，失败也占额 |
 | `paper_fulltext_locations` | Crossref/OpenAlex/Publisher 全文候选地址及来源优先级 |
-| `relevance_reviews` | 追加式人工审核记录，保存结论、备注、审核人及 LLM 快照 |
+| `relevance_reviews` | 追加式人工审核记录，保存结论、备注、审核人以及当时的 LLM 分类、confidence 和各阶段模型 ID 快照 |
 | `skipped_dois` | 永久跳过的非研究文章 DOI |
 | `data/email.yaml` | Phase H 收件人配置 |
 | `data/mineru_output/.../full.md` | MinerU 全文，供 E3/F/人工审核读取 |
@@ -137,7 +137,7 @@ LLM 调用在 `common.call_llm_api_with_retry` 统一执行重试、熔断和响
 
 协议适配层负责请求头（Bearer 或 `x-api-key`）、端点和响应结构转换，因此模型名称不会散落在代码中形成特殊分支。`LLM_BASE_URL` 优先从 `.env` 读取，可填写 `/v1` 基础地址或完整的 `/chat/completions` endpoint；若角色切换协议，适配层会先去除已有端点后再追加目标路径。`LLM_MODEL_LIST` 是可选的模型目录 endpoint，供用户查询可用模型，流水线不会因目录请求失败而中断。Responses 与 Messages 的思考参数不直接发送 OpenAI Chat 的 `thinking` 字段；Responses 可选用 `reasoning_effort`。Anthropic Messages 不支持 OpenAI 的 `response_format`，结构化任务继续由 Prompt 约束 JSON；思考块只在提取文本时被忽略。严格 JSON 的任务默认使用 `thinking: disabled`，而需要推理时可按协议配置。
 
-当前 Command Code 配置使用其 OpenAI-compatible Chat Completions endpoint，并按任务分层选择模型：Phase E 高频初筛使用低成本快速的 `Qwen/Qwen3.7-Flash`，Phase E3 正文终审使用更强且适合长上下文推理的 `claude-sonnet-5`，Phase F 中文结构化总结使用兼顾质量与成本的 `MiniMaxAI/MiniMax-M3`，FormulaFixer 使用 `Qwen/Qwen3.7-Flash` 处理短文本修复。模型均采用服务返回的精确 ID，可在 `.env` 的 `LLM_MODEL_LIST` endpoint 查询；更换 Provider 时只需替换 endpoint、API Key 和角色模型，不需要修改处理器代码。高频角色关闭思考以降低延迟和输出成本，全文终审保留思考以提高边界案例判定质量。
+当前 Command Code 配置按角色选择协议和模型：Phase E 与 E3 使用在人工审核集上实测效果更好的 flash 模型；`relevance_escalation` 只在 E3 主判跨越 A/B 与 C/D 边界时调用第二模型，其中 `C → A/B` 是最高风险变化，而不是依赖未校准的 confidence。Phase F 和 FormulaFixer 各自使用独立角色。模型均采用服务返回的精确 ID，并随相关性结果写入数据库；可在 `.env` 的 `LLM_MODEL_LIST` endpoint 查询。模型名称不代表本任务上的效果：当前 37 篇对照中 V4 Pro 的整体 A/B F1 低于 V4 Flash；GOAT 虽包含 GPT-5.6 Sol，但其用量成本不适合批量全文复核；套餐内 Sonnet 5 调用返回 `MODEL_NOT_IN_PLAN`。
 
 LLM 文本进入 JSON 解析前还会做一次边界清洗：提取 Markdown ` ```json ... ``` ` 或前后夹杂说明中的 JSON 对象，修复常见的裸 LaTeX 反斜杠和字符串内英文引号，再交给标准 JSON 解析器。该兼容层只修复明确的格式问题，无法替代模型输出校验；解析失败仍会按单篇错误隔离并保留 pending/failed 状态。
 
@@ -159,7 +159,9 @@ FormulaFixer 是 Phase F 总结后的可选文本后处理，不复用相关性�
 
 ### 1. 两阶段相关性判断
 
-E 只用标题和摘要做高召回筛选。A/B/C 和低置信 D 进入 E2/E3；高/中置信 D 直接终止。E3 使用全文作最终判断，避免摘要降级入报。
+E 只用标题和摘要做高召回筛选；A/B/C 和低置信 D 进入 E2/E3，E3 使用全文作最终判断，避免摘要降级入报。每次 E/E3 写入同时保存精确模型 ID。历史人工集中，E3 改变 14 篇时新增 10 个错误、修正 2 个错误，且 8 个 `C → A/B` 中有 7 个是假升级。因此 `relevance_escalation.transitions` 默认覆盖所有 A/B ↔ C/D 变化，并把 `C → A/B` 作为人工队列最高优先级。第二模型基于全文独立判定并覆盖主判结果，同时保存主判类别和复核模型；复核失败则保留失败状态等待重试，不接受未经复核的跨边界结果。该路由按类别变化触发，不按模型自报 confidence 触发。
+
+研究范围按人工审核校准：A 以激光驱动离子/质子、明确列出的基础激光等离子体过程和放电毛细管工程为主；等离子体透镜与明确列出的相邻诊断器件属于 B。电子 LWFA/DLA 与电子/gamma/X-ray 应用不能借“laser-driven particles”扩张进 A；通用 PIC/HPC、FLASH/MHD、波前控制和“理论上可迁移”不构成 B。子域 exclusion 的优先级高于 adjacent example；ICF/聚变束流等仍在广义邻近物理中的论文通常为 C，只有主贡献落入显式黑名单或连广义邻域也不属于时才判 D。
 
 人工审核是 E3 之后的可选覆盖层。审核记录采用追加式审计，按同一 DOI 的最大 `id` 取最新决定；
 Phase F 的待总结查询、Phase G 自动/用户选定报告查询以及预览报告均复用有效分类，避免人工降级后
@@ -269,7 +271,7 @@ WebUI 使用 FastAPI + Jinja2，当前页面如下：
 | Relevance Review | `/relevance-review` | 审核队列、分类筛选和 Summary 时间排序 |
 | Review Detail | `/relevance-review/{doi}` | 查看摘要/全文/LLM 结果并提交审核 |
 
-唯一写入端点是 `POST /api/relevance-reviews`，只接受固定决策值和长度受限的备注/审核人字段；审核目标必须是 E3 全文终审成功的记录，`uncertain` 以 schema 规定的小写形式保存。审核队列支持默认优先级和 Summary 时间（新到旧）两种排序，空 Summary 时间排在最后。
+唯一写入端点是 `POST /api/relevance-reviews`，只接受固定决策值和长度受限的备注/审核人字段；审核目标必须是 E3 全文终审成功的记录，`uncertain` 以 schema 规定的小写形式保存。审核队列将触发过 `C → A/B` 独立复核的记录置于最高优先级；详情页展示初筛、全文主判、复核模型及复核前类别。队列也支持 Summary 时间（新到旧）排序，空 Summary 时间排在最后。
 
 安全边界：
 

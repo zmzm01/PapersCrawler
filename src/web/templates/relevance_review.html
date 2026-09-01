@@ -71,9 +71,10 @@
   {% for paper in papers %}
     <tr>
       <td>
-        {% if paper.review_priority == 0 %}<span class="badge badge-failed">B/medium</span>
-        {% elif paper.review_priority == 1 %}<span class="badge badge-warning">不一致</span>
-        {% elif paper.review_priority == 2 %}<span class="badge badge-skipped">A/medium</span>
+        {% if paper.review_priority == 0 %}<span class="badge badge-failed">C→A/B 复核</span>
+        {% elif paper.review_priority == 1 %}<span class="badge badge-failed">B/medium</span>
+        {% elif paper.review_priority == 2 %}<span class="badge badge-warning">不一致</span>
+        {% elif paper.review_priority == 3 %}<span class="badge badge-skipped">A/medium</span>
         {% else %}<span class="text-muted">普通</span>{% endif %}
       </td>
       <td class="review-title-cell">

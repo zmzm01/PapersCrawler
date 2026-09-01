@@ -27,7 +27,7 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 
 - **9 阶段流水线**（A-RSS/A-CR → B → C → E → E2 → E3 → F → G → H），SQLite 状态驱动，断点续跑
 - **多源元数据**：RSS Feed + CrossRef ISSN 查询，随后用 OpenAlex 按 DOI 补全缺失字段；各来源按非空字段合并
-- **两阶段 LLM 四级相关性分类**（A/B/C/D）：初筛 A/B/C + 低置信 D 进入限额正文终审；等离子体波导/通道形成、演化与表征可直接判 A；人工审核结果覆盖 E3 分类，只有有效 A/B 进入总结与报告
+- **人工校准的两阶段 LLM 四级相关性分类**（A/B/C/D）：标题/摘要初筛后对候选做全文终审；可按类别变化触发独立模型复核，当前重点检查高风险 `C → A/B`，并持久化各阶段模型 ID，只有有效 A/B 进入总结与报告
 - **可审计的研究范围管理**：`keyword_catalog` 独立维护术语、别名和子域映射，不把单个关键词命中误当成相关性结论；附带覆盖审计和人工标注 benchmark 评分工具
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
 - **来源站点访问策略**：cloakbrowser 临时隔离上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
@@ -79,7 +79,7 @@ LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 80
 
 ## 文档
 
-流水线采用“标题+摘要初筛（E）→受持久化配额保护的 PDF/MinerU（E2）→正文相关性终审（E3）→总结（F）”流程。全文下载默认每日最多 3 篇、单一出版社最多 2 篇，实际下载失败会计入配额；尚未正式出版的 Accepted Paper 只记录状态，不占配额。
+流水线采用“标题+摘要初筛（E）→受持久化配额保护的 PDF/MinerU（E2）→正文相关性终审与高风险类别变化复核（E3）→总结（F）”流程。全文下载默认每日最多 3 篇、单一出版社最多 2 篇，实际下载失败会计入配额；尚未正式出版的 Accepted Paper 只记录状态，不占配额。
 
 研究范围分为自然语言领域定义和可审计的 `keyword_catalog` 两层：前者供 LLM 判断主贡献与语境，后者管理术语覆盖、别名和子域映射。可用 `python3 tools/keyword_audit.py` 检查配置，并用 `benchmarks/relevance_gold.jsonl` 配合 `tools/evaluate_relevance.py` 评估四分类准确率和 A/B 召回率。
 

@@ -219,7 +219,7 @@ def test_build_default_prompt_contains_category_definitions():
 
     # Anchored phrases unique to the (c) descriptions
     assert "Directly studies the group's core topics" in prompt
-    assert "transferable method/technology" in prompt
+    assert "specifically named adjacent interest" in prompt
     assert "Same broad field, but distant" in prompt
     assert "Outside the research area" in prompt
 
@@ -243,8 +243,8 @@ def test_irrelevant_topic_collision_removed():
     assert "General AI/ML" not in keywords["irrelevant_fields"]["topics"]
 
 
-def test_decision_tree_a_assigns_d_on_irrelevant_term():
-    """Step (a) must instruct: PRIMARY SUBJECT in Irrelevant Context → D.
+def test_decision_tree_a_routes_irrelevant_context_by_neighbourhood():
+    """Step (a) distinguishes neighbouring C from genuinely outside D.
 
     Topic-level judgment, not term-level: a minor passing mention of an
     out-of-scope term does not trigger D — only when the out-of-scope
@@ -254,8 +254,9 @@ def test_decision_tree_a_assigns_d_on_irrelevant_term():
     prompt = checker.build_default_prompt(title="T", abstract="A", doi="10.1/x")
 
     a_block = prompt.split("(a) Apply Context Gates", 1)[1].split("(b)", 1)[0]
-    # Must surface the topic-level D trigger
-    assert "Assign D directly" in a_block
+    assert "for example ICF or fusion beam engineering" in a_block
+    assert "Assign D only when" in a_block
+    assert "topic-level denylist" in a_block
     assert "PRIMARY SUBJECT" in a_block or "primary subject" in a_block.lower()
     # Must explicitly carve out minor mentions
     assert "Minor passing mentions" in a_block, (
@@ -266,18 +267,46 @@ def test_decision_tree_a_assigns_d_on_irrelevant_term():
     assert "MUST NOT contribute to sub-domain matching" in a_block
 
 
-def test_boundary_rules_allow_transferable_but_not_out_of_scope_a():
-    """The prompt must encode the three recently reviewed boundary cases."""
+def test_boundary_rules_match_review_calibrated_scope():
+    """The prompt must encode boundaries learned from manual review."""
     checker = PaperRelevanceChecker(_make_full_keywords())
     prompt = checker.build_default_prompt(title="T", abstract="A", doi="10.1/x")
 
-    assert "ICF/cryogenic fusion target injection is not A" in prompt
-    assert "high-repetition laser-focus" in prompt
-    assert "plasma waveguide or channel" in prompt
-    assert "even when its demonstrated application is pure electron LWFA" in prompt
-    assert "FLASH/MHD algorithms" in prompt
-    assert "mere FLASH/tool-name mention is not B" in prompt
-    assert "concrete method, device, algorithm" in prompt
+    assert "Pure electron LWFA/DLA" in prompt
+    assert "generic laser-produced plasma waveguides are C" in prompt
+    assert "Generic PIC/HPC algorithms" in prompt
+    assert "interest-list match" in prompt
+    assert "Do not invent a transfer path" in prompt
+
+
+def test_build_transition_review_prompt_requires_primary_contribution():
+    """A C-to-A/B review must demand evidence for the primary contribution."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    base = checker.build_default_prompt("T", "A", doi="10.1/x")
+    prompt = checker.build_transition_review_prompt(base, "C", {
+        "PredictedCategory": "A",
+        "Confidence": "high",
+        "Notes": "apparatus mention",
+    })
+
+    assert "Independent cross-boundary transition review" in prompt
+    assert "title/abstract screen assigned category C" in prompt
+    assert "primary object, new contribution" in prompt
+    assert '"PredictedCategory": "A"' in prompt
+
+
+def test_build_transition_review_prompt_handles_relevance_downgrade():
+    """An A/B-to-C/D review must explicitly check false negatives."""
+    checker = PaperRelevanceChecker(_make_full_keywords())
+    base = checker.build_default_prompt("T", "A", doi="10.1/x")
+    prompt = checker.build_transition_review_prompt(base, "B", {
+        "PredictedCategory": "C",
+        "Confidence": "high",
+        "Notes": "distant",
+    })
+
+    assert "crosses the A/B versus C/D relevance boundary" in prompt
+    assert "false-negative downgrades" in prompt
 
 
 def test_context_gate_does_not_make_transferable_methods_automatically_d():
@@ -288,7 +317,7 @@ def test_context_gate_does_not_make_transferable_methods_automatically_d():
 
     assert "cannot be category A" in a_block
     assert "allow B" in a_block
-    assert "Assign D directly only when" in a_block
+    assert "for example ICF or fusion beam engineering" in a_block
 
 
 def test_irrelevant_fields_remain_hard_rejects():

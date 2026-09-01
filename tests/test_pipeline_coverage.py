@@ -265,8 +265,8 @@ def test_phase_e_screen_success_and_error_paths(monkeypatch):
         def update_llm_relevance(self, *args, **kwargs):
             self.actions.append(("relevance", args, kwargs))
 
-        def update_relevance_screen(self, *args):
-            self.actions.append(("screen", args))
+        def update_relevance_screen(self, *args, **kwargs):
+            self.actions.append(("screen", args, kwargs))
 
         def update_relevance_screen_error(self, *args):
             self.actions.append(("error", args))
@@ -809,6 +809,7 @@ def test_phase_e3_evidence_normalisation_and_errors(monkeypatch, tmp_path):
             "mineru_fulltext": "",
             "mineru_output_dir": "x",
             "llm_relevance_basis": None,
+            "relevance_screen_category": "A",
         },
         {
             "doi": "10/inline",
@@ -817,6 +818,7 @@ def test_phase_e3_evidence_normalisation_and_errors(monkeypatch, tmp_path):
             "mineru_fulltext": "inline",
             "mineru_output_dir": "",
             "llm_relevance_basis": None,
+            "relevance_screen_category": "A",
         },
         {
             "doi": "10/done",
@@ -825,6 +827,7 @@ def test_phase_e3_evidence_normalisation_and_errors(monkeypatch, tmp_path):
             "mineru_fulltext": "done",
             "mineru_output_dir": "",
             "llm_relevance_basis": "fulltext",
+            "relevance_screen_category": "A",
         },
         {
             "doi": "10/empty",
@@ -833,6 +836,7 @@ def test_phase_e3_evidence_normalisation_and_errors(monkeypatch, tmp_path):
             "mineru_fulltext": "",
             "mineru_output_dir": "missing",
             "llm_relevance_basis": None,
+            "relevance_screen_category": "A",
         },
     ]
 
@@ -879,6 +883,7 @@ def test_phase_e3_evidence_normalisation_and_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(phase_e3.CFG, "SKIP_PHASE_E3", False)
     monkeypatch.setattr(phase_e3.CFG, "LLM_CONCURRENT_MAX", 2)
     monkeypatch.setattr(phase_e3.CFG, "FULLTEXT_RELEVANCE_MAX_CHARS", 1000)
+    monkeypatch.setattr(phase_e3.CFG, "RELEVANCE_ESCALATION_ENABLED", False)
     database = FakeDB()
     phase_e3.phase_e3_fulltext_relevance(database)
     assert {item[0] for item in database.updated} == {"ok", "error"}
