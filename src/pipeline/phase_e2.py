@@ -150,10 +150,10 @@ def phase_e2_mineru(db):
         else:
             downloader = BasePublisherScraper(dl_dir)
 
-        # 从 SCRAPER_MAP 查代理配置，不复用 session
-        # Phase E2 is always on the campus route.  Publisher proxies are
-        # reserved for Phase C abstract retrieval only.
-        proxy = None
+        # Source-specific routes apply to every visit to that source.  In
+        # particular, E2's lazy Optica page fetch needs the same regional
+        # route as Phase C before it can discover or download a PDF.
+        proxy = scraper_config[2] if scraper_config else None
 
         logger.info(f"Phase E2: launching browser for '{publisher}' ({len(group)} papers)")
         try:

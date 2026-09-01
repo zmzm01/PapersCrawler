@@ -30,7 +30,7 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **两阶段 LLM 四级相关性分类**（A/B/C/D）：初筛 A/B/C + 低置信 D 进入限额正文终审；等离子体波导/通道形成、演化与表征可直接判 A；人工审核结果覆盖 E3 分类，只有有效 A/B 进入总结与报告
 - **可审计的研究范围管理**：`keyword_catalog` 独立维护术语、别名和子域映射，不把单个关键词命中误当成相关性结论；附带覆盖审计和人工标注 benchmark 评分工具
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
-- **Publisher 爬虫**：cloakbrowser 临时隔离上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；PDF 下载固定校园网直连并支持多个全文候选
+- **来源站点访问策略**：cloakbrowser 临时隔离上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供监控、报告阅览、相关性人工审核和按 Summary 时间排序的审核队列
 - **统一流水线入口**：日常、每周和全流程运行均通过 `tools/run_pipeline.py`
 - **按日分文件日志**：运行日志按日期保存并自动清理旧文件，配套工具可直接统计 WARNING/ERROR；支持用 `PAPERSCRAWLER_LOG_DIR` 隔离测试日志，避免单文件持续膨胀

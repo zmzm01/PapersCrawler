@@ -713,6 +713,73 @@ def test_phase_e2_download_parse_success_and_failures(monkeypatch, tmp_path):
     assert "error" in kinds
 
 
+def test_phase_e2_uses_source_specific_route(monkeypatch, tmp_path):
+    """E2 must use a source's configured primary route for PDF access."""
+    route = {"server": "http://optica-proxy.example:7890"}
+    browser_proxies = []
+
+    class FakeDB:
+        def get_relevance_screen_candidates(self, **_kwargs):
+            return [{
+                "doi": "10.1364/optica.test",
+                "publisher": "optica",
+                "pdf_url": "https://opg.example/paper.pdf",
+                "page_url": "https://opg.example/article",
+            }]
+
+        def claim_fulltext_download(self, *_args):
+            return True
+
+        def finish_fulltext_download(self, *_args, **_kwargs):
+            return None
+
+        def update_mineru_result(self, *_args):
+            return None
+
+    class FakeDownloader:
+        def __init__(self, _directory):
+            self.page = SimpleNamespace(wait_for_timeout=lambda _delay: None)
+
+        def start_browser(self, proxy):
+            browser_proxies.append(proxy)
+
+        def download_pdf(self, *_args, **_kwargs):
+            return b"%PDF-1.7 test"
+
+        def close(self):
+            return None
+
+    class FakeParser:
+        def __init__(self, _token):
+            return None
+
+        def parse_pdf(self, _pdf_path, output_dir):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "full.md").write_text("# Full text", encoding="utf-8")
+            return output_dir
+
+    monkeypatch.setattr(phase_e2, "MINERU_OUTPUT_DIR", tmp_path / "mineru")
+    monkeypatch.setattr(phase_e2, "BROWSER_SESSION_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(phase_e2, "MinerUParser", FakeParser)
+    monkeypatch.setitem(
+        phase_e2.SCRAPER_MAP,
+        "optica",
+        (FakeDownloader, tmp_path / "sessions" / "optica", route),
+    )
+    monkeypatch.setattr(phase_e2.CFG, "SKIP_PHASE_E2", False)
+    monkeypatch.setattr(phase_e2.CFG, "MINERU_TOKEN", "token")
+    monkeypatch.setattr(phase_e2.CFG, "FULLTEXT_DOWNLOAD_DAILY_MAX", 3)
+    monkeypatch.setattr(phase_e2.CFG, "FULLTEXT_DOWNLOAD_PUBLISHER_MAX", 2)
+    monkeypatch.setattr(phase_e2.CFG, "FULLTEXT_DOWNLOAD_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_e2.CFG, "FULLTEXT_DOWNLOAD_DELAY_MAX", 0)
+    monkeypatch.setattr(phase_e2.random, "uniform", lambda *_args: 0)
+    monkeypatch.setattr(phase_e2.time, "sleep", lambda _delay: None)
+
+    phase_e2.phase_e2_mineru(FakeDB())
+
+    assert browser_proxies == [route]
+
+
 def test_phase_e3_evidence_normalisation_and_errors(monkeypatch, tmp_path):
     """Long evidence selection and E3 success/error persistence are covered."""
     long_text = "# Intro\n" + ("laser diagnostics conclusion " * 3000)

@@ -249,7 +249,7 @@ Phase C 默认对所有 Publisher 生效：只要 CrossRef 已成功返回非空
 Publisher 必须依赖页面元数据，可在对应 Scraper 类中关闭该能力。
 
 Bot Manager、验证码等反爬页面会被标记为 `bot_block`，记录连续失败次数和下一次重试时间。
-daily 的自动重置只处理冷却已结束且尚未达到 `publisher.bot_max_retries` 的记录；达到上限后
+daily 的自动重置只处理冷却已结束且尚未达到 `source_access.bot_max_retries` 的记录；达到上限后
 进入隔离，不再每天重复启动浏览器。现有历史错误文本中含 `bot block` 的记录也按隔离处理。
 需要立即重新验证时使用：
 
@@ -263,22 +263,22 @@ python tools/run_pipeline.py --daily --retry-bot-blocks
 相关配置（默认冷却 72 小时、最多自动重试 3 次）：
 
 ```yaml
-publisher:
+source_access:
   skip_if_crossref_abstract: true
   bot_retry_cooldown_hours: 72
   bot_max_retries: 3
 ```
 
-Cloudflare/Radware 或早期导航失败时先查看 `data/raw/page/error/` 和同一时间段的 `data/logs/PaperCrawler-YYYY-MM-DD.log`，再调整 `publisher.page_delay_*`、`publisher.proxy` 或挑战页 reload 参数。错误快照是诊断辅助；即使浏览器在页面 HTML 生成前失败，日志也应保留原始导航异常，而不是被快照保存错误覆盖。若 fallback 浏览器已经关闭，快照保存会只使用此前缓存的 HTML，不再调用已关闭页面的 `content()`。
+Cloudflare/Radware 或早期导航失败时先查看 `data/raw/page/error/` 和同一时间段的 `data/logs/PaperCrawler-YYYY-MM-DD.log`，再调整 `source_access.page_delay_*`、`source_access.routes` 或挑战页 reload 参数。错误快照是诊断辅助；即使浏览器在页面 HTML 生成前失败，日志也应保留原始导航异常，而不是被快照保存错误覆盖。若 fallback 浏览器已经关闭，快照保存会只使用此前缓存的 HTML，不再调用已关闭页面的 `content()`。
 
 Phase C 的常规浏览器重试全部失败后，还可以配置一个末级代理 fallback。该 fallback 会用新浏览器上下文重试当前论文一次；成功会写入正常成功状态，失败仍按原错误流程落库。代理 URL 为空时关闭：
 
 ```yaml
-publisher:
+source_access:
   fallback_proxy_url: "http://127.0.0.1:7890"
 ```
 
-该配置只影响 Phase C，不改变正常抓取路径；代理失效时会增加一次失败尝试，但不会阻塞其他论文。
+该配置只影响 Phase C 的末级 fallback，不改变来源专属主访问路由；代理失效时会增加一次失败尝试，但不会阻塞其他论文。
 
 ### PDF 下载失败或需要手动导入
 
@@ -288,7 +288,7 @@ python tools/run_pipeline.py --phases E2,E3,F
 ```
 
 导入工具会先校验并复制 PDF，再将对应 DOI 的 `mineru_parse_status` 设为 `pending`、清空旧错误和日期，并立即提交事务；正常输出应包含 `数据库状态已更新 ... 影响行数=1`。导入的 PDF 会被 E2 校验并直接复用，即使数据库中的 `pdf_url` 为空也不再触发下载失败；只有没有合法本地 PDF 时才要求网络 PDF URL。
-Optica 的摘要页面通常需要代理；APS 会尝试改写跨域 PDF 链接。PDF 始终使用校园网直连。实际下载失败会消耗当日 E2 配额，Accepted Paper 则记录为尚未出版并释放配额。
+Optica 的摘要和 PDF 页面通常需要配置专属地区路由；在 `source_access.routes.optica` 设置后，Phase C 与 E2 的延迟页面解析、PDF 下载会共用该路由。APS 会尝试改写跨域 PDF 链接。实际下载失败会消耗当日 E2 配额，Accepted Paper 则记录为尚未出版并释放配额。
 
 ### 预览报告
 
