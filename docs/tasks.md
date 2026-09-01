@@ -2,6 +2,16 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-09-01：人工审核校准相关性范围与模型级联评估
+
+- 拆分现存 37 篇审核记录后，E 摘要初筛为 accuracy 0.649、A/B F1 0.800，E3 全文终审降至 0.432/0.667。E3 改变 14 篇时新增 10 个错误、只修正 2 个；8 个 `C → A/B` 中 7 个经人工确认仍为 C，是最有价值的复核触发器。
+- 最终 21 个误判中 16 个自报 high、5 个 medium、0 个 low；仅复核 low confidence 无法捕获任何现存错误。删除 Phase E 的 D-only appeal，改为在 E3 按 `relevance_escalation.transitions` 独立复核全部 A/B ↔ C/D 变化，其中 `C → A/B` 在人工队列最高优先；使用 V4 Pro 做小流量复核，不采用用量成本过高的 GPT-5.6 Sol。
+- 数据库新增 `relevance_screen_model`、`llm_relevance_model`、`llm_relevance_review_model` 和 `llm_relevance_pre_review_category`；WebUI 详情展示完整模型来源，人工队列优先显示触发过 `C → A/B` 复核的记录。历史结果无法可靠回填模型 ID，保留 NULL。
+- 修正与人工标准相反的范围规则：纯电子 LWFA/DLA、电子/gamma/X-ray 应用、通用 PIC/HPC、聚变 FLASH/MHD 和仅靠潜在迁移的技术不再进入 A/B；放电毛细管工程与明确列出的基础激光等离子体过程判 A，等离子体透镜和相邻诊断方法判 B。exclusion 优先于 adjacent example，广义邻近的聚变/ICF 论文通常判 C 而非 D。
+- 实测新规则下摘要 Flash 已达 A/B precision 0.952、recall 1.000；此前 D-only V4 Pro 复核不改善二分类指标并将四分类准确率从 0.784 降至 0.757，因此不再保留该触发方式。
+- 全文 3 万字符证据的两次对照中，新规则 + V4 Flash 的四分类准确率为 0.757–0.838、A/B F1 为 0.950–0.976，显著优于历史 0.432/0.667；V4 Pro 的 A/B F1 仅 0.878。Sonnet 5 虽在模型目录中可见，但当前套餐调用返回 `MODEL_NOT_IN_PLAN`。因此 E3 保留 V4 Flash，不按模型名盲目升级。
+- Prompt 强制先提取 primary object/new contribution/result，再分类主贡献而非装置、软件、背景或泛化用途；增加终止拒绝 appeal prompt 和离线回归测试。
+
 ## 2026-09-01：历史重建不发布空周报
 
 - `rebuild_historical_reports.py` 在日期窗口没有符合资格的 A/B 论文时跳过写入；若该空报告已存在，则删除 Markdown、public sidecar 和解释页，防止 Cloudflare Pages 出现零条目报告。

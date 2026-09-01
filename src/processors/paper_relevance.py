@@ -234,6 +234,57 @@ class PaperRelevanceChecker:
                 "不得把背景、参考文献或潜在用途当作正向证据。\n"
                 f"{evidence}")
 
+    def build_transition_review_prompt(
+            self, prompt: str, screen_category: str,
+            initial_result: dict[str, Any]) -> str:
+        """Build an independent prompt for a high-risk category transition.
+
+        Parameters
+        ----------
+        prompt : str
+            Original title/abstract classification prompt.
+        screen_category : str
+            Category assigned by the title/abstract screen.
+        initial_result : dict[str, Any]
+            Parsed result returned by the primary full-text model.
+
+        Returns
+        -------
+        str
+            Prompt asking another model to adjudicate the transition without
+            relying on either model's self-reported confidence.
+        """
+        initial_json = json.dumps(initial_result, ensure_ascii=False)
+        initial_category = str(
+            initial_result.get("PredictedCategory", "")
+        ).upper()
+        if screen_category.upper() == "C" and initial_category in {"A", "B"}:
+            transition_instruction = (
+                "A C-to-A/B upgrade is especially high risk: retain A or B "
+                "only when the paper's primary object, new contribution, and "
+                "reported result satisfy the corresponding scope rule. "
+            )
+        else:
+            transition_instruction = (
+                "This change crosses the A/B versus C/D relevance boundary. "
+                "Check both false-positive upgrades and false-negative "
+                "downgrades against the paper's primary contribution. "
+            )
+        return (
+            prompt
+            + "\n\n# Independent cross-boundary transition review\n"
+            + f"The title/abstract screen assigned category {screen_category}.\n"
+            + "The primary full-text model proposed the result below:\n"
+            + initial_json
+            + "\nIndependently redo the classification from the paper evidence "
+              "and scope rules. Do not defer to either category or to model-"
+              "reported confidence. "
+            + transition_instruction
+            + "Apparatus mentions, generic methods, background discussion, or "
+              "hypothetical transfer are insufficient. Return the same strict "
+              "JSON schema."
+        )
+
     # ------------------------------------------------------------------
     # API 调用 (委托给 common.call_llm_api_with_retry)
     # ------------------------------------------------------------------

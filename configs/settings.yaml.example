@@ -44,6 +44,23 @@ llm:
     thinking: disabled
     timeout: 300
 
+  # 可选的 E→E3 相关/非相关跨边界复核；仅在列出的变化发生时调用第二模型。
+  relevance_escalation:
+    enabled: false
+    protocol: openai_chat
+    model: deepseek/deepseek-v4-pro
+    thinking: enabled
+    timeout: 300
+    transitions:
+      - A->C
+      - A->D
+      - B->C
+      - B->D
+      - C->A
+      - C->B
+      - D->A
+      - D->B
+
   # 论文总结（Phase F）— 中文结构化总结，兼顾质量与成本
   summary:
     # Responses API 示例；如果网关提供 Responses 协议，可切换该角色。
@@ -54,10 +71,10 @@ llm:
     thinking: disabled
     timeout: 300
 
-  # 正文相关性终审（Phase E3）— 强模型
+  # 正文相关性终审（Phase E3）— 模型应以人工 benchmark 结果选择
   fulltext_relevance:
     protocol: openai_chat
-    model: claude-sonnet-5
+    model: Qwen/Qwen3.7-Flash
     thinking: enabled
     timeout: 300
     evidence_max_chars: 200000

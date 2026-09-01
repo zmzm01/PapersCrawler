@@ -22,25 +22,24 @@ system_prompt: |
   Abstract: {abstract}
   DOI: {doi}
 
-  1. First identify the paper's actual research object, method and main result.
-  2. Apply the positive-evidence gate: A is allowed only when the main contribution
-     explicitly concerns laser-driven ion/proton acceleration, laser-target interaction
-     and its direct diagnostics, post-acceleration, a compact beamline for laser-driven
-     particles, beam-irradiation effects and a concrete downstream application, or
-     plasma-waveguide/channel formation, evolution, stability, or characterization.
-     A plasma-waveguide/channel paper remains A even if its application is pure electron
-     LWFA. ICF/cryogenic fusion target injection is never A; it can be B only when
-     high-repetition laser-focus target delivery/injection is concretely demonstrated.
-     General accelerator, storage-ring/collider, optics, instrumentation or AI
-     work is not A merely because it might be useful.
+  1. First identify the paper's PRIMARY RESEARCH OBJECT, NEW CONTRIBUTION and result.
+     Classify the contribution, not apparatus, software, background or potential use.
+  2. Apply the positive-evidence gate: A is narrow and limited to explicitly configured
+     core interests. "Laser-driven particles" does not silently include electron,
+     gamma-ray or X-ray sources/applications. Pure electron LWFA/DLA and generic
+     laser-produced waveguides are C unless a separately named capillary-discharge or
+     plasma-lens contribution applies. General accelerators, optics, instrumentation,
+     software or AI are not A merely because they might be useful.
   3. Assign a relevance category:
      - A: Directly studies a core anchor with explicit evidence in the paper
-     - B: A concrete, real method/device/physics/algorithm mapping to a named sub-domain's
-       adjacent example; the core principle transfers without changing it. Demonstrated
-       FLASH/MHD algorithms, plasma-sheath tracking, or synthetic diagnostics may be B
-       when shown in non-laser fusion/Z-pinch/DPF; a tool-name mention alone is not B.
+     - B: The main contribution itself matches a specifically named adjacent example.
+       Generic PIC/HPC algorithms, FLASH/MHD use, wavefront control, or ordinary beamline
+       methods are C unless the taxonomy explicitly names that contribution. Do not
+       invent a transfer path from generic usefulness. An exclusion overrides an
+       adjacent example.
      - C: Same broad field or only plausibly useful by model inference
-     - D: Clearly outside the scope; insufficient abstract evidence must not receive high D
+     - D: Primary contribution outside the scope, even if an in-scope laser/beam/detector
+       is merely apparatus; insufficient abstract evidence must not receive high D
   4. Provide a confidence level: high / medium / low
   5. Add notes explaining your judgment. The Notes field MUST be written
      in Chinese academic language (中文学术语言).

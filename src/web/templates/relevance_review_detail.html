@@ -18,6 +18,10 @@
       <div class="review-result-grid">
         <div><span class="field-label">标题+摘要初筛</span><strong>{{ paper.relevance_screen_category or '—' }}</strong></div>
         <div><span class="field-label">全文终审</span><strong>{{ paper.llm_relevance_category or '—' }}</strong></div>
+        <div><span class="field-label">初筛模型</span><strong>{{ paper.relevance_screen_model or '—' }}</strong></div>
+        <div><span class="field-label">全文模型</span><strong>{{ paper.llm_relevance_model or '—' }}</strong></div>
+        <div><span class="field-label">复核模型</span><strong>{{ paper.llm_relevance_review_model or '—' }}</strong></div>
+        <div><span class="field-label">复核前类别</span><strong>{{ paper.llm_relevance_pre_review_category or '—' }}</strong></div>
         <div><span class="field-label">置信度</span><strong>{{ paper.llm_relevance_confidence or '—' }}</strong></div>
         <div><span class="field-label">判定依据</span><strong>{{ paper.llm_relevance_basis or '—' }}</strong></div>
       </div>

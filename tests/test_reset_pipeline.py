@@ -9,9 +9,12 @@ RELEVANCE_COLUMNS = (
     "llm_relevance_status, llm_relevance_error, llm_relevance_date, "
     "llm_relevance_category, llm_relevance_subfields, llm_relevance_result, "
     "llm_relevance_confidence, llm_relevance_reason, llm_relevance_basis, "
+    "llm_relevance_model, llm_relevance_review_model, "
+    "llm_relevance_pre_review_category, "
     "relevance_screen_status, relevance_screen_error, relevance_screen_date, "
     "relevance_screen_category, relevance_screen_subfields, "
-    "relevance_screen_confidence, relevance_screen_reason"
+    "relevance_screen_confidence, relevance_screen_reason, "
+    "relevance_screen_model"
 )
 
 
@@ -25,21 +28,27 @@ def _make_reset_db(tmp_path):
         "llm_relevance_date TEXT, llm_relevance_category TEXT, "
         "llm_relevance_subfields TEXT, llm_relevance_result INTEGER, "
         "llm_relevance_confidence TEXT, llm_relevance_reason TEXT, "
-        "llm_relevance_basis TEXT, relevance_screen_status TEXT, "
+        "llm_relevance_basis TEXT, llm_relevance_model TEXT, "
+        "llm_relevance_review_model TEXT, "
+        "llm_relevance_pre_review_category TEXT, "
+        "relevance_screen_status TEXT, "
         "relevance_screen_error TEXT, relevance_screen_date TEXT, "
         "relevance_screen_category TEXT, relevance_screen_subfields TEXT, "
-        "relevance_screen_confidence TEXT, relevance_screen_reason TEXT)"
+        "relevance_screen_confidence TEXT, relevance_screen_reason TEXT, "
+        "relevance_screen_model TEXT)"
     )
     values = [
         (
             "10.1234/ABC", "aps", "success", "old error", "today", "A",
-            "old", 1, "high", "old reason", "fulltext", "success", None,
-            "today", "A", "old", "high", "old screen reason",
+            "old", 1, "high", "old reason", "fulltext", "final/model",
+            "review/model", "B", "success", None, "today", "A", "old",
+            "high", "old screen reason", "screen/model",
         ),
         (
             "10.5678/other", "aps", "success", None, "today", "B",
-            "old", 1, "high", "old reason", "fulltext", "success", None,
-            "today", "B", "old", "high", "old screen reason",
+            "old", 1, "high", "old reason", "fulltext", "final/model",
+            None, None, "success", None, "today", "B", "old", "high",
+            "old screen reason", "screen/model",
         ),
     ]
     placeholders = ",".join("?" for _ in values[0])

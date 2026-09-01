@@ -51,6 +51,9 @@ RELEVANCE_RESET = [
     "llm_relevance_confidence = NULL",
     "llm_relevance_reason = NULL",
     "llm_relevance_basis = NULL",
+    "llm_relevance_model = NULL",
+    "llm_relevance_review_model = NULL",
+    "llm_relevance_pre_review_category = NULL",
     "relevance_screen_status = 'pending'",
     "relevance_screen_error = NULL",
     "relevance_screen_date = NULL",
@@ -58,6 +61,7 @@ RELEVANCE_RESET = [
     "relevance_screen_subfields = NULL",
     "relevance_screen_confidence = NULL",
     "relevance_screen_reason = NULL",
+    "relevance_screen_model = NULL",
 ]
 
 
@@ -385,6 +389,8 @@ def cmd_reset_relevance(publisher=None, reset_all=False, categories=None, dois=N
     print("    llm_relevance_confidence  → NULL")
     print("    llm_relevance_reason      → NULL")
     print("    llm_relevance_basis       → NULL")
+    print("    llm_relevance_*_model     → NULL")
+    print("    llm_relevance_pre_review_category → NULL")
     print("    relevance_screen_*        → pending / NULL")
     print("  不受影响（保持不变）:")
     print("    publisher_page_*, mineru_*, llm_summary_*, report_*")

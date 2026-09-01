@@ -215,9 +215,9 @@ TLS、认证、限速和访问源限制。临时调试才可将 uvicorn 改为 `
 | `/relevance-review` | 人工审核队列 |
 | `/relevance-review/{doi}` | 单篇审核详情 |
 
-审核队列只显示 E3 已完成全文终审的论文：`llm_relevance_status=success` 且 `llm_relevance_basis=fulltext`。默认优先未审核 B/中置信度、初筛/终审分歧和 A/中置信度记录。
+审核队列只显示 E3 已完成全文终审的论文：`llm_relevance_status=success` 且 `llm_relevance_basis=fulltext`。默认首先显示触发过 `C → A/B` 独立复核的记录，其后是未审核 B/中置信度、其他初筛/终审分歧和 A/中置信度记录。详情页展示初筛模型、全文主判模型、复核模型和复核前类别；旧记录无法可靠回填时显示 `—`。
 
-审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照。最新人工审核结果作为有效相关性分类，覆盖 E3 的 LLM 分类：人工 A/B 可进入 Phase F 总结和报告，人工 C/D/uncertain 会阻止后续进入报告；未审核时仍使用 E3 分类。原始 LLM 字段保留用于追溯。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
+审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照；快照包含当时的分类、confidence、初筛模型、全文模型和复核模型，后续重跑不会改写历史审核来源。最新人工审核结果作为有效相关性分类，覆盖 E3 的 LLM 分类：人工 A/B 可进入 Phase F 总结和报告，人工 C/D/uncertain 会阻止后续进入报告；未审核时仍使用 E3 分类。原始 LLM 字段保留用于追溯。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
 
 审核队列默认按审核优先级排列，也可在“排序”中选择“Summary 时间（新→旧）”；没有 Summary 时间的论文排在最后，便于先复核已经生成总结的记录。
 
@@ -369,6 +369,18 @@ python3 tools/evaluate_relevance.py \
 python3 tools/evaluate_relevance.py --db data/papers.db
 ```
 
+2026-09-01 的首轮 37 篇人工样本基线为：四分类准确率 0.432，A/B 对 C/D 的
+precision 0.548、recall 0.850、F1 0.667。拆分阶段后，E 初筛 accuracy/F1 为
+0.649/0.800；E3 改变 14 篇时新增 10 个错误、修正 2 个，且 8 个 `C → A/B` 中有
+7 个仍应为 C。最终 21 个错误中 16 个 high、5 个 medium、0 个 low，因此仅检查 low
+confidence 无法覆盖任何现存错误；修改 prompt、范围或模型后应在同一审核集上重新测量。
+按人工意见修正规则后，V4 Flash 在同一批 37 篇、每篇最多 3 万字符全文证据上的两次
+对照结果为：四分类准确率 0.757–0.838，A/B F1 0.950–0.976（precision 0.950–0.952，
+recall 0.950–1.000），反映了模型运行波动。V4 Pro 的整体 A/B F1 为 0.878；此前把
+Flash D 交给 Pro 复核也没有改善 A/B 指标。当前只对稀少且高风险的 `C → A/B` 变化调用
+V4 Pro，不换掉主判 Flash，也不使用 GOAT 中用量成本过高的 GPT-5.6 Sol。
+该结果来自小样本同集校准，仍需用后续新增审核记录监测泛化表现。
+
 建议每次修改研究范围后重跑固定 benchmark，并定期从 WebUI 人工审核队列补充边界案例。
 重点关注 A/B recall（不要漏掉真正想看的论文）、A/B precision（不要浪费全文配额）
 和 B↔D、A↔B 错误；当前数据库没有人工审核样本时，工具会显示样本数为 0。
@@ -432,6 +444,11 @@ llm:
   relevance:
     protocol: openai_chat
     model: Qwen/Qwen3.7-Flash
+  relevance_escalation:
+    enabled: true
+    protocol: openai_chat
+    model: deepseek/deepseek-v4-pro
+    transitions: [A->C, A->D, B->C, B->D, C->A, C->B, D->A, D->B]
   summary:
     protocol: openai_chat
     model: MiniMaxAI/MiniMax-M3
@@ -440,7 +457,7 @@ llm:
 
   fulltext_relevance:
     protocol: openai_chat
-    model: claude-sonnet-5
+    model: Qwen/Qwen3.7-Flash
     thinking: enabled
     evidence_max_chars: 200000
 
@@ -492,7 +509,7 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 
 ### Prompt
 
-`configs/prompts/relevance.yaml`、`summary.yaml`、`fix.yaml` 分别对应 E/E3、F 和公式修复。文件缺失时使用 `src/config.py` 的内置后备值。
+`configs/prompts/relevance.yaml`、`summary.yaml`、`fix.yaml` 分别对应 E/E3、F 和公式修复。文件缺失时使用 `src/config.py` 的内置后备值。相关性有三个模型角色：`llm.relevance` 为初筛，`llm.fulltext_relevance` 负责 E3 全文主判，`llm.relevance_escalation` 在 `enabled: true` 且类别变化命中 `transitions` 时做独立复核。当前实际配置覆盖全部 A/B ↔ C/D 变化，不依据 confidence；`C → A/B` 另列为人工审核最高优先级。每次新判断会记录精确模型 ID；复核还记录主判类别，`reset-relevance` 会一并清空这些来源字段。
 
 `summary.yaml` 的 Phase F 输出格式为 schema v3：`main_results_and_physics` 是带稳定
 `key` 的数组，每项分别填写 `title`、`finding`、`evidence` 和
