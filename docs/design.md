@@ -336,6 +336,11 @@ WebUI 使用 systemd 常驻，部署模板位于
 `tools/deploy_report_site.py` 构建并部署 Cloudflare Pages。无头服务器运行 Phase C 需要
 `xvfb-run`。Hugo 和 `gh-pages` 已不在运行链路中。
 
+公共仓库保留完整开发历史，但发布前会在隔离副本中重写提交元数据，将个人邮箱替换为
+`zmzm01@users.noreply.github.com`，并清理真实邮箱、本机绝对路径和机器专属痕迹。`.env`、
+SQLite 数据库、报告输出和其他运行时文件由 `.gitignore` 排除；公开技术配置和研究关键词
+仍属于项目源码的一部分。
+
 日志由 `src/logging_config.py` 统一配置，按自然日写入
 `data/logs/PaperCrawler-YYYY-MM-DD.log`；单日文件使用 10MB 大小上限并保留一个
 备份，旧日志默认保留 14 天。`LOG_LEVEL` 控制日志级别；`PAPERSCRAWLER_LOG_DIR`

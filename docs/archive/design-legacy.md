@@ -1837,4 +1837,3 @@ E3 对短正文使用全文；长正文按 `llm.fulltext_relevance.evidence_max_
 新增表 `fulltext_download_events(id, doi, publisher, local_date, attempted_at, status, error)` 作为配额审计日志。新增 `relevance_screen_*` 列保存初筛快照，`relevance_screen_is_backfill` 区分历史回填与新论文；旧 `llm_relevance_*` 始终表示最终判定，保持 WebUI 和报告查询兼容。
 
 A 必须有核心对象的正向证据：激光驱动离子/质子、激光靶及直接诊断、后加速、激光驱动粒子紧凑束线、等离子体波导/通道形成演化与表征，或以束流辐照效应/剂量/损伤机制及明确下游应用为主贡献。聚变/低温靶注入不能判 A；只有实际展示高重复频率激光聚焦条件下可迁移的靶输运/注入才可判 B。非激光聚变、Z-pinch/DPF 论文只有在实际展示可迁移的 FLASH/MHD 算法、鞘层跟踪或合成诊断时才可判 B，单纯提及工具名不算。B 必须是论文实际展示的具体可迁移映射；仅同大领域、背景提及应用或“可能有用”是 C。
-

@@ -18,7 +18,7 @@ def find_node() -> str | None:
     node_path = shutil.which("node")
     if node_path:
         return node_path
-    nvm_dir = Path(os.environ.get("NVM_DIR", "/path/to/nvm"))
+    nvm_dir = Path(os.environ.get("NVM_DIR", str(Path.home() / ".nvm")))
     candidates = sorted(nvm_dir.glob("versions/node/*/bin/node"))
     return str(candidates[-1]) if candidates else None
 

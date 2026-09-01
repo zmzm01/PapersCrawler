@@ -50,7 +50,7 @@
 - 将标题摘要筛选与正文终审拆为 E/E3；E2 仅处理 A/B/C + 低置信 D。
 - 新增 SQLite 下载事件审计和 Asia/Shanghai 每日硬配额（总计 3、单出版社 2），失败尝试占额。
 - 报告支持正文不可用的 A/B 摘要降级，并显示动态方向与判定依据。
-- 本次未触发实际批量下载或外部 LLM；使用 `/path/to/paperscrawler-venv` 完成全量离线测试。
+- 本次未触发实际批量下载或外部 LLM；使用项目虚拟环境完成全量离线测试。
 
 ## 2026-08-14: LLM Base URL 可配置化
 
@@ -2419,4 +2419,3 @@ tools/schedule_weekly.py                 |  28 +++---
 
 - `python3 -m compileall -q src tools` 通过。
 - 当前父环境缺少 `python-dotenv`，未运行全量 pytest；新增离线测试覆盖请求头、发送失败隔离、脱敏截断、单次运行统计。
-
