@@ -110,6 +110,8 @@ def _fetch_papers(
     scope: str,
     ref_date: datetime,
     before_date: str | None = None,
+    from_date: str | None = None,
+    through_date: str | None = None,
 ):
     """Fetch papers for report by scope.
 
@@ -124,6 +126,11 @@ def _fetch_papers(
     before_date : str, optional
         Strict upper bound for ``created_date`` in ``YYYY-MM-DD`` format.
         Papers created on this date or later are excluded.
+    from_date : str, optional
+        Inclusive lower bound for ``created_date`` in ``YYYY-MM-DD`` format.
+    through_date : str, optional
+        Inclusive upper bound for ``created_date`` in ``YYYY-MM-DD`` format.
+        This is intended for reconstructing a historical report window.
 
     Returns
     -------
@@ -138,6 +145,20 @@ def _fetch_papers(
         ).strftime("%Y%m%d")
         where_clauses.append(f"{_CREATED_DATE_KEY} < ?")
         query_params.append(before_date_key)
+
+    if from_date:
+        from_date_key = datetime.strptime(from_date, "%Y-%m-%d").strftime(
+            "%Y%m%d"
+        )
+        where_clauses.append(f"{_CREATED_DATE_KEY} >= ?")
+        query_params.append(from_date_key)
+
+    if through_date:
+        through_date_key = datetime.strptime(
+            through_date, "%Y-%m-%d"
+        ).strftime("%Y%m%d")
+        where_clauses.append(f"{_CREATED_DATE_KEY} <= ?")
+        query_params.append(through_date_key)
 
     if scope == "week":
         cutoff = (ref_date - timedelta(days=7)).strftime("%Y%m%d")

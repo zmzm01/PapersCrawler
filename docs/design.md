@@ -33,6 +33,7 @@ tools/
   run_pipeline.py       推荐 CLI/cron 入口
   reset_pipeline.py     状态重置
   preview_report.py     不污染数据库的报告预览
+  rebuild_historical_reports.py 按 created_date 窗口批量重建旧周报
   log_report.py         日志统计、筛选和查看
   keyword_audit.py      关键词目录校验与语料覆盖审计
   evaluate_relevance.py 相关性 benchmark 评分
@@ -210,7 +211,7 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
 
 ### 6. 报告分离
 
-报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；只有显式指定 `--export-public` 才会同步到公开站点。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
+报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；内部的日期窗口查询也支持包含式上下界，供历史重建使用。`tools/rebuild_historical_reports.py --before <新机制首份日期>` 会扫描此前的 `report_YYYYMMDD.md`，以相邻报告日期之间的 `created_date`（首份报告从最早记录开始）重建 Markdown 和当前 schema 的 sidecar，不修改 `report_date`，随后一次性导出站点数据。只有显式指定 `--export-public` 才会同步单份预览报告。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
 
 ### 7. Phase F 总结 schema
 
@@ -304,13 +305,13 @@ Phase H 从 `data/email.yaml` 读取收件人，失败时回退 `.env` 的 `SMTP
 
 `report-site/` 是 PapersCrawler 自己拥有的静态报告站点，不依赖 `../MySite`。它只消费
 公开报告 JSON，构建时生成报告归档、论文目录、A/B 等级、标签、链接和结构化解读。
-生成数据位于 gitignored 的 `report-site/src/data/reports/`，不会进入 Git 历史。
-
-现有 `site/` Hugo 目录和 `tools/convert_reports_to_hugo.py` 作为旧设计暂时保留；新 Astro
-站点验收完成前，`run_weekly.sh` 仍按原流程发布 Hugo。
+生成数据位于 gitignored 的 `report-site/src/data/reports/`，不会进入 Git 历史。公开站点只读取
+`data/reports/auto/` 和 `data/reports/legacy/`：前者是当前自动周报，后者是迁移后保留的历史周报。
+`data/reports/user/` 是组内特别报告的隔离目录，部署脚本没有将其导出的选项。历史重建若某个日期窗口没有合格论文，不会生成空 Markdown 或 sidecar；若重建已有的空报告，会一并清理其解释页，避免公开站点出现零条目页面。
+全局布局提供站点 favicon，并使用统一的正文阅读字号；论文卡片的期刊、作者和 DOI 等元信息仍以较小字号呈现。`study_type` 是内部 schema 字段，前端不得在“关键方法与设置”中渲染。
 
 Astro 使用静态输出，不读取 SQLite、API 密钥或内部 WebUI 数据。`tools/deploy_report_site.py`
-负责将自动报告导出到 Astro 数据目录、加载 nvm 中的 Node.js、构建 `report-site/dist/`，
+负责将当前自动报告和公开历史归档导出到 Astro 数据目录、加载 nvm 中的 Node.js、构建 `report-site/dist/`，
 并通过项目锁定的 Wrangler 上传 Cloudflare Pages。账户 ID、API Token 和 Pages 项目名保存在
 根目录 gitignored 的 `.env`；脚本从固定项目路径加载后注入 Wrangler 进程，避免日常部署手动设置环境变量。
 CI 可直接提供同名 `CLOUDFLARE_*` 环境变量，不需要 `.env` 文件。
@@ -329,9 +330,9 @@ WebUI 使用 systemd 常驻，部署模板位于
 0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh
 ```
 
-`run_daily.sh` 执行 `tools/run_pipeline.py --daily`；当前 `run_weekly.sh` 执行 `--weekly` 后继续
-Hugo 部署。无头服务器运行 Phase C 需要 `xvfb-run`。Astro 站点目前通过独立命令预览或部署，
-不改变现有 cron。
+`run_daily.sh` 执行 `tools/run_pipeline.py --daily`；`run_weekly.sh` 执行 `--weekly` 后调用
+`tools/deploy_report_site.py` 构建并部署 Cloudflare Pages。无头服务器运行 Phase C 需要
+`xvfb-run`。Hugo 和 `gh-pages` 已不在运行链路中。
 
 日志由 `src/logging_config.py` 统一配置，按自然日写入
 `data/logs/PaperCrawler-YYYY-MM-DD.log`；单日文件使用 10MB 大小上限并保留一个

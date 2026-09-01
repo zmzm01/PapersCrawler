@@ -536,9 +536,9 @@ recipients:
 | `fix_summary_formulas.py` | 修复总结中的 LaTeX |
 | `convert_md_to_pdf.py` | Markdown → 静态 KaTeX HTML → Prince PDF |
 | `dedup_doi_case.py` | 清理历史 DOI 大小写重复 |
-| `convert_reports_to_hugo.py` | 转换并部署 Hugo 报告 |
 | `export_public_reports.py` | 导出静态站点 JSON |
-| `deploy_report_site.py` | 构建并可选上传独立 Astro 报告站点 |
+| `rebuild_historical_reports.py` | 按 `created_date` 批量重建新机制前的周报及 sidecar |
+| `deploy_report_site.py` | 构建并可选上传公开 Cloudflare Pages 报告站点 |
 
 根目录的 `run_daily.sh` 和 `run_weekly.sh` 是 cron 包装脚本，内部调用
 `run_pipeline.py`；它们不是独立的流水线实现。已删除旧的
@@ -578,6 +578,24 @@ python tools/preview_report.py --scope all \
 截止日当天不包含；`--export-public` 会把自动报告目录和当前预览目录一起同步到
 公开导出目录。可用 `--export-root PATH` 覆盖导出目录。
 
+### 批量重建新机制前的周报
+
+当站点的报告 JSON schema 或导出机制升级后，使用下列命令重建旧周报。`--before` 是**新机制生成的第一份周报日期**；例如当前首份新机制报告是 `2026-08-23`：
+
+```bash
+# 先确认将重建的报告和 created_date 窗口，不写入任何文件
+python tools/rebuild_historical_reports.py --before 2026-08-23 --dry-run
+
+# 重写旧 Markdown、补建 .public.json，并移入公开历史归档目录
+python tools/rebuild_historical_reports.py \
+  --before 2026-08-23 \
+  --archive-dir data/reports/legacy \
+  --no-export
+```
+
+工具只处理 `data/reports/auto/` 中严格早于 `--before` 的
+`report_YYYYMMDD.md`。每份报告的范围是从上一份周报日期的次日（含）到当前报告日期（含）的 `created_date`；第一份报告包括更早的全部记录。没有符合报告资格的 A/B 论文时，该周不会生成报告；重建已有的空报告会清理其 Markdown、sidecar 和解释页。它不会修改数据库的 `report_date`，不会调用 LLM，也不会发送邮件。`--archive-dir` 会一并移动 Markdown、sidecar 和已有解释页；使用 `--no-export` 可交由随后 `deploy_report_site.py` 统一导出。`--export-root PATH` 可覆写独立导出目录。
+
 ### `export_public_reports.py`
 
 将 JSON sidecar 导出到静态站点数据目录，不重新运行 LLM，也不修改数据库：
@@ -597,13 +615,7 @@ python tools/export_public_reports.py \
 `data/reports/auto/`；默认导出根目录是 `PUBLIC_REPORT_EXPORT_DIR`，未设置时为
 项目同级 `MySite/.generated/reports`。
 
-### 独立 Astro 报告站点
-
-旧 Hugo 站点暂时保留，仍可使用：
-
-```bash
-python tools/convert_reports_to_hugo.py --all --hugo
-```
+### 公开 Astro 报告站点
 
 新站点源码位于 `report-site/`，不依赖 `../MySite`。它使用 Node.js/npm，当前服务器通过
 `/path/to/nvm` 管理 Node；非交互 shell 需要显式加载 nvm：
@@ -617,7 +629,10 @@ npm run check
 npm run build
 ```
 
-构建前需要将公开 JSON 导出到 Astro 的生成数据目录：
+站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。报告中的内部 `study_type` 不会公开显示。
+
+构建前需要将公开 JSON 导出到 Astro 的生成数据目录。公开站点只读取当前自动报告
+`data/reports/auto/` 和公开历史归档 `data/reports/legacy/`；`data/reports/user/` 的组内特别报告不会导出：
 
 ```bash
 cd /path/to/PapersCrawler
@@ -652,8 +667,7 @@ Token 仅授予目标账户的 **Cloudflare Pages 编辑**权限。`.env` 已被
 任何字段未填写时，脚本会在构建前明确指出缺失变量。CI 可安全注入同名的
 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_PAGES_PROJECT`，不需要 `.env` 文件。
 
-`--branch NAME` 用于上传预览分支，未指定时上传生产部署。当前该命令不会修改 Hugo 或
-`gh-pages`。
+`--branch NAME` 用于上传 Cloudflare Pages 预览分支，未指定时上传生产部署。该命令不会操作 GitHub Pages 或 `gh-pages`。
 
 ### Prince PDF 导出
 
@@ -711,7 +725,6 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 | `import_local_pdf.py` | `python tools/import_local_pdf.py --doi <DOI> --pdf <PATH>` |
 | `fix_summary_formulas.py` | `python tools/fix_summary_formulas.py [--doi DOI] [--publisher NAME] [--dry-run] [--force]` |
 | `dedup_doi_case.py` | `python tools/dedup_doi_case.py --dry-run`；确认后去掉 `--dry-run` 执行一次性迁移 |
-| `convert_reports_to_hugo.py` | `python tools/convert_reports_to_hugo.py --all --hugo --deploy`；可用 `--dry-run` 预览 |
 
 ## 输出与数据
 
@@ -719,8 +732,9 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 |---|---|
 | `data/papers.db` | SQLite 主库 |
 | `data/logs/` | 按日期分文件的运行日志，默认保留 14 天 |
-| `data/reports/auto/` | 自动日报、解释页、public sidecar |
-| `data/reports/user/` | 历史用户报告归档及 JSON sidecar |
+| `data/reports/auto/` | 当前自动周报、解释页、public sidecar（公开） |
+| `data/reports/legacy/` | 新机制前的历史周报及 sidecar（公开归档） |
+| `data/reports/user/` | 组内特别报告及 JSON sidecar（不公开导出） |
 | `data/mineru_output/` | PDF、MinerU 输出和 `full.md` |
 | `data/raw/` | RSS、页面和错误快照 |
 | `data/session_cached/` | Publisher 浏览器上下文 |
@@ -800,16 +814,16 @@ journalctl --user -u paperscrawler-web.service -n 100 --no-pager
 
 避免在 CLI 大量写入期间提交人工审核；WAL 只能减少冲突，不能消除并发写等待。
 
-### Hugo 部署（旧站点）
+### Cloudflare Pages 部署失败
 
-检查 `hugo`、`ghp-import` 和 cron PATH，然后运行：
+确认根目录 `.env` 中的 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN` 和
+`CLOUDFLARE_PAGES_PROJECT` 完整有效，再运行：
 
 ```bash
-python tools/convert_reports_to_hugo.py --all --hugo --deploy
+python tools/deploy_report_site.py --dry-run
 ```
 
-Hugo 是当前旧站点链路，后续迁移完成后再废除。新 Astro 站点使用上面的
-`tools/deploy_report_site.py`，两条链路暂时并行。
+检查通过后直接运行 `python tools/deploy_report_site.py`。Hugo 与 GitHub Pages 已停止维护。
 
 ## 相关文档
 

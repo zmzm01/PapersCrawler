@@ -2,6 +2,29 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-09-01：历史重建不发布空周报
+
+- `rebuild_historical_reports.py` 在日期窗口没有符合资格的 A/B 论文时跳过写入；若该空报告已存在，则删除 Markdown、public sidecar 和解释页，防止 Cloudflare Pages 出现零条目报告。
+- 已删除 `2026-08-09` 的空历史报告；后续站点导出会自动移除其对应 JSON 和索引项。
+
+## 2026-09-01：报告站点 favicon、字号与内部字段清理
+
+- 新增 `report-site/public/favicon.svg` 并在全局布局引用，浏览器标签页显示 PapersCrawler 图标。
+- 报告正文、摘要、相关性判断和原文摘要统一使用 16px 阅读字号；期刊、作者和 DOI 等元信息仍使用较小字号以维持信息层级。
+- 前端“关键方法与设置”不再映射或渲染 schema 内部的 `study_type`；历史 JSON 可保留该字段，公开页面不会显示。
+
+## 2026-09-01：公开 Cloudflare Pages 与组内特别报告分离
+
+- 周任务不再构建或部署 Hugo/GitHub Pages；`run_weekly.sh` 在 Phase G/H 后调用 `tools/deploy_report_site.py`，将 Astro 站点发布到 Cloudflare Pages。
+- 公开站点固定导出 `data/reports/auto/` 和 `data/reports/legacy/`；删除部署脚本的 `--include-user-reports`，使 `data/reports/user/` 中的组内特别报告无法被该脚本误公开。
+- 历史周报重建工具新增 `--archive-dir`，可在补建当前 schema sidecar 后，将 Markdown、sidecar 和解释页一并移入公开历史归档。Hugo 转换器和本地忽略的 `site/` 保留为停止维护的历史兼容材料，不再出现在运行或使用入口。
+
+## 2026-09-01：按 `created_date` 批量重建历史周报
+
+- 新增 `tools/rebuild_historical_reports.py --before <新机制首份日期>`，扫描自动报告目录中此前的周报，以相邻周报日期划分包含式 `created_date` 窗口（首份包含更早记录）重写 Markdown 并补建当前 schema 的 `.public.json`。
+- 默认在全部报告完成后一次性同步公开站点；`--dry-run` 输出计划窗口，`--no-export` 可延迟同步。重建不调用 LLM、不发送邮件，也不改动数据库 `report_date`，不会污染正常 Phase G 队列。
+- `preview_report._fetch_papers()` 增加内部使用的包含式日期窗口上下界，复用与预览相同的报告资格和人工审核覆盖规则；补充窗口和历史文件筛选离线测试。
+
 ## 2026-09-01：来源站点访问策略与 Optica E2 路由统一
 
 - 配置根键由 `publisher` 更名为 `source_access`，明确其描述的是访问论文来源站点的策略，而非仅 Phase C；保留旧键读取兼容并在使用时输出迁移警告。
