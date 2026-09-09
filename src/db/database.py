@@ -373,6 +373,22 @@ class DatabaseClient:
         )
         """)
         self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS browser_backend_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempted_at TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            publisher TEXT,
+            doi TEXT,
+            operation TEXT NOT NULL,
+            backend TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            failure_kind TEXT,
+            error TEXT,
+            duration_ms INTEGER,
+            is_fallback INTEGER NOT NULL DEFAULT 0
+        )
+        """)
+        self.conn.execute("""
         CREATE TABLE IF NOT EXISTS paper_fulltext_locations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             doi TEXT NOT NULL,
@@ -397,6 +413,14 @@ class DatabaseClient:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_download_events_date_publisher "
             "ON fulltext_download_events(local_date, publisher)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_events_time "
+            "ON browser_backend_events(attempted_at)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_events_backend_outcome "
+            "ON browser_backend_events(backend, outcome)"
         )
         self.conn.execute("""
         CREATE TABLE IF NOT EXISTS relevance_reviews (
@@ -1636,6 +1660,37 @@ class DatabaseClient:
         except Exception:
             self.conn.rollback()
             raise
+
+    def record_browser_backend_event(self, phase, publisher, doi, operation,
+                                     backend, outcome, failure_kind=None,
+                                     error=None, duration_ms=None,
+                                     is_fallback=False):
+        """Persist one browser backend attempt for reliability analysis."""
+        self.conn.execute(
+            """INSERT INTO browser_backend_events
+               (attempted_at, phase, publisher, doi, operation, backend,
+                outcome, failure_kind, error, duration_ms, is_fallback)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(), phase,
+             publisher, doi, operation, backend, outcome, failure_kind,
+             (error or "")[:500], duration_ms, int(bool(is_fallback))),
+        )
+        self.conn.commit()
+
+    def get_browser_backend_summary(self):
+        """Return aggregate browser reliability statistics."""
+        rows = self.conn.execute(
+            """SELECT phase, publisher, backend, operation,
+                      COUNT(*) AS attempts,
+                      SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END)
+                          AS successes,
+                      SUM(is_fallback) AS fallback_attempts,
+                      ROUND(AVG(duration_ms), 1) AS average_duration_ms
+               FROM browser_backend_events
+               GROUP BY phase, publisher, backend, operation
+               ORDER BY phase, publisher, backend, operation"""
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def finish_fulltext_download(self, doi, status, error=None, details=None):
         """Update the most recent reservation for ``doi``.

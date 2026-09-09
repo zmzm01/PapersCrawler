@@ -1,5 +1,5 @@
 """
-Phase C: Publisher page scraping via cloakbrowser.
+Phase C: Publisher page scraping via a configurable anti-detect browser.
 """
 
 import json
@@ -12,7 +12,11 @@ from datetime import datetime, timedelta
 from config import CFG
 from common import format_error_for_record
 from db.database import FetchStatus
-from pipeline.base import SCRAPER_MAP, create_scraper
+from pipeline.base import (
+    SCRAPER_MAP,
+    create_scraper,
+    record_browser_event,
+)
 from sources.publisher import NonResearchPageError, AcceptedPaperError, PageParseError
 
 logger = logging.getLogger(__name__)
@@ -274,21 +278,50 @@ def phase_c_publisher(db, publishers):
 
         scraper = None
         try:
+            launch_started = time.monotonic()
             scraper = create_scraper(publisher_key)
+            record_browser_event(
+                db, "C", publisher_key, None, "launch",
+                getattr(
+                    scraper, "browser_backend", CFG.BROWSER_PRIMARY_BACKEND,
+                ), "success",
+                duration_ms=round(
+                    (time.monotonic() - launch_started) * 1000
+                ),
+            )
         except (ValueError, Exception) as e:
-            logger.error(f"Cannot create scraper for {publisher_key}: {e}")
-            timestamp = str(datetime.now())
-            for paper in papers:
-                try:
-                    db.update_error_message(
-                        paper["doi"], "publisher_page_fetched_status",
-                        FetchStatus.FAILED.value,
-                        "publisher_page_fetched_error", str(e),
-                        "publisher_page_fetched_date", timestamp,
-                    )
-                except Exception:
-                    pass
-            continue
+            try:
+                record_browser_event(
+                    db, "C", publisher_key, None, "launch",
+                    CFG.BROWSER_PRIMARY_BACKEND, "failed",
+                    failure_kind="launch_error", error=str(e),
+                )
+                scraper = create_scraper(
+                    publisher_key,
+                    browser_backend=CFG.BROWSER_FALLBACK_BACKEND,
+                )
+                record_browser_event(
+                    db, "C", publisher_key, None, "launch",
+                    CFG.BROWSER_FALLBACK_BACKEND, "success",
+                    is_fallback=True,
+                )
+            except Exception as fallback_error:
+                logger.error(
+                    "Cannot create scraper for %s: %s; fallback failed: %s",
+                    publisher_key, e, fallback_error,
+                )
+                timestamp = str(datetime.now())
+                for paper in papers:
+                    try:
+                        db.update_error_message(
+                            paper["doi"], "publisher_page_fetched_status",
+                            FetchStatus.FAILED.value,
+                            "publisher_page_fetched_error", str(fallback_error),
+                            "publisher_page_fetched_date", timestamp,
+                        )
+                    except Exception:
+                        pass
+                continue
 
         # 预热导航：建立 Cookie 同意等会话状态（仅配置了 prewarm_url 的
         # 出版社执行，如 AIP 的 Osano consent），避免组内第一篇论文因
@@ -328,10 +361,23 @@ def phase_c_publisher(db, publishers):
                     CFG, "PUBLISHER_FALLBACK_PROXY_URL", "",
                 ).strip()
                 retry_plan = [
-                    (attempt, False) for attempt in normal_retry_attempts
+                    (attempt, False, None) for attempt in normal_retry_attempts
                 ]
                 if fallback_proxy_url:
-                    retry_plan.append((None, True))
+                    retry_plan.append((None, True, None))
+                fallback_backend = getattr(
+                    CFG, "BROWSER_FALLBACK_BACKEND", "cloakbrowser",
+                )
+                if (
+                    getattr(CFG, "BROWSER_FALLBACK_ON_TASK_FAILURE", True)
+                    and fallback_backend != getattr(
+                        scraper, "browser_backend", fallback_backend,
+                    )
+                ):
+                    retry_plan.append((None, False, fallback_backend))
+                has_backend_fallback = any(
+                    backend for _, _, backend in retry_plan
+                )
 
                 paper_succeeded = False
                 paper_skipped = False
@@ -358,15 +404,20 @@ def phase_c_publisher(db, publishers):
                     if paper_skipped:
                         continue
 
-                for attempt, is_fallback in retry_plan:
+                for attempt, is_proxy_fallback, backend_override in retry_plan:
+                    is_fallback = is_proxy_fallback or bool(backend_override)
                     attempt_scraper = scraper
                     fallback_scraper = None
+                    attempt_started = time.monotonic()
                     try:
                         if is_fallback:
                             fallback_attempted = True
                             logger.info(
-                                "Phase C fallback retry with configured proxy "
-                                "[%s]",
+                                "Phase C fallback retry via %s%s [%s]",
+                                backend_override or getattr(
+                                    scraper, "browser_backend", "configured backend",
+                                ),
+                                " and fallback proxy" if is_proxy_fallback else "",
                                 paperDOI,
                             )
                             if scraper:
@@ -375,10 +426,21 @@ def phase_c_publisher(db, publishers):
                                 except Exception:
                                     pass
                                 scraper = None
-                            fallback_scraper = create_scraper(
-                                publisher_key,
-                                proxy_override={"server": fallback_proxy_url},
+                            fallback_proxy = (
+                                {"server": fallback_proxy_url}
+                                if is_proxy_fallback else None
                             )
+                            if backend_override is None:
+                                fallback_scraper = create_scraper(
+                                    publisher_key,
+                                    proxy_override=fallback_proxy,
+                                )
+                            else:
+                                fallback_scraper = create_scraper(
+                                    publisher_key,
+                                    proxy_override=fallback_proxy,
+                                    browser_backend=backend_override,
+                                )
                             attempt_scraper = fallback_scraper
                             last_scraper = attempt_scraper
                             try:
@@ -479,9 +541,24 @@ def phase_c_publisher(db, publishers):
                             FetchStatus.SUCCESS.value, timestamp,
                         )
                         paper_succeeded = True
+                        record_browser_event(
+                            db,
+                            "C", publisher_key, paperDOI, "page_fetch",
+                            getattr(attempt_scraper, "browser_backend", "unknown"),
+                            "success",
+                            duration_ms=round(
+                                (time.monotonic() - attempt_started) * 1000
+                            ),
+                            is_fallback=is_fallback,
+                        )
                         if is_fallback:
                             logger.info(
-                                f"Publisher page OK via fallback proxy: {paperDOI}"
+                                "Publisher page OK via fallback (%s): %s",
+                                getattr(
+                                    attempt_scraper,
+                                    "browser_backend",
+                                    "proxy",
+                                ), paperDOI,
                             )
                         else:
                             logger.info(f"Publisher page OK: {paperDOI}")
@@ -504,6 +581,17 @@ def phase_c_publisher(db, publishers):
 
                     except Exception as e:
                         last_error = e
+                        record_browser_event(
+                            db,
+                            "C", publisher_key, paperDOI, "page_fetch",
+                            getattr(attempt_scraper, "browser_backend", "unknown"),
+                            "failed", failure_kind=type(e).__name__,
+                            error=format_error_for_record(e),
+                            duration_ms=round(
+                                (time.monotonic() - attempt_started) * 1000
+                            ),
+                            is_fallback=is_fallback,
+                        )
                         # If parse_page() raised an error and the HTML contains
                         # bot-detection markers, treat it as a bot block and
                         # retry with longer timeout instead of giving up early.
@@ -538,6 +626,10 @@ def phase_c_publisher(db, publishers):
                             continue
                         if not is_fallback and fallback_proxy_url:
                             continue
+                        if not is_fallback and has_backend_fallback:
+                            continue
+                        if is_fallback and backend_override is None:
+                            continue
                         break
                     finally:
                         if fallback_scraper:
@@ -550,12 +642,29 @@ def phase_c_publisher(db, publishers):
                                 scraper = create_scraper(publisher_key)
                                 scraper.prewarm()
                             except Exception as exc:
-                                scraper = None
                                 logger.warning(
                                     "Could not restore normal scraper for %s: %s",
                                     publisher_key,
                                     exc,
                                 )
+                                try:
+                                    scraper = create_scraper(
+                                        publisher_key,
+                                        browser_backend=fallback_backend,
+                                    )
+                                    scraper.prewarm()
+                                    logger.info(
+                                        "Retaining fallback backend for %s",
+                                        publisher_key,
+                                    )
+                                except Exception as fallback_exc:
+                                    scraper = None
+                                    logger.warning(
+                                        "Could not retain fallback scraper for "
+                                        "%s: %s",
+                                        publisher_key,
+                                        fallback_exc,
+                                    )
 
                 if not paper_succeeded and not paper_skipped:
                     error_msg = str(last_error) if last_error else "Unknown error"

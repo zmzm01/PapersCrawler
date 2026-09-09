@@ -3,6 +3,7 @@ Phase E2: MinerU PDF full-text parsing.
 """
 
 import logging
+import inspect
 import random
 import time
 from datetime import datetime
@@ -10,12 +11,55 @@ from datetime import datetime
 from config import CFG, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR
 from common import format_error_for_record
 from db.database import FetchStatus
-from pipeline.base import SCRAPER_MAP
+from pipeline.base import SCRAPER_MAP, record_browser_event
 from processors.mineru_paper_parser import MinerUParser
 from sources.publisher import BasePublisherScraper
 from sources.fulltext import resolve_candidates
 
 logger = logging.getLogger(__name__)
+
+
+def _launch_downloader(db, publisher, downloader_class, session_dir, proxy,
+                       preferred_backend=None):
+    """Launch an E2 downloader with configured backend fallback."""
+    primary = preferred_backend or CFG.BROWSER_PRIMARY_BACKEND
+    fallback = CFG.BROWSER_FALLBACK_BACKEND
+    backends = [primary] + ([fallback] if fallback != primary else [])
+    last_error = None
+    for index, backend in enumerate(backends):
+        backend_session_dir = session_dir / f"backend_{backend}"
+        backend_session_dir.mkdir(parents=True, exist_ok=True)
+        downloader = downloader_class(backend_session_dir)
+        is_fallback = index > 0 or preferred_backend is not None
+        started = time.monotonic()
+        try:
+            parameters = inspect.signature(
+                downloader.start_browser,
+            ).parameters
+            if "backend" in parameters:
+                downloader.start_browser(proxy, backend=backend)
+            else:
+                downloader.start_browser(proxy)
+            if not hasattr(downloader, "browser_backend"):
+                downloader.browser_backend = backend
+            record_browser_event(
+                db,
+                "E2", publisher, None, "launch", backend, "success",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                is_fallback=is_fallback,
+            )
+            return downloader
+        except Exception as error:
+            last_error = error
+            record_browser_event(
+                db,
+                "E2", publisher, None, "launch", backend, "failed",
+                failure_kind="launch_error", error=str(error),
+                duration_ms=round((time.monotonic() - started) * 1000),
+                is_fallback=is_fallback,
+            )
+            downloader.close()
+    raise last_error
 
 
 def _failure_kind(error):
@@ -145,10 +189,7 @@ def phase_e2_mineru(db):
                 scraper_class, "skip_phase_c_if_crossref_abstract", True,
             )
         )
-        if has_parse:
-            downloader = scraper_class(dl_dir)
-        else:
-            downloader = BasePublisherScraper(dl_dir)
+        downloader_class = scraper_class if has_parse else BasePublisherScraper
 
         # Source-specific routes apply to every visit to that source.  In
         # particular, E2's lazy Optica page fetch needs the same regional
@@ -157,7 +198,9 @@ def phase_e2_mineru(db):
 
         logger.info(f"Phase E2: launching browser for '{publisher}' ({len(group)} papers)")
         try:
-            downloader.start_browser(proxy)
+            downloader = _launch_downloader(
+                db, publisher, downloader_class, dl_dir, proxy,
+            )
             logger.info(f"Phase E2: browser ready for '{publisher}'")
         except Exception as e:
             logger.error(f"Phase E2: browser launch failed for '{publisher}': {e}")
@@ -198,6 +241,7 @@ def phase_e2_mineru(db):
                 if not page_url:
                     continue
                 try:
+                    started = time.monotonic()
                     downloader.fetch_page(page_url, timeout=30000)
                     parsed = downloader.parse_page()
                     if parsed and parsed.pdf_url:
@@ -211,14 +255,91 @@ def phase_e2_mineru(db):
                         logger.info(
                             f"Lazy fetch OK: {doi} → {parsed.pdf_url}"
                         )
+                        record_browser_event(
+                            db,
+                            "E2", publisher, doi, "lazy_page_fetch",
+                            downloader.browser_backend, "success",
+                            duration_ms=round(
+                                (time.monotonic() - started) * 1000
+                            ),
+                        )
                     else:
-                        logger.warning(
-                            f"Lazy fetch: no pdf_url for {doi}"
+                        raise RuntimeError(
+                            f"Lazy fetch returned no pdf_url for {doi}"
                         )
                 except Exception as e:
+                    record_browser_event(
+                        db,
+                        "E2", publisher, doi, "lazy_page_fetch",
+                        downloader.browser_backend, "failed",
+                        failure_kind=type(e).__name__,
+                        error=format_error_for_record(e),
+                        duration_ms=round(
+                            (time.monotonic() - started) * 1000
+                        ),
+                    )
                     logger.warning(
                         f"Lazy fetch failed [{doi}]: {e}"
                     )
+                    if (
+                        CFG.BROWSER_FALLBACK_ON_TASK_FAILURE
+                        and downloader.browser_backend
+                        != CFG.BROWSER_FALLBACK_BACKEND
+                    ):
+                        try:
+                            fallback_downloader = _launch_downloader(
+                                db, publisher, downloader_class, dl_dir, proxy,
+                                preferred_backend=CFG.BROWSER_FALLBACK_BACKEND,
+                            )
+                        except Exception as fallback_launch_error:
+                            logger.warning(
+                                "Fallback browser launch failed [%s]: %s",
+                                doi,
+                                fallback_launch_error,
+                            )
+                        else:
+                            fallback_started = time.monotonic()
+                            try:
+                                fallback_downloader.fetch_page(
+                                    page_url, timeout=30000,
+                                )
+                                parsed = fallback_downloader.parse_page()
+                                if not parsed or not parsed.pdf_url:
+                                    raise RuntimeError(
+                                        "Fallback lazy fetch returned no pdf_url"
+                                    )
+                                db.update_publisher_pdf_url(doi, parsed.pdf_url)
+                                paper["pdf_url"] = parsed.pdf_url
+                                paper["_pdf_candidates"] = [{
+                                    "url": parsed.pdf_url,
+                                    "source": "publisher",
+                                    "priority": 100,
+                                }]
+                                record_browser_event(
+                                    db,
+                                    "E2", publisher, doi, "lazy_page_fetch",
+                                    fallback_downloader.browser_backend,
+                                    "success",
+                                    duration_ms=round(
+                                        (time.monotonic() - fallback_started)
+                                        * 1000
+                                    ), is_fallback=True,
+                                )
+                            except Exception as fallback_error:
+                                record_browser_event(
+                                    db,
+                                    "E2", publisher, doi, "lazy_page_fetch",
+                                    fallback_downloader.browser_backend,
+                                    "failed",
+                                    failure_kind=type(fallback_error).__name__,
+                                    error=format_error_for_record(fallback_error),
+                                    duration_ms=round(
+                                        (time.monotonic() - fallback_started)
+                                        * 1000
+                                    ), is_fallback=True,
+                                )
+                            finally:
+                                fallback_downloader.close()
                 downloader.page.wait_for_timeout(3000)
 
         try:
@@ -281,6 +402,7 @@ def phase_e2_mineru(db):
                             if not candidate_url:
                                 continue
                             try:
+                                download_started = time.monotonic()
                                 logger.info("Downloading PDF: %s ← %s", doi, candidate_url)
                                 candidate_bytes = downloader.download_pdf(
                                     candidate_url, page_url=page_url,
@@ -288,12 +410,113 @@ def phase_e2_mineru(db):
                                 if candidate_bytes and candidate_bytes[:5] == b"%PDF-":
                                     pdf_bytes = candidate_bytes
                                     paper["_selected_location"] = candidate
+                                    record_browser_event(
+                                        db,
+                                        "E2", publisher, doi, "pdf_download",
+                                        downloader.browser_backend, "success",
+                                        duration_ms=round(
+                                            (time.monotonic() - download_started)
+                                            * 1000
+                                        ),
+                                    )
                                     break
                                 download_errors.append(
                                     f"{candidate_url}: invalid PDF content"
                                 )
+                                record_browser_event(
+                                    db, "E2", publisher, doi, "pdf_download",
+                                    downloader.browser_backend, "failed",
+                                    failure_kind="invalid_pdf",
+                                    error="invalid PDF content",
+                                    duration_ms=round(
+                                        (time.monotonic() - download_started)
+                                        * 1000
+                                    ),
+                                )
                             except Exception as error:
+                                record_browser_event(
+                                    db,
+                                    "E2", publisher, doi, "pdf_download",
+                                    downloader.browser_backend, "failed",
+                                    failure_kind=_failure_kind(error),
+                                    error=format_error_for_record(error),
+                                    duration_ms=round(
+                                        (time.monotonic() - download_started)
+                                        * 1000
+                                    ),
+                                )
                                 download_errors.append(f"{candidate_url}: {error}")
+                        if (
+                            not pdf_bytes
+                            and CFG.BROWSER_FALLBACK_ON_TASK_FAILURE
+                            and downloader.browser_backend
+                            != CFG.BROWSER_FALLBACK_BACKEND
+                        ):
+                            fallback_downloader = _launch_downloader(
+                                db, publisher, downloader_class, dl_dir, proxy,
+                                preferred_backend=CFG.BROWSER_FALLBACK_BACKEND,
+                            )
+                            try:
+                                for candidate in candidates:
+                                    candidate_url = candidate.get("url")
+                                    if not candidate_url:
+                                        continue
+                                    download_started = time.monotonic()
+                                    try:
+                                        candidate_bytes = fallback_downloader.download_pdf(
+                                            candidate_url, page_url=page_url,
+                                        )
+                                        if candidate_bytes and candidate_bytes[:5] == b"%PDF-":
+                                            pdf_bytes = candidate_bytes
+                                            paper["_selected_location"] = candidate
+                                            record_browser_event(
+                                                db,
+                                                "E2", publisher, doi,
+                                                "pdf_download",
+                                                fallback_downloader.browser_backend,
+                                                "success",
+                                                duration_ms=round(
+                                                    (time.monotonic()
+                                                     - download_started) * 1000
+                                                ), is_fallback=True,
+                                            )
+                                            break
+                                        record_browser_event(
+                                            db,
+                                            "E2", publisher, doi,
+                                            "pdf_download",
+                                            fallback_downloader.browser_backend,
+                                            "failed",
+                                            failure_kind="invalid_pdf",
+                                            error="invalid PDF content",
+                                            duration_ms=round(
+                                                (time.monotonic()
+                                                 - download_started) * 1000
+                                            ), is_fallback=True,
+                                        )
+                                        download_errors.append(
+                                            "fallback "
+                                            f"{candidate_url}: invalid PDF content"
+                                        )
+                                    except Exception as error:
+                                        record_browser_event(
+                                            db,
+                                            "E2", publisher, doi,
+                                            "pdf_download",
+                                            fallback_downloader.browser_backend,
+                                            "failed",
+                                            failure_kind=_failure_kind(error),
+                                            error=format_error_for_record(error),
+                                            duration_ms=round(
+                                                (time.monotonic()
+                                                 - download_started) * 1000
+                                            ), is_fallback=True,
+                                        )
+                                        download_errors.append(
+                                            f"fallback {candidate_url}: {error}"
+                                        )
+                            finally:
+                                fallback_downloader.close()
                         if not pdf_bytes:
                             raise RuntimeError("; ".join(download_errors)[:500] or
                                                "No PDF candidate succeeded")

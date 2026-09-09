@@ -566,6 +566,167 @@ def test_phase_c_fallback_proxy_recovers(monkeypatch):
     assert database.actions
 
 
+def test_phase_c_retains_fallback_when_primary_restore_fails(monkeypatch):
+    """A failed primary restore must not strand later papers."""
+    papers = [
+        {"doi": "10/one", "page_url": "u1", "title": "one",
+         "publisher": "fake"},
+        {"doi": "10/two", "page_url": "u2", "title": "two",
+         "publisher": "fake"},
+    ]
+    default_launches = 0
+
+    class FakeScraper:
+        skip_phase_c_if_crossref_abstract = False
+
+        def __init__(self, backend, succeeds):
+            self.browser_backend = backend
+            self.succeeds = succeeds
+            self.html = ""
+            self.page_url = ""
+
+        def prewarm(self):
+            return None
+
+        def fetch_page(self, url, timeout):
+            del timeout
+            self.page_url = url
+            if not self.succeeds:
+                raise RuntimeError("primary blocked")
+
+        def parse_page(self):
+            return Paper(title="ok", abstract="abstract")
+
+        def close(self):
+            return None
+
+    def fake_create(_publisher, proxy_override=None, browser_backend=None):
+        nonlocal default_launches
+        del proxy_override
+        if browser_backend == "cloakbrowser":
+            return FakeScraper("cloakbrowser", True)
+        default_launches += 1
+        if default_launches == 1:
+            return FakeScraper("camoufox", False)
+        raise RuntimeError("primary restore failed")
+
+    class FakeDB:
+        def __init__(self):
+            self.updated = []
+
+        def get_papers_by_status(self, *_args):
+            return []
+
+        def get_pending_publisher_papers(self, *_args, **_kwargs):
+            return papers
+
+        def update_publisher_page(self, *args):
+            self.updated.append(args[0])
+
+        def update_error_message(self, *_args):
+            return None
+
+    monkeypatch.setattr(phase_c, "create_scraper", fake_create)
+    monkeypatch.setattr(
+        phase_c, "SCRAPER_MAP", {"fake": (FakeScraper, None, None)},
+    )
+    monkeypatch.setattr(phase_c.CFG, "SKIP_PHASE_C", False)
+    monkeypatch.setattr(phase_c.CFG, "MAX_PAPERS_PER_PHASE", 0)
+    monkeypatch.setattr(phase_c.CFG, "PREFETCH_NON_RESEARCH", False)
+    monkeypatch.setattr(phase_c.CFG, "POSTFETCH_NON_RESEARCH", False)
+    monkeypatch.setattr(phase_c.CFG, "BROWSER_PRIMARY_BACKEND", "camoufox")
+    monkeypatch.setattr(
+        phase_c.CFG, "BROWSER_FALLBACK_BACKEND", "cloakbrowser",
+    )
+    monkeypatch.setattr(
+        phase_c.CFG, "BROWSER_FALLBACK_ON_TASK_FAILURE", True,
+    )
+    monkeypatch.setattr(phase_c.CFG, "PUBLISHER_FALLBACK_PROXY_URL", "")
+    monkeypatch.setattr(
+        phase_c.CFG, "PUBLISHER_MAX_CONSECUTIVE_FAILURES", 3,
+    )
+    monkeypatch.setattr(phase_c.CFG, "PUBLISHER_PAGE_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_c.CFG, "PUBLISHER_PAGE_DELAY_MAX", 0)
+    monkeypatch.setattr(phase_c.random, "uniform", lambda *_args: 0)
+    monkeypatch.setattr(phase_c.time, "sleep", lambda *_args: None)
+
+    database = FakeDB()
+    phase_c.phase_c_publisher(
+        database, [{"publisher": "fake", "enabled": True}],
+    )
+
+    assert database.updated == ["10/one", "10/two"]
+
+
+def test_phase_e2_lazy_fallback_launch_failure_is_isolated(monkeypatch,
+                                                            tmp_path):
+    """A failed lazy-fetch fallback launch must become a paper failure."""
+    row = {
+        "doi": "10/lazy", "publisher": "fake", "pdf_url": "",
+        "page_url": "https://example.test/paper",
+    }
+
+    class FakeDB:
+        def __init__(self):
+            self.errors = []
+
+        def get_relevance_screen_candidates(self, **_kwargs):
+            return [row]
+
+        def update_mineru_error(self, *args):
+            self.errors.append(args)
+
+        def claim_fulltext_download(self, *_args):
+            return True
+
+    class FakeDownloader:
+        skip_phase_c_if_crossref_abstract = True
+
+        def __init__(self, _directory):
+            self.page = SimpleNamespace(wait_for_timeout=lambda _delay: None)
+            self.browser_backend = None
+
+        def start_browser(self, _proxy, backend=None):
+            self.browser_backend = backend
+            if backend == "cloakbrowser":
+                raise RuntimeError("fallback unavailable")
+
+        def fetch_page(self, _url, timeout):
+            del timeout
+            raise RuntimeError("primary fetch failed")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(phase_e2, "MINERU_OUTPUT_DIR", tmp_path / "output")
+    monkeypatch.setattr(
+        phase_e2, "BROWSER_SESSION_DIR", tmp_path / "sessions",
+    )
+    monkeypatch.setattr(phase_e2, "MinerUParser", lambda _token: object())
+    monkeypatch.setattr(phase_e2, "resolve_candidates", lambda *_args: [])
+    monkeypatch.setattr(
+        phase_e2, "SCRAPER_MAP", {"fake": (FakeDownloader, None, None)},
+    )
+    monkeypatch.setattr(phase_e2.CFG, "SKIP_PHASE_E2", False)
+    monkeypatch.setattr(phase_e2.CFG, "MINERU_TOKEN", "token")
+    monkeypatch.setattr(phase_e2.CFG, "BROWSER_PRIMARY_BACKEND", "camoufox")
+    monkeypatch.setattr(
+        phase_e2.CFG, "BROWSER_FALLBACK_BACKEND", "cloakbrowser",
+    )
+    monkeypatch.setattr(
+        phase_e2.CFG, "BROWSER_FALLBACK_ON_TASK_FAILURE", True,
+    )
+    monkeypatch.setattr(phase_e2.CFG, "FULLTEXT_DOWNLOAD_DELAY_MIN", 0)
+    monkeypatch.setattr(phase_e2.CFG, "FULLTEXT_DOWNLOAD_DELAY_MAX", 0)
+    monkeypatch.setattr(phase_e2.time, "sleep", lambda *_args: None)
+
+    database = FakeDB()
+    phase_e2.phase_e2_mineru(database)
+
+    assert database.errors
+    assert database.errors[0][0] == "10/lazy"
+
+
 def test_phase_e2_validation_and_early_exits(monkeypatch, tmp_path):
     """PDF signature validation and all admission early exits are covered."""
     valid = tmp_path / "valid.pdf"
