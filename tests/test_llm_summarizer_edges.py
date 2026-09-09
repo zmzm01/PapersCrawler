@@ -71,7 +71,44 @@ def test_formula_fixer_prompt_detection_and_fallback(monkeypatch):
         "call_llm_api_with_retry",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
     )
-    assert fixer.fix_text("x^2") == "x^2"
+    assert fixer.fix_text("x^2") == r"\(x^2\)"
+
+
+def test_formula_fixer_wraps_bare_formulas_before_repair(monkeypatch):
+    """Bare formulas are wrapped before validation and remain wrapped on failure."""
+    validated = []
+    requested = []
+    monkeypatch.setattr(
+        summarizer_module,
+        "validate_katex_formulas",
+        lambda text: validated.append(text) or [],
+    )
+    monkeypatch.setattr(
+        common,
+        "call_llm_api_with_retry",
+        lambda config, headers, payload, **kwargs: requested.append(
+            payload["messages"][0]["content"],
+        ) or r"结果仍写成 \Delta n(k,t) \propto |\psi(k,t)|^2。",
+    )
+    fixer = FormulaFixer({"api_key": "key"})
+
+    fixed = fixer.fix_text(r"核心公式：\Delta n(k,t) \propto |\psi(k,t)|^2。")
+
+    assert validated[0] == r"核心公式：\(\Delta n(k,t) \propto |\psi(k,t)|^2\)。"
+    assert requested[0].endswith(validated[0])
+    assert fixed == r"结果仍写成 \(\Delta n(k,t) \propto |\psi(k,t)|^2\)。"
+    assert FormulaFixer.wrap_unwrapped_formulas(r"已有 \(x^2\)，另有 E = mc^2。") == (
+        r"已有 \(x^2\)，另有 \(E = mc^2\)。"
+    )
+    assert FormulaFixer.wrap_unwrapped_formulas(
+        r"The value E = mc^2 is the result."
+    ) == r"The value \(E = mc^2\) is the result."
+    assert FormulaFixer.wrap_unwrapped_formulas(r"使用 800\,nm 泵浦。") == (
+        r"使用 \(800\,nm\) 泵浦。"
+    )
+    assert FormulaFixer.wrap_unwrapped_formulas("相位差 α + β 很小。") == (
+        r"相位差 \(α + β\) 很小。"
+    )
 
 
 def test_formula_fixer_passes_katex_diagnostics_and_rejects_invalid_reply(monkeypatch):

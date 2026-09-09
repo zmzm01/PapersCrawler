@@ -243,6 +243,122 @@ class FormulaFixer:
         })
 
     @staticmethod
+    def wrap_unwrapped_formulas(text: str) -> str:
+        """Provisionally wrap bare LaTeX-like expressions in math mode.
+
+        Existing ``\\(...\\)`` and ``\\[...\\]`` regions are preserved.  In
+        the remaining prose, a small lexer finds runs containing a LaTeX
+        command or an explicit subscript/superscript and wraps the complete
+        adjacent mathematical run.  Multi-letter prose words and CJK text are
+        treated as boundaries, which keeps the operation deliberately
+        conservative before the LLM performs the semantic repair.
+
+        Parameters
+        ----------
+        text : str
+            Text whose formulas may be missing math delimiters.
+
+        Returns
+        -------
+        str
+            Text with detected bare formulas wrapped in ``\\(...\\)``.
+        """
+        if not text:
+            return text
+
+        protected_math = re.compile(r"(\\\(.*?\\\)|\\\[.*?\\\])", re.DOTALL)
+        parts = protected_math.split(text)
+        for index in range(0, len(parts), 2):
+            parts[index] = FormulaFixer._wrap_formula_runs(parts[index])
+        return "".join(parts)
+
+    @staticmethod
+    def _wrap_formula_runs(text: str) -> str:
+        """Wrap lexer runs containing an unmistakable bare-math token."""
+        token_pattern = re.compile(
+            r"\\[A-Za-z]+"
+            r"|\\[^A-Za-z\s]"
+            r"|[A-Za-z0-9]+(?:\s*[_^]\s*(?:\{[^{}\n]*\}|[A-Za-z0-9]))+"
+            r"|\([^()\n]*\)"
+            r"|\[[^\[\]\n]*\]"
+            r"|\{[^{}\n]*\}"
+            r"|[A-Za-z]{2,}"
+            r"|[A-Za-z]"
+            r"|\d+(?:\.\d+)?"
+            r"|[\u0370-\u03FF\u2070-\u209F\u2190-\u22FF\u2100-\u214F\u00B2\u00B3\u00B9]"
+            r"|[=+*/<>|^_\-]"
+            r"|[^\S\n]+"
+            r"|.",
+        )
+        command_pattern = re.compile(r"\\(?:[A-Za-z]+|[^A-Za-z\s])\Z")
+        decorated_pattern = re.compile(
+            r"[A-Za-z0-9]+(?:\s*[_^]\s*(?:\{[^{}\n]*\}|[A-Za-z0-9]))+\Z",
+        )
+        simple_pattern = re.compile(r"(?:[A-Za-z]|\d+(?:\.\d+)?)\Z")
+        word_pattern = re.compile(r"[A-Za-z]{2,}\Z")
+        unicode_math_pattern = re.compile(
+            r"[\u0370-\u03FF\u2070-\u209F\u2190-\u22FF\u2100-\u214F"
+            r"\u00B2\u00B3\u00B9]\Z",
+        )
+        group_pattern = re.compile(r"[({\[].*[)}\]]\Z")
+        operator_pattern = re.compile(r"[=+*/<>|^_\-]\Z")
+
+        tokens = list(token_pattern.finditer(text))
+        output = []
+        run = []
+        has_seed = False
+
+        def flush_run() -> None:
+            nonlocal has_seed
+            if not run:
+                return
+            run_text = "".join(token.group(0) for token in run)
+            leading_length = len(run_text) - len(run_text.lstrip())
+            trailing_length = len(run_text) - len(run_text.rstrip())
+            leading = run_text[:leading_length]
+            end = len(run_text) - trailing_length if trailing_length else len(run_text)
+            content = run_text[leading_length:end]
+            trailing = run_text[end:]
+            if has_seed and content:
+                output.append(f"{leading}\\({content}\\){trailing}")
+            else:
+                output.append(run_text)
+            run.clear()
+            has_seed = False
+
+        for token in tokens:
+            value = token.group(0)
+            is_command = bool(command_pattern.fullmatch(value))
+            is_decorated = bool(decorated_pattern.fullmatch(value))
+            is_unicode_math = bool(unicode_math_pattern.fullmatch(value))
+            is_group = bool(group_pattern.fullmatch(value)) and not re.search(
+                r"[^A-Za-z0-9\s,.;:+*/=<>|^_{}\\\-]", value[1:-1],
+            )
+            if is_group and value[0] in "([":
+                is_group = not re.search(r"[A-Za-z]{2,}", value[1:-1])
+            is_unit_word = bool(word_pattern.fullmatch(value)) and has_seed and any(
+                re.fullmatch(r"\\[,;! ]", item.group(0)) for item in run
+            ) and any(item.group(0)[0].isdigit() for item in run)
+            is_compatible = (
+                is_command
+                or is_decorated
+                or is_unicode_math
+                or bool(simple_pattern.fullmatch(value))
+                or is_unit_word
+                or is_group
+                or bool(operator_pattern.fullmatch(value))
+                or (value.isspace() and "\n" not in value)
+            )
+            if not is_compatible:
+                flush_run()
+                output.append(value)
+                continue
+            run.append(token)
+            has_seed = has_seed or is_command or is_decorated or is_unicode_math
+        flush_run()
+        return "".join(output)
+
+    @staticmethod
     def needs_fix(text: str, force: bool = False) -> bool:
         """检测文本中是否有 LaTeX 公式格式问题。
 
@@ -313,9 +429,10 @@ class FormulaFixer:
         if not text or text == "未提供":
             logger.debug(f"{tag}跳过修复: 空字段或未提供")
             return text
-        locally_repaired = repair_llm_text_artifacts(text)
+        artifact_repaired = repair_llm_text_artifacts(text)
+        needs_llm_fix = self.needs_fix(artifact_repaired, force=self.force)
+        locally_repaired = self.wrap_unwrapped_formulas(artifact_repaired)
         validation_errors = validate_katex_formulas(locally_repaired)
-        needs_llm_fix = self.needs_fix(locally_repaired, force=self.force)
         if validation_errors:
             needs_llm_fix = True
         if not needs_llm_fix:
@@ -364,7 +481,7 @@ class FormulaFixer:
                 logger.warning("%s公式修复失败，回退本地修复内容: %s", tag, error)
                 return locally_repaired
 
-            fixed = repair_llm_text_artifacts(fixed)
+            fixed = self.wrap_unwrapped_formulas(repair_llm_text_artifacts(fixed))
             current_errors = validate_katex_formulas(fixed)
             if not current_errors:
                 logger.info(
