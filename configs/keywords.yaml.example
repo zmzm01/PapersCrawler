@@ -50,7 +50,7 @@ scope_definition:
   laser_driven_ion_acceleration:
     display_name: 激光驱动离子/质子加速
     role: core
-    a_requirements: [主贡献研究激光驱动离子或质子产生、加速或后加速]
+    a_requirements: [主贡献研究激光驱动离子或质子产生、加速或后加速；以核心方向为实质主体的高价值技术综述也可纳入]
     adjacent_examples: []
     exclusions: [普通同步环/对撞机加速器]
     description: '研究方向: laser_driven_ion_acceleration — 请替换为实际的中文描述'
@@ -61,7 +61,7 @@ scope_definition:
     display_name: 激光等离子体物理与直接诊断
     role: core
     a_requirements: [明确研究激光靶相互作用、预等离子体或服务该体系的诊断]
-    adjacent_examples: []
+    adjacent_examples: [在邻近物理场景中得到定量验证、且无需改变测量或反演核心原理即可直接迁移的具体诊断方法]
     exclusions: [与激光驱动粒子无关的通用等离子体]
     description: '研究方向: laser_plasma_physics_and_diagnostics — 请替换为实际的中文描述'
     topics:
@@ -71,7 +71,7 @@ scope_definition:
     display_name: 高梯度束流传输与后加速
     role: core
     a_requirements: [明确服务激光驱动粒子的紧凑传输、聚焦或后加速]
-    adjacent_examples: [具体束线磁光学方法可迁移到激光驱动粒子束]
+    adjacent_examples: [已得到结果验证、且无需改变器件或控制核心原理即可直接迁移到激光驱动粒子束的具体束线磁光学方法]
     exclusions: [仅讨论传统加速器束线]
     description: '研究方向: high_gradient_beam_transport — 请替换为实际的中文描述'
     topics:

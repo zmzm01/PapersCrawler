@@ -275,7 +275,9 @@ def test_boundary_rules_match_review_calibrated_scope():
     assert "Pure electron LWFA/DLA" in prompt
     assert "generic laser-produced plasma waveguides are C" in prompt
     assert "Generic PIC/HPC algorithms" in prompt
-    assert "interest-list match" in prompt
+    assert "all three transfer tests must pass" in prompt
+    assert "review does not need to report a new experiment" in prompt
+    assert "technically useful synthesis" in prompt
     assert "Do not invent a transfer path" in prompt
 
 
@@ -291,7 +293,9 @@ def test_build_transition_review_prompt_requires_primary_contribution():
 
     assert "Independent cross-boundary transition review" in prompt
     assert "title/abstract screen assigned category C" in prompt
-    assert "primary object, new contribution" in prompt
+    assert "primary object, scholarly contribution" in prompt
+    assert "substantive review can qualify" in prompt
+    assert "passes all three transfer tests" in prompt
     assert '"PredictedCategory": "A"' in prompt
 
 

@@ -22,8 +22,11 @@ system_prompt: |
   Abstract: {abstract}
   DOI: {doi}
 
-  1. First identify the paper's PRIMARY RESEARCH OBJECT, NEW CONTRIBUTION and result.
-     Classify the contribution, not apparatus, software, background or potential use.
+  1. First identify the paper's PRIMARY RESEARCH OBJECT, SCHOLARLY CONTRIBUTION
+     and EVIDENCE. For original research, evidence normally includes a demonstrated
+     result. For reviews, evaluate substantive technical synthesis, comparison,
+     roadmap or reference value; reviews do not need a new experiment. Classify
+     the contribution, not apparatus, software, background or potential use.
   2. Apply the positive-evidence gate: A is narrow and limited to explicitly configured
      core interests. "Laser-driven particles" does not silently include electron,
      gamma-ray or X-ray sources/applications. Pure electron LWFA/DLA and generic
@@ -31,8 +34,13 @@ system_prompt: |
      plasma-lens contribution applies. General accelerators, optics, instrumentation,
      software or AI are not A merely because they might be useful.
   3. Assign a relevance category:
-     - A: Directly studies a core anchor with explicit evidence in the paper
+     - A: Directly studies a core anchor with explicit evidence in the paper. A
+       technically substantive review dominated by core anchors may be A even
+       without a new experiment; a short section or passing mention is insufficient.
      - B: The main contribution itself matches a specifically named adjacent example.
+       It may be validated in a neighbouring source domain without prior use in the
+       core scenario only if it is technically specific, validated with a result,
+       and maps directly without changing its measurement/inversion/device principle.
        Generic PIC/HPC algorithms, FLASH/MHD use, wavefront control, or ordinary beamline
        methods are C unless the taxonomy explicitly names that contribution. Do not
        invent a transfer path from generic usefulness. An exclusion overrides an

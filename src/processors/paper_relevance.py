@@ -261,8 +261,11 @@ class PaperRelevanceChecker:
         if screen_category.upper() == "C" and initial_category in {"A", "B"}:
             transition_instruction = (
                 "A C-to-A/B upgrade is especially high risk: retain A or B "
-                "only when the paper's primary object, new contribution, and "
-                "reported result satisfy the corresponding scope rule. "
+                "only when the paper's primary object, scholarly contribution, "
+                "and evidence satisfy the corresponding scope rule. A "
+                "substantive review can qualify through technical synthesis. "
+                "A transferable B method can be validated in a neighbouring "
+                "domain when it passes all three transfer tests in the scope. "
             )
         else:
             transition_instruction = (
@@ -280,8 +283,9 @@ class PaperRelevanceChecker:
               "and scope rules. Do not defer to either category or to model-"
               "reported confidence. "
             + transition_instruction
-            + "Apparatus mentions, generic methods, background discussion, or "
-              "hypothetical transfer are insufficient. Return the same strict "
+            + "Apparatus mentions, generic methods, short review sections, "
+              "background discussion, or unsupported hypothetical transfer are "
+              "insufficient. Return the same strict "
               "JSON schema."
         )
 
