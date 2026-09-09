@@ -85,22 +85,28 @@ def test_ntfy_failure_is_contained():
         assert notifier.send("summary") is False
 
 
-def test_summary_is_redacted_and_conservatively_truncated():
-    """Summary uses the Web App Markdown layout without leaking credentials."""
+def test_summary_is_compact_fenced_and_redacted():
+    """Summary is compact, fenced, and redacted before publication."""
     message = format_pipeline_summary(_result(), token="sk-secret")
     assert "partial" in message
     assert "1080.0s" in message
-    assert "# ⚠️ PapersCrawler · daily 运行汇总" in message
-    assert "> **运行状态**：`partial`" in message
-    assert "## 🧩 阶段执行" in message
+    assert message.startswith("⚠️ **运行状态**：`partial`\n")
+    assert "# " not in message
+    assert "## " not in message
+    assert "### " not in message
+    assert "⚠️ **运行状态**：`partial`" in message
+    assert "**阶段执行**" in message
     assert "✅ **E** · `success` · `4.2s`" in message
     assert "❌ **E3** · `failed` · `8.1s`" in message
-    assert "## 🎯 相关性判断" in message
-    assert "### E · 标题与摘要初筛" in message
-    assert "### E3 · 正文终审" in message
-    assert "### F · 结构化总结" in message
-    assert "### ❌ E3 LLM失败 · `2` 条" in message
-    assert "### ❌ C 抓取失败 · `1` 条" in message
+    assert "**相关性判断**" in message
+    assert "`E` 标题与摘要初筛" in message
+    assert "`E3` 正文终审" in message
+    assert "`F` 结构化总结" in message
+    assert "❌ **E3 LLM失败** · `2` 条" in message
+    assert "❌ **C 抓取失败** · `1` 条" in message
+    assert "```\nLLM token [redacted] leaked\n```" in message
+    assert "```\nGET [URL] failed\n```" in message
+    assert "> **示例**" not in message
     assert "[redacted]" in message
     assert "sk-secret" not in message
     assert "private.example" not in message
@@ -132,10 +138,12 @@ def test_summary_reports_warning_type_and_failure_streak(tmp_path):
     ]
     message = format_pipeline_summary(result, log_dir=tmp_path)
 
-    assert "## 🚨 问题与错误" in message
-    assert "### ❌ C 抓取失败 · `2` 条" in message
-    assert "### ⚠️ F 其他提示 · `1` 条" in message
-    assert "## 🔁 连续失败提醒" in message
+    assert "**问题与错误**" in message
+    assert "❌ **C 抓取失败** · `2` 条" in message
+    assert "⚠️ **F 其他提示** · `1` 条" in message
+    assert "**连续失败提醒**" in message
+    assert "```\nPublisher request failed after retry\n```" in message
+    assert "```\nscope definition is empty\n```" in message
     assert "**E2 MinerU/PDF** · `10.1234/mineru` · 连续 **3 天** · **需人工干预**" in message
     assert "**E2 MinerU/PDF** · `10.1234/other` · 连续 **2 天** · **请关注**" in message
 
@@ -159,8 +167,26 @@ def test_summary_classifies_phase_e_and_reads_cross_midnight_logs(tmp_path):
 
     message = format_pipeline_summary(result, log_dir=tmp_path)
 
-    assert "### ❌ E LLM失败 · `1` 条" in message
-    assert "### ❌ F LLM失败 · `1` 条" in message
+    assert "❌ **E LLM失败** · `1` 条" in message
+    assert "❌ **F LLM失败** · `1` 条" in message
+
+
+def test_summary_starts_with_success_icon_without_body_title():
+    """A successful summary starts with an icon and has no duplicate title."""
+    started_at = datetime(2026, 8, 18, 2, 0)
+    result = PipelineRunResult(
+        mode="weekly",
+        started_at=started_at,
+        finished_at=started_at + timedelta(seconds=1),
+    )
+
+    message = format_pipeline_summary(result)
+
+    assert message.startswith("✅ **运行状态**：`success`\n")
+    assert "# " not in message
+    assert "`weekly`" in message
+    assert "⚠️ 本次运行没有记录到 WARNING 或 ERROR。" not in message
+    assert "✅ 本次运行没有记录到 WARNING 或 ERROR。" in message
 
 
 def test_metrics_are_limited_to_current_run(tmp_path):

@@ -306,12 +306,17 @@ def _compact_message(text: str, width: int = 240) -> str:
     return one_line[: width - 1] + "…"
 
 
+def _format_error_log(text: str) -> str:
+    """Render one redacted error example as a fenced Markdown code block."""
+    return "\n".join(("```", text or "未提供详情", "```"))
+
+
 def format_pipeline_summary(
     result,
     token: str = "",
     log_dir: Path | None = None,
 ) -> str:
-    """Render a Web App-oriented Markdown summary with full run context.
+    """Render a compact Web App-oriented Markdown summary.
 
     Parameters
     ----------
@@ -329,7 +334,7 @@ def format_pipeline_summary(
         Markdown suitable for an ntfy POST body.
     """
     status = result.status
-    icon = "✅" if status == "success" else "⚠️" if status == "partial" else "❌"
+    icon = "✅" if status == "success" else "⚠️"
     started = result.started_at.strftime("%Y-%m-%d %H:%M:%S")
     finished = result.finished_at.strftime("%Y-%m-%d %H:%M:%S")
     duration = (result.finished_at - result.started_at).total_seconds()
@@ -348,16 +353,13 @@ def format_pipeline_summary(
         )
 
     lines = [
-        f"# {icon} PapersCrawler · {mode} 运行汇总",
-        "",
-        f"> **运行状态**：`{status}`",
+        f"{icon} **运行状态**：`{status}`",
+        f"> **运行模式**：`{mode}`",
         f"> **开始时间**：`{started}`",
         f"> **结束时间**：`{finished}`",
         f"> **总耗时**：`{duration:.1f}s`",
         "",
-        "---",
-        "",
-        "## 🧩 阶段执行",
+        "**阶段执行**",
     ]
     if result.phase_results:
         for phase in result.phase_results:
@@ -374,28 +376,18 @@ def format_pipeline_summary(
     summary = metrics.get("summary", {})
     lines.extend([
         "",
-        "---",
+        "**相关性判断**",
+        f"- `E` 标题与摘要初筛：处理状态 {_format_status_counts(screen)}；",
+        f"  相关性分类 {_format_category_counts(screen)}",
+        f"- `E3` 正文终审：处理状态 {_format_status_counts(final)}；",
+        f"  相关性分类 {_format_category_counts(final)}",
         "",
-        "## 🎯 相关性判断",
-        "",
-        "### E · 标题与摘要初筛",
-        f"- **处理状态**：{_format_status_counts(screen)}",
-        f"- **相关性分类**：{_format_category_counts(screen)}",
-        "",
-        "### E3 · 正文终审",
-        f"- **处理状态**：{_format_status_counts(final)}",
-        f"- **相关性分类**：{_format_category_counts(final)}",
-        "",
-        "---",
-        "",
-        "## 📝 总结",
-        "",
-        "### F · 结构化总结",
-        f"- **处理状态**：{_format_status_counts(summary)}",
+        "**总结**",
+        f"- `F` 结构化总结：处理状态 {_format_status_counts(summary)}",
     ])
 
     if category_counts:
-        lines.extend(["", "---", "", "## 🚨 问题与错误"])
+        lines.extend(["", "**问题与错误**"])
         for category, count in category_counts.most_common(6):
             issue_icon = "❌" if category_actionable.get(category) else "⚠️"
             example = _compact_message(
@@ -403,8 +395,8 @@ def format_pipeline_summary(
             )
             lines.extend([
                 "",
-                f"### {issue_icon} {category} · `{count}` 条",
-                f"> **示例**：{example or '未提供详情'}",
+                f"{issue_icon} **{category}** · `{count}` 条",
+                _format_error_log(example),
             ])
         omitted = len(category_counts) - min(len(category_counts), 6)
         if omitted:
@@ -412,16 +404,14 @@ def format_pipeline_summary(
     else:
         lines.extend([
             "",
-            "---",
+            "**问题与错误**",
             "",
-            "## ✅ 问题与错误",
-            "",
-            "> 本次运行没有记录到 WARNING 或 ERROR。",
+            "✅ 本次运行没有记录到 WARNING 或 ERROR。",
         ])
 
     streaks = _mineru_failure_streaks(result, result.started_at.date())
     if streaks:
-        lines.extend(["", "---", "", "## 🔁 连续失败提醒"])
+        lines.extend(["", "**连续失败提醒**"])
         for doi, days in streaks[:4]:
             action = "需人工干预" if days >= 3 else "请关注"
             lines.append(
@@ -434,7 +424,7 @@ def format_pipeline_summary(
     ):
         lines.extend([
             "",
-            "> 详细日志：`python tools/log_report.py`",
+            "详细日志：`python tools/log_report.py`",
         ])
 
     return truncate_utf8("\n".join(lines))
