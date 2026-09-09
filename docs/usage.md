@@ -149,8 +149,8 @@ ntfy:
   priority: default
 ```
 
-每次非 dry-run 运行最多发送一条通知，正文面向 ntfy Web App 使用较宽松的 Markdown 布局，依次展示运行概览、阶段执行、E 初筛/E3 正文终审的状态与 A/B/C/D 分类统计、F 总结状态，以及问题和连续失败提醒。问题会按
-`C 抓取失败`、`E2 PDF/MinerU失败`、`LLM失败`、`通知失败`、`其他问题` 等类别合并计数，并展示脱敏示例。连续失败提醒只针对下载审计表中同一个 DOI 的 E2 PDF/MinerU 失败：连续 2 天提示关注，连续 3 天标记“需人工干预”；不同 DOI 不会合并计算。通知正文使用 ntfy Web App 支持的标题、粗体/斜体、列表、引用块、行内代码和分隔线，不使用表格或 `<details>` 等扩展语法。通知不发送原始长错误堆栈；详细信息仍查看 `python tools/log_report.py` 和 `data/raw/page/error/`。通知失败不会改变流水线结果。
+每次非 dry-run 运行最多发送一条通知，正文面向 ntfy Web App 使用紧凑的 Markdown 布局，依次展示运行概览、阶段执行、E 初筛/E3 正文终审的状态与 A/B/C/D 分类统计、F 总结状态，以及问题和连续失败提醒。消息标题由 `ntfy.title` 展示，正文不重复标题；正文第一行成功以 `✅` 开头，有问题以 `⚠️` 开头。问题会按
+`C 抓取失败`、`E2 PDF/MinerU失败`、`LLM失败`、`通知失败`、`其他问题` 等类别合并计数，脱敏后的错误示例统一放在 Markdown fenced code block（三个反引号）中，不使用裸文本展示。连续失败提醒只针对下载审计表中同一个 DOI 的 E2 PDF/MinerU 失败：连续 2 天提示关注，连续 3 天标记“需人工干预”；不同 DOI 不会合并计算。通知正文仅使用加粗分区标签、列表、引用块、行内代码和代码块，不使用标题、多级标题、表格或 `<details>` 等扩展语法。通知不发送原始长错误堆栈；详细信息仍查看 `python tools/log_report.py` 和 `data/raw/page/error/`。通知失败不会改变流水线结果。
 
 ## WebUI
 
@@ -290,6 +290,21 @@ python tools/run_pipeline.py --phases E2,E3,F
 导入工具会先校验并复制 PDF，再将对应 DOI 的 `mineru_parse_status` 设为 `pending`、清空旧错误和日期，并立即提交事务；正常输出应包含 `数据库状态已更新 ... 影响行数=1`。导入的 PDF 会被 E2 校验并直接复用，即使数据库中的 `pdf_url` 为空也不再触发下载失败；只有没有合法本地 PDF 时才要求网络 PDF URL。
 Optica 的摘要和 PDF 页面通常需要配置专属地区路由；在 `source_access.routes.optica` 设置后，Phase C 与 E2 的延迟页面解析、PDF 下载会共用该路由。APS 会尝试改写跨域 PDF 链接。实际下载失败会消耗当日 E2 配额，Accepted Paper 则记录为尚未出版并释放配额。
 
+Phase C 与 E2 默认使用 Camoufox，并在浏览器启动或单篇页面/PDF任务失败时用
+Cloakbrowser 回退一次。首次安装或升级后需执行 `python -m camoufox fetch` 下载浏览器。
+可在 `configs/settings.yaml` 调整：
+
+```yaml
+source_access:
+  browser:
+    primary: camoufox
+    fallback: cloakbrowser
+    fallback_on_task_failure: true
+```
+
+运行 `python tools/browser_backend_report.py` 可按阶段、出版社、后端和操作查看尝试数、
+成功数、回退数与平均耗时。该统计来自 SQLite 的 `browser_backend_events`，不会发起网络访问。审计写入失败只会产生 WARNING，不会把已经成功的页面抓取或下载改判为失败；浏览器 fallback 启动失败也按当前论文隔离。
+
 ### 预览报告
 
 ```bash
@@ -369,6 +384,24 @@ python3 tools/evaluate_relevance.py \
 python3 tools/evaluate_relevance.py --db data/papers.db
 ```
 
+已有审核集主要来自通过旧摘要门禁的全文候选，不能代表被摘要阶段拒绝的论文。审计 Phase E 召回率时，应从旧 D 中按出版社和年份分层抽样：
+
+```bash
+python3 tools/sample_relevance_audit.py \
+  --category D --model legacy --size 200 \
+  --output /tmp/relevance-d-audit.jsonl
+```
+
+抽样使用固定 seed，重复执行会得到相同结果；可用 `--seed` 更换样本，或用 `--stratify publisher|year|none` 改变分层方式。工具只读数据库，默认排除已有人工审核的记录。逐行填写 `gold_category`（A/B/C/D）和可选 `audit_notes` 后，同一 JSONL 已同时包含旧预测和人工标签，可直接评分：
+
+```bash
+python3 tools/evaluate_relevance.py \
+  --gold /tmp/relevance-d-audit.jsonl \
+  --predictions /tmp/relevance-d-audit.jsonl
+```
+
+由于样本条件固定为旧 D，这个审计主要估计漏检率；不能用它单独计算全库 precision。建议先以 A/B recall ≥ 0.95 为校准目标，再决定是否重跑全部旧 D。
+
 2026-09-01 的首轮 37 篇人工样本基线为：四分类准确率 0.432，A/B 对 C/D 的
 precision 0.548、recall 0.850、F1 0.667。拆分阶段后，E 初筛 accuracy/F1 为
 0.649/0.800；E3 改变 14 篇时新增 10 个错误、修正 2 个，且 8 个 `C → A/B` 中有
@@ -384,6 +417,8 @@ V4 Pro，不换掉主判 Flash，也不使用 GOAT 中用量成本过高的 GPT-
 建议每次修改研究范围后重跑固定 benchmark，并定期从 WebUI 人工审核队列补充边界案例。
 重点关注 A/B recall（不要漏掉真正想看的论文）、A/B precision（不要浪费全文配额）
 和 B↔D、A↔B 错误；当前数据库没有人工审核样本时，工具会显示样本数为 0。
+
+2026-09-06 将核心技术综述和通过三证据门禁的可迁移方法纳入后，生产链在 38 篇最新人工集上达到四分类 accuracy 0.895，A/B precision、recall、F1 均为 1.000。由于该审核集来自旧全文候选，仍须用上述旧 D 分层样本验证摘要门禁召回率，不能直接据此重跑全部旧 D。
 
 ## 配置
 
@@ -476,7 +511,7 @@ formula_fix:
 
 程序内部先构造统一的 `model/messages/thinking` 请求，再由协议适配层转换。Responses 协议会把 system prompt 放到 `instructions`，把用户消息放到 `input`，并将 JSON 模式转换为 `text.format.type=json_object`；返回结果从 `output_text` 或 `output` 文本块读取。Messages 协议不发送 OpenAI 专用的 `response_format`，结构化输出依靠 Prompt 中的“只输出合法 JSON”约束。对于需要严格 JSON 的总结，建议使用 `thinking: disabled`，避免思考内容与 JSON 混在同一输出中；Responses 如需控制推理，可配置 `reasoning_effort: low|medium|high`。
 
-FormulaFixer 使用 `formula_fix.llm` 的独立配置，不会自动使用 `relevance` 或 `summary` 的模型；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。`formula_fix.max_repair_rounds`（默认 `1`）控制每个字段最多几轮“KaTeX 校验 → LLM 修复 → KaTeX 验收”；若上一轮仍报错，下一轮把新的错误信息和上一轮结果再交给 LLM。超过上限后保留原文本。若 `report-site` 的 npm 依赖已经安装，FormulaFixer 会把 KaTeX 解析错误（公式源码与错误原因）附到对应的 LLM 请求；Node 或依赖缺失时自动降级为原行为。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
+FormulaFixer 使用 `formula_fix.llm` 的独立配置，不会自动使用 `relevance` 或 `summary` 的模型；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。处理顺序固定为“本地伪转义修复 → 为识别到的裸公式添加 `\(...\)` 包裹 → KaTeX 校验 → LLM 修复 → 再包裹并验收”。`formula_fix.max_repair_rounds`（默认 `1`）控制每个字段最多几轮修复；若上一轮仍报错，下一轮把新的错误信息和上一轮结果再交给 LLM。超过上限或请求失败时保留本地预包裹结果，避免报告再次出现已识别的裸公式。若 `report-site` 的 npm 依赖已经安装，FormulaFixer 会把 KaTeX 解析错误（公式源码与错误原因）附到对应的 LLM 请求；Node 或依赖缺失时自动降级为启发式检测和 LLM 修复。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
 
 FormulaFixer 之前的历史结果也可以单独修复，不必重新调用 Phase F：
 
@@ -490,7 +525,7 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 
 第一条只检测，不调用 LLM、不写数据库；第二条会按 `formula_fix.concurrent_max` 并发处理，
 确认后写回。若只处理单篇，可加 `--doi DOI`；若要无条件重新处理非占位文本，加 `--force`。
-工具也会写回本地可确定修复的 JSON 伪转义和 `$...$`，即使 FormulaFixer 请求失败也不会丢失这部分修复。
+工具也会写回本地可确定修复的 JSON 伪转义、`$...$` 分隔符和裸公式包裹，即使 FormulaFixer 请求失败也不会丢失这部分修复。
 
 模型返回值在标准 JSON 解析前会自动提取 ` ```json ... ``` ` 围栏或前后夹杂说明中的 JSON 对象，并兼容常见的裸 LaTeX 反斜杠和字符串内英文引号。若仍解析失败，查看日志中的 `Invalid escape` 或 `LLM non-JSON response`，该篇不会污染其他论文的状态。
 
@@ -547,11 +582,13 @@ recipients:
 | `preview_report.py` | 生成不改数据库的 JSON + Markdown 报告预览，可选公开导出 |
 | `log_report.py` | 统计、筛选和查看 WARNING/ERROR 日志 |
 | `keyword_audit.py` | 校验关键词目录并统计语料中的术语命中 |
+| `sample_relevance_audit.py` | 从旧摘要分类按出版社/年份确定性分层抽样，导出人工标注 JSONL |
 | `evaluate_relevance.py` | 计算 benchmark 或人工审核集的相关性指标 |
 | `send_report.py` | 发送指定报告 |
 | `import_local_pdf.py` | 导入本地 PDF 到 E2 队列 |
 | `fix_summary_formulas.py` | 修复总结中的 LaTeX |
 | `convert_md_to_pdf.py` | Markdown → 静态 KaTeX HTML → Prince PDF |
+| `browser_backend_report.py` | 汇总 Camoufox/Cloakbrowser 可靠性审计 |
 | `dedup_doi_case.py` | 清理历史 DOI 大小写重复 |
 | `export_public_reports.py` | 导出静态站点 JSON |
 | `rebuild_historical_reports.py` | 按 `created_date` 批量重建新机制前的周报及 sidecar |

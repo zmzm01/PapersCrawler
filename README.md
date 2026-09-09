@@ -20,7 +20,8 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 本项目**不提供绕过期刊付费墙的功能**。论文全文（PDF）的获取依赖于使用者所在机构的
 网络订阅。爬虫行为请遵守目标网站的 `robots.txt` 和法律法规。
 
-页面抓取与 Cloudflare 绕过完全依赖 [cloakbrowser](https://github.com/CloakHQ/cloakbrowser)，
+页面抓取与 Cloudflare 绕过默认使用 [Camoufox](https://camoufox.com/)，
+并可在启动或单篇任务失败时自动回退到 cloakbrowser；
 特此致谢。
 
 ## 特性
@@ -30,26 +31,27 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **人工校准的两阶段 LLM 四级相关性分类**（A/B/C/D）：标题/摘要初筛后对候选做全文终审；可按类别变化触发独立模型复核，当前重点检查高风险 `C → A/B`，并持久化各阶段模型 ID，只有有效 A/B 进入总结与报告
 - **可审计的研究范围管理**：`keyword_catalog` 独立维护术语、别名和子域映射，不把单个关键词命中误当成相关性结论；附带覆盖审计和人工标注 benchmark 评分工具
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
-- **来源站点访问策略**：cloakbrowser 临时隔离上下文 + 浏览器指纹伪装 + 真人节奏 + 失败熔断；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
+- **来源站点访问策略**：Camoufox 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + Cloakbrowser 自动回退 + 失败熔断；回退失败按单篇隔离，旁路审计不影响抓取；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供监控、报告阅览、相关性人工审核和按 Summary 时间排序的审核队列
 - **统一流水线入口**：日常、每周和全流程运行均通过 `tools/run_pipeline.py`
 - **按日分文件日志**：运行日志按日期保存并自动清理旧文件，配套工具可直接统计 WARNING/ERROR；支持用 `PAPERSCRAWLER_LOG_DIR` 隔离测试日志，避免单文件持续膨胀
 - **结构化报告输出**：先生成版本化 JSON 快照，再渲染 Markdown；自动报告可导出到公开站点
 - **统一文本清洗与结构化总结**：解码出版社遗留的 HTML/XML 实体（如 `&#xD;`），修复 LLM JSON 伪转义和公式分隔符，并将 Phase F 总结保存为带稳定 key 和独立局限性字段的 schema v3 JSON；人读报告隐藏内部枚举元数据并采用单层局限条目；公开报告封装为 schema v2
-- **可验证公式与印刷级 PDF**：FormulaFixer 可配置 KaTeX 校验驱动的 LLM 修复轮数；Markdown 可离线预渲染为静态 KaTeX HTML，再由 Prince 生成 PDF（免费版带水印）
+- **可验证公式与印刷级 PDF**：FormulaFixer 先为裸公式添加数学模式包裹，再执行可配置的 KaTeX 校验与 LLM 修复；Markdown 可离线预渲染为静态 KaTeX HTML，再由 Prince 生成 PDF（免费版带水印）
 - **多协议 LLM 接入**：按角色支持 Chat Completions、OpenAI Responses 和 Anthropic Messages；可接入 Command Code、OpenCode Zen 等 OpenAI-compatible 网关及其模型，并兼容模型偶发的 Markdown/JSON 格式包装；FormulaFixer 使用独立模型和并发池
 - **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
 - **历史周报重建**：`tools/rebuild_historical_reports.py` 可按相邻周报日期划分的 `created_date` 窗口，批量补建旧报告的当前 JSON sidecar，并跳过无合格论文的空周报
 - **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，带独立 favicon 和统一阅读字号；自动报告和公开历史归档可见，组内特别报告保持隔离
 - **报告解释页**：`report_YYYYMMDD_explained.html` 展示 LLM prompt 快照
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
-- **ntfy 单条运行汇总**：自动运行结束时以 Web 端友好的 Markdown 展示状态、阶段、相关性、总结和问题；失败不阻塞流水线
+- **ntfy 单条运行汇总**：自动运行结束时以紧凑的 Markdown 展示状态、阶段、相关性、总结和问题；错误示例使用代码块，失败不阻塞流水线
 
 ## 快速开始
 
 ```bash
 # 1) 安装（使用你的 Python 环境）
 python -m pip install -r requirements.txt
+python -m camoufox fetch
 
 # 2) 配置密钥
 cp .env.example .env
@@ -65,7 +67,7 @@ xvfb-run -a python tools/run_pipeline.py --all      # 无头服务器（Phase C 
 
 `--all` 会强制执行 A-RSS/A-CR/B/C/E/E2/E3/F/G/H，即使配置中某阶段被 skip；流水线发生阶段错误时 CLI 返回非零退出码，便于 cron 监控。
 
-可选地在 `.env` 配置 ntfy topic/token，并在 `configs/settings.yaml` 开启最终汇总通知。每次自动运行只发送一条面向 ntfy Web App 优化的 Markdown 汇总，包含状态、阶段耗时、E/E3 相关性统计、F 总结统计、问题示例和连续失败提醒；不会发送开始、逐阶段或即时错误通知，也不会添加 Dashboard 或其他公网链接。
+可选地在 `.env` 配置 ntfy topic/token，并在 `configs/settings.yaml` 开启最终汇总通知。每次自动运行只发送一条面向 ntfy Web App 优化的紧凑 Markdown 汇总，消息标题由 ntfy 的 `title` 展示，正文不重复标题，问题日志放在代码块中；不会发送开始、逐阶段或即时错误通知，也不会添加 Dashboard 或其他公网链接。
 
 启动 Web UI（手动调试）：
 
@@ -81,7 +83,7 @@ LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 80
 
 流水线采用“标题+摘要初筛（E）→受持久化配额保护的 PDF/MinerU（E2）→正文相关性终审与高风险类别变化复核（E3）→总结（F）”流程。全文下载默认每日最多 3 篇、单一出版社最多 2 篇，实际下载失败会计入配额；尚未正式出版的 Accepted Paper 只记录状态，不占配额。
 
-研究范围分为自然语言领域定义和可审计的 `keyword_catalog` 两层：前者供 LLM 判断主贡献与语境，后者管理术语覆盖、别名和子域映射。可用 `python3 tools/keyword_audit.py` 检查配置，并用 `benchmarks/relevance_gold.jsonl` 配合 `tools/evaluate_relevance.py` 评估四分类准确率和 A/B 召回率。
+研究范围分为自然语言领域定义和可审计的 `keyword_catalog` 两层：前者供 LLM 判断主贡献与语境，后者管理术语覆盖、别名和子域映射。相关性规则允许以核心方向为主体的高价值综述进入 A，并用“具体主贡献、已有定量验证、直接原理映射”三项证据识别 B 类可迁移方法。可用 `tools/keyword_audit.py` 检查配置、`tools/sample_relevance_audit.py` 从旧 D 分层抽样，并用 `tools/evaluate_relevance.py` 评估四分类准确率和 A/B 召回率。
 
 - **[`docs/usage.md`](docs/usage.md)** — 详细使用手册
   （所有入口/工具/配置/工作流/故障排查）
@@ -95,7 +97,7 @@ LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 80
 
 - **语言/框架**：Python 3 + FastAPI（WebUI）
 - **数据库**：SQLite（WAL 模式）
-- **抓取**：cloakbrowser（Persistent Context 绕过 Cloudflare）
+- **抓取**：Camoufox（默认）+ Cloakbrowser（自动回退）
 - **PDF 解析**：MinerU API
 - **LLM**：多协议 API（OpenAI Chat / Anthropic Messages；默认 DeepSeek）
 - **配置**：YAML + `.env`（密钥 gitignored）

@@ -36,6 +36,7 @@ tools/
   rebuild_historical_reports.py 按 created_date 窗口批量重建旧周报
   log_report.py         日志统计、筛选和查看
   keyword_audit.py      关键词目录校验与语料覆盖审计
+  sample_relevance_audit.py 旧初筛结果的确定性分层抽样
   evaluate_relevance.py 相关性 benchmark 评分
   send_report.py        指定报告邮件发送
   import_local_pdf.py   手动导入 PDF
@@ -61,6 +62,10 @@ report-site/
 | H | SMTP 邮件推送 | 邮件及附件 |
 
 只有 E3 正文终审成功、类别为 A/B、依据为 `fulltext`，并且 F 总结成功的论文才具备进入自动报告的资格。
+
+相关性分类面向“是否值得进入组内报告”，不把原创实验作为唯一正向证据：实质内容由核心方向主导、提供技术综合/比较/路线图价值的综述可判 A。B 类允许具体方法在邻近领域完成验证后迁移，但必须同时满足三项证据：方法或器件是论文主贡献、论文给出定量验证结果、无需改变测量/反演/器件核心原理即可直接映射到配置的 adjacent example。仅背景提及、通用算法或没有技术映射的潜在用途仍为 C/D。
+
+人工 benchmark 只能测量其样本分布上的质量。历史审核队列主要来自已经通过旧摘要门禁并取得全文的论文，不能用于证明大量摘要 D 没有漏检。`tools/sample_relevance_audit.py` 因此以只读方式按 publisher/year 对旧 D 做确定性分层抽样，输出同时包含旧 `predicted_category` 与待填写 `gold_category` 的 JSONL；这是校准 Phase E recall 的独立样本，不修改流水线状态。
 
 ### 元数据文本清洗
 
@@ -97,6 +102,7 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 | 名称 | 用途 |
 |---|---|
 | `fulltext_download_events` | 每日/每出版社 PDF 尝试配额审计，失败也占额 |
+| `browser_backend_events` | Phase C/E2 浏览器后端、操作结果、耗时与回退审计 |
 | `paper_fulltext_locations` | Crossref/OpenAlex/Publisher 全文候选地址及来源优先级 |
 | `relevance_reviews` | 追加式人工审核记录，保存结论、备注、审核人以及当时的 LLM 分类、confidence 和各阶段模型 ID 快照 |
 | `skipped_dois` | 永久跳过的非研究文章 DOI |
@@ -145,7 +151,9 @@ LLM 文本进入 JSON 解析前还会做一次边界清洗：提取 Markdown ` `
 
 FormulaFixer 是 Phase F 总结后的可选文本后处理，不复用相关性角色的模型配置。`formula_fix.llm` 独立配置协议、模型、思考模式、输出上限和超时，`formula_fix.concurrent_max` 独立限制公式修复线程数。Phase F 的总结请求完成后，每篇论文的 FormulaFixer 任务进入独立线程池；每个任务使用自己的 HTTP Session，避免在线程间共享连接对象。公式修复失败只回退该文本节点，不影响结构化总结写入。
 
-若本机可运行 `report-site/scripts/render-markdown-katex.mjs`（Node.js + `marked` + `katex`），FormulaFixer 还会对已正确包裹的公式执行 KaTeX 校验。`formula_fix.max_repair_rounds` 定义每个字段最多几轮“校验 → 带错误的 LLM 修复 → 再校验”，默认一轮；只有最终通过时才替换原文本，超过轮数则保留原文本。Node 或依赖不可用时该验证器静默降级，保留原有启发式和 LLM 修复行为。KaTeX 支持的 `cases`、`matrix`、`aligned` 等复杂环境允许保留；不把 KaTeX 的子集限制误判为完整 LaTeX 语义校验。
+FormulaFixer 在校验和 LLM 修复之前先执行确定性的预包裹：保留已有 `\(...\)` / `\[...\]`，并为含 LaTeX 命令或显式上下标的裸数学片段保守添加 `\(...\)`。LLM 回复也经过同一预包裹后再验收，因此即使模型遗漏分隔符或请求失败，写回内容也不会退回已识别的裸公式。
+
+若本机可运行 `report-site/scripts/render-markdown-katex.mjs`（Node.js + `marked` + `katex`），FormulaFixer 会对预包裹后的公式执行 KaTeX 校验。`formula_fix.max_repair_rounds` 定义每个字段最多几轮“预包裹 → 校验 → 带错误的 LLM 修复 → 预包裹并再校验”，默认一轮；只有最终通过时才替换预包裹文本，超过轮数则保留本地预包裹结果。Node 或依赖不可用时该验证器静默降级，保留启发式和 LLM 修复行为。KaTeX 支持的 `cases`、`matrix`、`aligned` 等复杂环境允许保留；不把 KaTeX 的子集限制误判为完整 LaTeX 语义校验。
 
 该拆分避免公式修复占用总结并发池，也避免主线程逐篇等待所有修复请求。默认仍通过 `needs_fix()` 跳过无需修复的文本；如果只需要先完成总结，可将 `formula_fix.skip` 设为 `true`。
 
@@ -208,6 +216,7 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
   `tools/run_pipeline.py --retry-bot-blocks` 可显式绕过冷却和隔离，并仅让已标记为 Bot 阻断的论文
   绕过摘要短路，执行一次人工强制重试；其他已有摘要的论文仍保持短路。
 - 来源站点访问支持 Cloudflare challenge reload、失败熔断、持久化浏览器上下文和 HTML 错误快照。`source_access.routes.<source>` 定义该来源的主访问路由，Phase C 与 E2 的延迟页面解析及 PDF 下载共用；常规 Phase C 抓取重试耗尽后，可用 `source_access.fallback_proxy_url` 启动独立代理上下文再尝试一次。`BasePublisherScraper` 在构造时初始化空 HTML，错误快照优先使用缓存内容，并在页面/事件循环已关闭时跳过 live content 读取，确保导航在生成页面内容前失败时不会被二次快照异常遮蔽。`import_local_pdf.py` 将 PDF 落盘和 MinerU 状态重置作为一次明确提交的数据库操作。
+- 浏览器后端通过统一适配层注入。Phase C 与 E2 默认使用 Camoufox；启动失败、单篇页面抓取失败或 PDF 下载链失败时，按配置使用 Cloakbrowser 回退一次。E2 回退属于原下载尝试，不重复占用配额，回退启动失败仍保持逐篇错误隔离；Phase C 无法恢复主后端时继续保留可用 fallback。`browser_backend_events` 记录 phase、publisher、DOI、operation、backend、结果、耗时和回退标志，供可靠性评估；该审计是非阻塞旁路，写入异常只记录日志。
 - LLM 请求支持指数退避和 circuit breaker。
 - LLM 支持按角色切换 OpenAI Chat Completions 与 Anthropic Messages 协议；HTTP 4xx 错误会保留有限长度的服务端响应正文，便于定位网关参数不兼容。
 
@@ -246,8 +255,8 @@ Node 脚本先以唯一占位符保护 `\(...\)` 与 `\[...\]`，防止 Markdown
 以 `strict: "warn"` 放行兼容性警告后渲染并替换占位符。静态 HTML 同目录包含复制的 KaTeX CSS/字体，Prince 无需执行 JavaScript 或
 联网。公式错误会阻止 PDF 生成，并通过同一渲染脚本供 FormulaFixer 收集为 LLM 修复上下文。
 
-`tools/convert_md_to_pdf.py` 是用户入口。Prince 为首选排版后端；其免费版水印是可接受的已知
-展示限制。旧的 cloakbrowser/Chrome 打印模块继续保留，仅作为历史兼容工具，不再是推荐路径。
+`tools/convert_md_to_pdf.py` 是唯一用户入口。Prince 的免费版水印是可接受的已知展示限制；
+不可用且无人调用的 cloakbrowser/Chrome 实验性打印模块已移除。
 
 ### 7. 配置与入口隔离
 
@@ -299,7 +308,7 @@ Phase G 输出：
 
 Phase H 从 `data/email.yaml` 读取收件人，失败时回退 `.env` 的 `SMTP_TO_ADDRS`。ntfy 只在运行结束时发送一条面向 Web App 的 Markdown 汇总，按区块展示运行概览、所有阶段耗时、E/E3 相关性状态与 A/B/C/D 分类、F 总结状态、问题示例和连续失败提醒。连续失败提醒读取 `fulltext_download_events`，按同一个 DOI 的本地日期计算，仅对 E2 PDF/MinerU 失败提供连续 2/3 天提醒；不同 DOI 不合并，通知失败不影响流水线。
 
-通知正文使用 ntfy Web App 当前支持的 Markdown 子集：标题、粗体/斜体、列表、引用块、行内代码、代码块和水平分隔线；不使用表格、HTML 或 `<details>` 等扩展。请求仍设置 `Markdown: yes` 与 `Content-Type: text/markdown`，消息上限保守保持 3500 UTF-8 bytes，以适应 ntfy 默认 4096 bytes 限制。移动端不是当前排版目标，客户端不支持 Markdown 时会看到原始标记文本。
+通知正文使用 ntfy Web App 当前支持的 Markdown 子集：消息 `title` 由 ntfy 标题区域展示，正文不重复标题，仅使用首行状态 emoji、加粗分区标签、列表、引用块、行内代码和代码块；脱敏错误示例必须放在 fenced code block（三个反引号）中，不使用裸文本、标题、多级标题、表格、水平分隔线、HTML 或 `<details>` 等扩展。成功正文首行以 `✅` 开头，有问题以 `⚠️` 开头。请求仍设置 `Markdown: yes` 与 `Content-Type: text/markdown`，消息上限保守保持 3500 UTF-8 bytes，以适应 ntfy 默认 4096 bytes 限制。移动端不是当前排版目标，客户端不支持 Markdown 时会看到原始标记文本。
 
 `tools/export_public_reports.py` 将一个或多个目录中的 sidecar 导出为 `papers/index.json` 和按 ID 的 JSON 文件；不会重新调用 LLM 或修改数据库。预览报告使用 `--export-public` 时会合并自动报告目录和预览报告所在目录，避免同步预览时删除已有自动报告。
 

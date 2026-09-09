@@ -2,6 +2,33 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-09-09：Camoufox 主后端与 Cloakbrowser 自动回退
+
+- Phase C 与 E2 通过统一适配层默认使用 Camoufox；启动、单篇页面抓取和 PDF 下载失败时可回退 Cloakbrowser 一次，E2 回退不重复占用下载配额。
+- 新增 `browser_backend_events` 审计及 `tools/browser_backend_report.py`，用于按后端、阶段和出版社评价成功率、回退率及耗时。
+- 删除无人调用且已被静态 KaTeX/Prince 链路替代的实验性 `md_to_pdf_katex.py`；Prince 保持为唯一报告 PDF 导出后端。
+- 回退异常必须保持逐篇隔离：E2 的 fallback 启动失败不终止整个阶段；Phase C 恢复主后端失败时保留可用 fallback。浏览器审计属于旁路能力，写入失败只告警，不得改变抓取结果。
+
+## 2026-09-06：提高相关性召回并增加旧 D 分层审计
+
+- 复跑全部旧全文结果后，38 篇人工集达到四分类 accuracy 0.842、A/B precision 1.000、recall 0.850；零假阳性但漏掉 3/20 篇人工 A/B，说明规则偏保守。扩大批次中旧 A/B 大量降为 C/D，暂不据此重跑约一万篇旧摘要 D。
+- Prompt 将 `NEW CONTRIBUTION / RESULT` 门禁改为 `SCHOLARLY CONTRIBUTION / EVIDENCE`：以核心方向为实质主体并提供技术综合、比较、路线图或参考价值的综述可以进入 A，无需原创实验。
+- B 类采用三证据门禁：具体方法/器件必须是主贡献、已在论文源场景用结果验证、且无需改变测量/反演/器件核心原理即可直接映射到配置的 adjacent example。允许邻近等离子体/HED/聚变/空间/加速器场景中的具体诊断方法进入 B，但继续排除通用算法和无证据的潜在迁移。
+- 同步放宽跨边界复核 Prompt，避免 Pro 再次错误否决技术综述或通过三证据门禁的 B。新增只读 `tools/sample_relevance_audit.py`，默认从旧 D 中按 publisher/year 固定 seed 分层抽取 200 篇，生成可直接配合 `evaluate_relevance.py` 使用的人工标注 JSONL。
+- 使用生产链重新跑 38 篇人工 benchmark 后，四分类 accuracy 从 0.842 提升到 0.895，A/B precision、recall、F1 均为 1.000；20 篇人工 A/B 全部保留，18 篇人工 C/D 无误升，仅触发 1 次 Pro 且无失败。该结果通过当前审核集，但在旧 D 独立样本完成前仍不外推到全库。
+
+## 2026-09-05：FormulaFixer 改为先包裹公式再修复
+
+- FormulaFixer 新增保守的本地公式预包裹：保留已有数学模式，对含 LaTeX 命令或显式上下标的裸数学片段先添加 `\(...\)`，然后才执行 KaTeX 校验与 LLM 修复。
+- LLM 回复在验收前再次执行预包裹；请求失败或超过修复轮数时保留本地预包裹文本，避免报告中再次出现已识别的裸公式。
+- 新增覆盖复杂裸公式、已有包裹保持不变、失败回退仍有包裹的回归测试；同步更新 README、详细使用手册、架构设计和 Prompt 示例。
+
+## 2026-09-02：压缩 ntfy 通知布局并格式化错误日志
+
+- ntfy 消息标题由 ntfy 标题区域展示，正文移除重复的大标题；正文首行根据运行结果使用 `✅`（成功）或 `⚠️`（有问题），运行模式保留在运行概览。
+- 删除阶段、相关性、总结、问题和连续失败提醒的多级 Markdown 标题及分隔线，改用加粗分区标签与列表，减少移动端通知的垂直空间占用。
+- 问题分类下的脱敏错误示例统一使用 Markdown fenced code block（三个反引号）展示，补充离线回归测试；同步更新 README、使用手册和架构设计。
+
 ## 2026-09-01：公开仓库历史隐私清理
 
 - 确认公共仓库保留完整开发历史；发布前重写作者/提交者邮箱为 `zmzm01@users.noreply.github.com`。
