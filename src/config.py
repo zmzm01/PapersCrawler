@@ -59,7 +59,7 @@ LOG_DIR = DATA_DIR / "logs"
 # write date-separated files under LOG_DIR instead of this aggregate filename.
 LOG_FILE_PATH = LOG_DIR / "PaperCrawler.log"
 
-# 浏览器 Session 缓存目录（cloakbrowser 持久化 Session 存放处）
+# 浏览器 Session 缓存目录（Camoufox/Cloakbrowser 持久化 Session）
 # 按 publisher 分子目录，如 data/session_cached/nature/
 BROWSER_SESSION_DIR = DATA_DIR / "session_cached"
 
@@ -354,6 +354,9 @@ CFG.PUBLISHER_PROXY = {
     "optica": {"server": "http://127.0.0.1:10808"},
 }
 CFG.PUBLISHER_FALLBACK_PROXY_URL = ""
+CFG.BROWSER_PRIMARY_BACKEND = "camoufox"
+CFG.BROWSER_FALLBACK_BACKEND = "cloakbrowser"
+CFG.BROWSER_FALLBACK_ON_TASK_FAILURE = True
 # Publisher 页面已有 CrossRef 摘要时直接跳过 Phase C。出版商仍可通过
 # Scraper 类属性显式关闭该优化（例如页面摘要是唯一可靠来源的站点）。
 CFG.PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT = True
@@ -586,6 +589,25 @@ def _apply_settings(settings):
         "fallback_proxy_url", CFG.PUBLISHER_FALLBACK_PROXY_URL,
     )
     CFG.PUBLISHER_FALLBACK_PROXY_URL = str(fallback_proxy_url or "").strip()
+    browser_cfg = ps.get("browser", {})
+    if not isinstance(browser_cfg, dict):
+        raise ValueError("source_access.browser must be a mapping")
+    supported_backends = {"camoufox", "cloakbrowser"}
+    primary_backend = str(browser_cfg.get(
+        "primary", CFG.BROWSER_PRIMARY_BACKEND,
+    )).strip().lower()
+    fallback_backend = str(browser_cfg.get(
+        "fallback", CFG.BROWSER_FALLBACK_BACKEND,
+    )).strip().lower()
+    if primary_backend not in supported_backends:
+        raise ValueError(f"Unsupported primary browser backend: {primary_backend}")
+    if fallback_backend not in supported_backends:
+        raise ValueError(f"Unsupported fallback browser backend: {fallback_backend}")
+    CFG.BROWSER_PRIMARY_BACKEND = primary_backend
+    CFG.BROWSER_FALLBACK_BACKEND = fallback_backend
+    CFG.BROWSER_FALLBACK_ON_TASK_FAILURE = bool(browser_cfg.get(
+        "fallback_on_task_failure", CFG.BROWSER_FALLBACK_ON_TASK_FAILURE,
+    ))
     CFG.PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT = bool(ps.get(
         "skip_if_crossref_abstract",
         CFG.PUBLISHER_SKIP_IF_CROSSREF_ABSTRACT,

@@ -120,6 +120,12 @@ pipeline:
 # Source access 参数（访问出版商及其他论文来源站点的策略）
 # ---------------------------------------------------------------------------
 source_access:
+  # Phase C/E2 的浏览器后端。主后端启动或单篇任务失败时可回退一次。
+  browser:
+    primary: camoufox
+    fallback: cloakbrowser
+    fallback_on_task_failure: true
+
   # 同来源内页面间随机延迟范围 (秒)
   page_delay_min: 3
   page_delay_max: 5

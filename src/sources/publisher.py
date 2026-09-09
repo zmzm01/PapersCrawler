@@ -1,7 +1,7 @@
 """
 学术出版商论文元数据爬取模块。
 
-本模块通过 cloakbrowser 驱动 Chromium 浏览器，结合 parsel 选择器，从 7 种主流
+本模块通过可配置的反检测浏览器驱动 Playwright，结合 parsel 选择器，从 7 种主流
 学术出版商的网页中提取论文元数据（标题、作者、DOI、摘要、期刊、日期、PDF链接等）。
 
 支持的出版商（对应 7 个 Scraper 子类）：
@@ -14,7 +14,7 @@
     - Optica (OSA/Optica Publishing)    → OpticaScraper
 
 Cloudflare 反爬对抗策略：
-    cloakbrowser 自动处理浏览器指纹伪装，无需手动注入反检测 JS。
+    浏览器后端自动处理指纹伪装，无需手动注入反检测 JS。
     页面加载后等待 5 秒（fetch_page 中的 wait_for_timeout），给 Cloudflare
     Challenge 足够时间自动通过。
 
@@ -51,7 +51,7 @@ from urllib.parse import urljoin
 
 import requests as py_requests
 from parsel import Selector
-from cloakbrowser import launch_persistent_context
+from browser_backend import launch_browser_backend
 
 from common import Paper, clean_extracted_text
 from config import RAW_PAGE_DIR, CFG
@@ -71,7 +71,7 @@ from config import RAW_PAGE_DIR, CFG
 class BasePublisherScraper:
     """出版商爬虫基类。
 
-    封装了基于 cloakbrowser 的 Chromium 浏览器启动、页面抓取、HTML 保存、
+    封装了反检测浏览器启动、页面抓取、HTML 保存、
     PDF 下载和浏览器关闭等通用逻辑。子类只需实现 parse_page() 方法即可。
 
     设计理念：同一个浏览器实例可复用于多个出版商的页面抓取，
@@ -137,27 +137,34 @@ class BasePublisherScraper:
         self.user_data_dir = user_data_dir
         self.context = None
         self.page = None
+        self.browser_session = None
+        self.browser_backend = None
         # Keep the latest HTML available even when navigation fails before
         # ``fetch_page`` can capture page.content().
         self.html = ""
         self.last_download_diagnostics = {}
 
-    def start_browser(self, proxy=None):
-        """启动 Chromium 浏览器（通过 cloakbrowser）。
+    def start_browser(self, proxy=None, backend=None):
+        """启动用于 Publisher 访问的持久化浏览器。
 
-        使用 cloakbrowser.launch_persistent_context 创建持久化浏览器上下文，
-        自动处理浏览器指纹伪装和 Cloudflare 绕过。
+        通过统一后端适配层创建持久化上下文，自动处理浏览器指纹伪装。
 
         Args:
             proxy: 可选代理配置字典，格式如 {"server": "http://127.0.0.1:10808"}，
                    用于需要特定区域 IP 的出版商（如 Optica 可能需要美国 IP）。
         """
-        self.context = launch_persistent_context(
+        selected_backend = backend or getattr(
+            CFG, "BROWSER_PRIMARY_BACKEND", "camoufox",
+        )
+        self.browser_session = launch_browser_backend(
+            selected_backend,
             user_data_dir=str(self.user_data_dir),
             headless=False,
             proxy=proxy,
             humanize=True,
         )
+        self.browser_backend = self.browser_session.backend
+        self.context = self.browser_session.context
         self.page = self.context.new_page()
 
     def prewarm(self):
@@ -856,30 +863,25 @@ class BasePublisherScraper:
         return pdf_body
 
     def close(self):
-        """关闭浏览器上下文并清理 Chromium profile 数据。
+        """关闭浏览器上下文并清理持久化 profile 数据。
 
-        释放所有 Chromium 相关资源（浏览器进程、网络连接等），
+        释放浏览器相关资源（进程、网络连接等），
         同时清理持久化 Session 数据目录，避免 data/session_cached/
         目录无限膨胀（单个 publisher 的 Chromium profile 可达数百 MB）。
 
-        关闭顺序：
-        1. context.close() — cloakbrowser 的 patched close，先调 Playwright
-           原版 context.close() 关闭页面/context，再调 pw.stop() 断开 WebSocket
-        2. browser.close() — 确保 Chromium 子进程退出，防止 orphan 进程泄漏
-           单独 pw.stop() 不保证 Chrome 进程退出，需要显式 kill。
+        后端 session 负责按各自约定关闭 context、管理器和浏览器进程。
         """
         try:
-            if hasattr(self, 'context') and self.context:
+            if self.browser_session:
+                self.browser_session.close()
+            elif hasattr(self, 'context') and self.context:
                 self.context.close()
-                # context.close() 之后单独杀进程（pw.stop() 不保证 Chrome 退出）
-                try:
-                    browser = self.context.browser
-                    if browser:
-                        browser.close()
-                except Exception:
-                    pass
         except Exception:
             pass
+        finally:
+            self.browser_session = None
+            self.context = None
+            self.page = None
         if self.user_data_dir and self.user_data_dir.exists():
             shutil.rmtree(self.user_data_dir, ignore_errors=True)
 

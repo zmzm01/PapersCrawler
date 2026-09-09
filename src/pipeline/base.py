@@ -6,6 +6,7 @@ and shared utilities (journal overrides loading).
 """
 
 import json
+import logging
 import os
 
 from config import CFG, BROWSER_SESSION_DIR, JOURNAL_OVERRIDES_PATH
@@ -13,6 +14,8 @@ from sources.publisher import (
     NatureScraper, ScienceScraper, APSScraper,
     AIPScraper, IOPScraper, CambridgeScraper, OpticaScraper,
 )
+
+logger = logging.getLogger(__name__)
 
 SCRAPER_MAP = {
     "nature":    (NatureScraper, BROWSER_SESSION_DIR / "nature",    None),
@@ -26,7 +29,17 @@ SCRAPER_MAP = {
 }
 
 
-def create_scraper(publisher, proxy_override=None):
+def record_browser_event(db, *args, **kwargs):
+    """Record browser telemetry without affecting pipeline execution."""
+    recorder = getattr(db, "record_browser_backend_event", None)
+    if recorder:
+        try:
+            recorder(*args, **kwargs)
+        except Exception as error:
+            logger.warning("Could not record browser backend event: %s", error)
+
+
+def create_scraper(publisher, proxy_override=None, browser_backend=None):
     """Create and initialize a scraper instance for the given publisher.
 
     Parameters
@@ -34,8 +47,10 @@ def create_scraper(publisher, proxy_override=None):
     publisher : str
         Publisher identifier (e.g. "nature", "aps").
     proxy_override : dict or None, optional
-        Optional cloakbrowser proxy configuration. When provided, it takes
+        Optional Playwright proxy configuration. When provided, it takes
         precedence over the publisher's normal proxy configuration.
+    browser_backend : str, optional
+        Explicit browser backend. Defaults to the configured primary backend.
 
     Returns
     -------
@@ -55,7 +70,10 @@ def create_scraper(publisher, proxy_override=None):
         proxy = proxy_override
     os.makedirs(user_data_dir, exist_ok=True)
     scraper = scraper_class(user_data_dir)
-    scraper.start_browser(proxy)
+    if browser_backend is None:
+        scraper.start_browser(proxy)
+    else:
+        scraper.start_browser(proxy, backend=browser_backend)
     return scraper
 
 
