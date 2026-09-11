@@ -727,6 +727,98 @@ def test_phase_e2_lazy_fallback_launch_failure_is_isolated(monkeypatch,
     assert database.errors[0][0] == "10/lazy"
 
 
+def test_phase_e2_backend_switch_closes_primary_before_fallback(monkeypatch,
+                                                                 tmp_path):
+    """E2 must not nest Cloakbrowser inside an active Camoufox manager."""
+    events = []
+
+    class FakeDownloader:
+        def __init__(self, backend):
+            self.browser_backend = backend
+
+        def close(self):
+            events.append(f"close:{self.browser_backend}")
+
+    primary = FakeDownloader("camoufox")
+
+    def fake_launch(*_args, preferred_backend=None, **_kwargs):
+        events.append(f"launch:{preferred_backend}")
+        assert events[-2] == "close:camoufox"
+        return FakeDownloader(preferred_backend)
+
+    monkeypatch.setattr(phase_e2, "_launch_downloader", fake_launch)
+
+    active, launch_error = phase_e2._switch_downloader_backend(
+        object(), "aps", primary, FakeDownloader, tmp_path, None,
+        "cloakbrowser",
+    )
+
+    assert active.browser_backend == "cloakbrowser"
+    assert launch_error is None
+    assert events == ["close:camoufox", "launch:cloakbrowser"]
+
+
+def test_phase_e2_backend_switch_restores_primary_after_failure(monkeypatch,
+                                                                 tmp_path):
+    """A failed fallback launch must leave a usable primary downloader."""
+    events = []
+
+    class FakeDownloader:
+        def __init__(self, backend):
+            self.browser_backend = backend
+
+        def close(self):
+            events.append(f"close:{self.browser_backend}")
+
+    def fake_launch(*_args, preferred_backend=None, **_kwargs):
+        events.append(f"launch:{preferred_backend}")
+        if preferred_backend == "cloakbrowser":
+            raise RuntimeError("fallback unavailable")
+        return FakeDownloader(preferred_backend)
+
+    monkeypatch.setattr(phase_e2, "_launch_downloader", fake_launch)
+    monkeypatch.setattr(
+        phase_e2.CFG, "BROWSER_PRIMARY_BACKEND", "camoufox",
+    )
+
+    active, launch_error = phase_e2._switch_downloader_backend(
+        object(), "aps", FakeDownloader("camoufox"), FakeDownloader,
+        tmp_path, None, "cloakbrowser",
+    )
+
+    assert active.browser_backend == "camoufox"
+    assert str(launch_error) == "fallback unavailable"
+    assert events == [
+        "close:camoufox", "launch:cloakbrowser", "launch:camoufox",
+    ]
+
+
+def test_phase_e2_downloader_tracks_persistent_fallback(monkeypatch, tmp_path):
+    """A launched fallback remains identifiable for later audit events."""
+    class FakeDownloader:
+        def __init__(self, _directory):
+            self.browser_backend = None
+
+        def start_browser(self, _proxy, backend=None):
+            self.browser_backend = backend
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(phase_e2.CFG, "BROWSER_PRIMARY_BACKEND", "camoufox")
+    monkeypatch.setattr(
+        phase_e2.CFG, "BROWSER_FALLBACK_BACKEND", "cloakbrowser",
+    )
+
+    downloader = phase_e2._launch_downloader(
+        object(), "aps", FakeDownloader, tmp_path, None,
+        preferred_backend="cloakbrowser",
+    )
+
+    assert downloader.browser_backend == "cloakbrowser"
+    assert phase_e2._is_fallback_downloader(downloader)
+
+
 def test_phase_e2_validation_and_early_exits(monkeypatch, tmp_path):
     """PDF signature validation and all admission early exits are covered."""
     valid = tmp_path / "valid.pdf"
@@ -1284,3 +1376,39 @@ def test_phase_h_sends_report_and_no_update(monkeypatch, tmp_path):
     sent.clear()
     phase_h.phase_h_email(DB(), tmp_path, report_path=None)
     assert sent and "No Updates" in sent[-1][0][0]
+
+
+def test_phase_h_propagates_smtp_failure(monkeypatch, tmp_path):
+    """An actual SMTP failure must make the pipeline phase fail."""
+    class FailingSender:
+        def __init__(self, **kwargs):
+            pass
+
+        def send(self, *args, **kwargs):
+            raise RuntimeError("SMTP unavailable")
+
+    class DB:
+        def get_publisher_page_stats(self, days):
+            return {}
+
+    monkeypatch.setattr(phase_h.CFG, "SKIP_PHASE_H", False)
+    monkeypatch.setattr(phase_h.CFG, "EMAIL_TEMPLATE_NAME", "default")
+    monkeypatch.setattr(phase_h.CFG, "PUBLISHER_MAX_CONSECUTIVE_FAILURES", 3)
+    monkeypatch.setattr(
+        phase_h,
+        "load_email_config",
+        lambda: {
+            "username": "user@example.com",
+            "password": "secret",
+            "smtp_host": "smtp",
+            "smtp_port": 25,
+            "from_addr": "user@example.com",
+        },
+    )
+    monkeypatch.setattr(phase_h, "load_email_recipients", lambda: ["to@example.com"])
+    monkeypatch.setattr(phase_h, "load_publishers", list)
+    monkeypatch.setattr(phase_h, "load_keywords", dict)
+    monkeypatch.setattr(phase_h, "EmailSender", FailingSender)
+
+    with pytest.raises(RuntimeError, match="SMTP unavailable"):
+        phase_h.phase_h_email(DB(), tmp_path)

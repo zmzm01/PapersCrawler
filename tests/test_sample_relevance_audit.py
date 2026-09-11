@@ -46,17 +46,27 @@ def test_load_candidates_defaults_to_unreviewed_legacy_d(tmp_path):
     assert [row["doi"] for row in rows] == ["10/a", "10/b"]
 
 
-def test_stratified_sample_is_deterministic_and_covers_strata():
-    """Round-robin selection is repeatable and covers distinct strata."""
+def test_stratified_sample_is_deterministic_and_proportional():
+    """Sampling is repeatable and follows source-population proportions."""
     records = [
-        {"doi": "a1", "publisher": "a", "paper_year": "2025"},
-        {"doi": "a2", "publisher": "a", "paper_year": "2025"},
-        {"doi": "b1", "publisher": "b", "paper_year": "2026"},
-        {"doi": "b2", "publisher": "b", "paper_year": "2026"},
+        {
+            "doi": f"a{record_number}",
+            "publisher": "a",
+            "paper_year": "2025",
+        }
+        for record_number in range(90)
+    ] + [
+        {
+            "doi": f"b{record_number}",
+            "publisher": "b",
+            "paper_year": "2026",
+        }
+        for record_number in range(10)
     ]
 
-    first = stratified_sample(records, 2, 7, "publisher-year")
-    second = stratified_sample(records, 2, 7, "publisher-year")
+    first = stratified_sample(records, 20, 7, "publisher-year")
+    second = stratified_sample(records, 20, 7, "publisher-year")
 
     assert first == second
-    assert {record["publisher"] for record in first} == {"a", "b"}
+    assert sum(record["publisher"] == "a" for record in first) == 18
+    assert sum(record["publisher"] == "b" for record in first) == 2

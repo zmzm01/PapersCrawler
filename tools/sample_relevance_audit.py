@@ -31,7 +31,7 @@ def _stratum(record: dict[str, Any], mode: str) -> tuple[str, ...]:
 
 def stratified_sample(records: Iterable[dict[str, Any]], size: int,
                       seed: int, mode: str) -> list[dict[str, Any]]:
-    """Select a deterministic round-robin sample across configured strata.
+    """Select a deterministic proportional sample across configured strata.
 
     Parameters
     ----------
@@ -47,28 +47,38 @@ def stratified_sample(records: Iterable[dict[str, Any]], size: int,
     Returns
     -------
     list[dict]
-        Selected records, interleaved across strata.
+        Selected records. Each stratum receives its population-proportional
+        quota using the largest-remainder method.
     """
     if size <= 0:
         return []
     groups: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     for record in records:
         groups[_stratum(record, mode)].append(record)
+    population_size = sum(len(group) for group in groups.values())
+    sample_size = min(size, population_size)
     randomizer = random.Random(seed)
     for group in groups.values():
         randomizer.shuffle(group)
-    active_keys = sorted(groups)
-    randomizer.shuffle(active_keys)
+
+    quotas = {
+        key: sample_size * len(group) / population_size
+        for key, group in groups.items()
+    }
+    allocations = {key: int(quota) for key, quota in quotas.items()}
+    remaining = sample_size - sum(allocations.values())
+    remainder_keys = sorted(groups)
+    randomizer.shuffle(remainder_keys)
+    remainder_keys.sort(
+        key=lambda key: quotas[key] - allocations[key], reverse=True,
+    )
+    for key in remainder_keys[:remaining]:
+        allocations[key] += 1
+
     selected = []
-    while active_keys and len(selected) < size:
-        next_keys = []
-        for key in active_keys:
-            if len(selected) >= size:
-                break
-            selected.append(groups[key].pop())
-            if groups[key]:
-                next_keys.append(key)
-        active_keys = next_keys
+    for key in sorted(groups):
+        selected.extend(groups[key][:allocations[key]])
+    randomizer.shuffle(selected)
     return selected
 
 
@@ -160,6 +170,39 @@ def write_jsonl(records: Iterable[dict[str, Any]], output: Path | None) -> None:
     output.write_text(content, encoding="utf-8")
 
 
+def register_cohort(db_path: Path, cohort: str,
+                    records: list[dict[str, Any]],
+                    metadata: dict[str, Any] | None = None) -> int:
+    """Register sampled records as a persistent WebUI audit cohort.
+
+    Parameters
+    ----------
+    db_path : pathlib.Path
+        PapersCrawler SQLite database.
+    cohort : str
+        Stable name shown in the WebUI.
+    records : list of dict
+        Annotation-ready audit records.
+    metadata : dict, optional
+        Sampling parameters and source-population size.
+
+    Returns
+    -------
+    int
+        Number of newly inserted cohort items.
+    """
+    src_path = PROJECT_ROOT / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from db.database import DatabaseClient
+
+    with DatabaseClient(db_path) as database:
+        database.init_db_papers()
+        return database.register_relevance_audit_cohort(
+            cohort, records, metadata=metadata,
+        )
+
+
 def main() -> int:
     """Run the relevance-audit sampling CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -177,6 +220,10 @@ def main() -> int:
     )
     parser.add_argument("--include-reviewed", action="store_true")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--register-cohort",
+        help="persist the selected sample under this name for WebUI review",
+    )
     arguments = parser.parse_args()
     if arguments.size <= 0:
         parser.error("--size must be positive")
@@ -188,17 +235,35 @@ def main() -> int:
         selected = stratified_sample(
             candidates, arguments.size, arguments.seed, arguments.stratify,
         )
-        write_jsonl(
-            [audit_record(record, arguments.stratify) for record in selected],
-            arguments.output,
-        )
-    except (OSError, sqlite3.Error) as error:
+        audit_records = [
+            audit_record(record, arguments.stratify) for record in selected
+        ]
+        if arguments.output or not arguments.register_cohort:
+            write_jsonl(audit_records, arguments.output)
+        inserted_count = 0
+        if arguments.register_cohort:
+            inserted_count = register_cohort(
+                arguments.db, arguments.register_cohort, audit_records,
+                metadata={
+                    "population_size": len(candidates),
+                    "category": arguments.category,
+                    "model_filter": arguments.model,
+                    "stratify_mode": arguments.stratify,
+                    "seed": arguments.seed,
+                },
+            )
+    except (OSError, sqlite3.Error, ValueError) as error:
         print(f"relevance audit sampling failed: {error}", file=sys.stderr)
         return 2
     if arguments.output:
         print(
             f"Exported {len(selected)} of {len(candidates)} candidates to "
             f"{arguments.output}",
+        )
+    if arguments.register_cohort:
+        print(
+            f"Registered {inserted_count} new items in WebUI cohort "
+            f"{arguments.register_cohort!r}",
         )
     return 0
 

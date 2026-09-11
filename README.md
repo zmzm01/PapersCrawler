@@ -21,7 +21,8 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 网络订阅。爬虫行为请遵守目标网站的 `robots.txt` 和法律法规。
 
 页面抓取与 Cloudflare 绕过默认使用 [Camoufox](https://camoufox.com/)，
-并可在启动或单篇任务失败时自动回退到 cloakbrowser；
+并可在启动或单篇任务失败时自动回退到 cloakbrowser；切换后端前会关闭当前
+Playwright 会话，避免同步运行循环冲突。
 特此致谢。
 
 ## 特性
@@ -31,8 +32,8 @@ RSS / CrossRef → 元数据补全 → 页面爬取 → 标题/摘要初筛
 - **人工校准的两阶段 LLM 四级相关性分类**（A/B/C/D）：标题/摘要初筛后对候选做全文终审；可按类别变化触发独立模型复核，当前重点检查高风险 `C → A/B`，并持久化各阶段模型 ID，只有有效 A/B 进入总结与报告
 - **可审计的研究范围管理**：`keyword_catalog` 独立维护术语、别名和子域映射，不把单个关键词命中误当成相关性结论；附带覆盖审计和人工标注 benchmark 评分工具
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
-- **来源站点访问策略**：Camoufox 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + Cloakbrowser 自动回退 + 失败熔断；回退失败按单篇隔离，旁路审计不影响抓取；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
-- **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供监控、报告阅览、相关性人工审核和按 Summary 时间排序的审核队列
+- **来源站点访问策略**：Camoufox 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + Cloakbrowser 独占式自动回退 + 失败熔断；回退失败按单篇隔离，旁路审计不影响抓取；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
+- **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供监控、报告阅览、相关性人工审核、随机待审跳转和独立的旧摘要 D 类比例分层抽查
 - **统一流水线入口**：日常、每周和全流程运行均通过 `tools/run_pipeline.py`
 - **按日分文件日志**：运行日志按日期保存并自动清理旧文件，配套工具可直接统计 WARNING/ERROR；支持用 `PAPERSCRAWLER_LOG_DIR` 隔离测试日志，避免单文件持续膨胀
 - **结构化报告输出**：先生成版本化 JSON 快照，再渲染 Markdown；自动报告可导出到公开站点
@@ -77,7 +78,7 @@ LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 80
 
 日常运行推荐使用 systemd 管理 WebUI，使其在后台常驻、开机启动并在异常退出后自动重启。
 完整配置见 [`deploy/systemd/paperscrawler-web.service`](deploy/systemd/paperscrawler-web.service)
-和 [`docs/usage.md`](docs/usage.md#systemd-管理-webui)。打开 http://localhost:8080 查看流水线状态、论文列表、已生成报告，并在“人工审核”页复核正文终审结果。
+和 [`docs/usage.md`](docs/usage.md#systemd-管理-webui)。打开 http://localhost:8080 查看流水线状态、论文列表、已生成报告，并在“人工审核”页复核正文终审结果或抽查旧摘要筛选。
 
 ## 文档
 
@@ -115,7 +116,7 @@ cron 调度。WebUI 不启动浏览器抓取；无头服务器的 `xvfb-run` 只
 
 ```cron
 # 每日 Phase A→F（发现 → LLM 总结）
-0 10 * * * /path/to/PapersCrawler/run_daily.sh
+0 2 * * * /path/to/PapersCrawler/run_daily.sh
 
 # 每周日 20:00（Asia/Shanghai）Phase G→H + Cloudflare Pages 部署
 0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh

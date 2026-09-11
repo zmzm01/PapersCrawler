@@ -2,7 +2,7 @@
 {% block title %}审核：{{ paper.title or paper.doi }}{% endblock %}
 {% block content %}
 <div class="review-detail-header">
-  <a href="/relevance-review" class="text-muted">← 返回审核队列</a>
+  <a href="/relevance-review?scope={{ review_scope }}{% if audit_cohort %}&cohort={{ audit_cohort }}{% endif %}" class="text-muted">← 返回审核队列</a>
   <h2>{{ paper.title or '无标题' }}</h2>
   <div class="review-meta">
     <code>{{ paper.doi }}</code>
@@ -14,28 +14,42 @@
 <div class="review-detail-grid">
   <section>
     <div class="review-card">
-      <h3>当前 LLM 判断</h3>
+      <h3>{% if review_scope == 'screen-audit' %}抽样时的摘要初筛快照{% else %}当前 LLM 判断{% endif %}</h3>
       <div class="review-result-grid">
         <div><span class="field-label">标题+摘要初筛</span><strong>{{ paper.relevance_screen_category or '—' }}</strong></div>
+        {% if review_scope == 'fulltext' %}
         <div><span class="field-label">全文终审</span><strong>{{ paper.llm_relevance_category or '—' }}</strong></div>
+        {% endif %}
         <div><span class="field-label">初筛模型</span><strong>{{ paper.relevance_screen_model or '—' }}</strong></div>
+        {% if review_scope == 'fulltext' %}
         <div><span class="field-label">全文模型</span><strong>{{ paper.llm_relevance_model or '—' }}</strong></div>
         <div><span class="field-label">复核模型</span><strong>{{ paper.llm_relevance_review_model or '—' }}</strong></div>
         <div><span class="field-label">复核前类别</span><strong>{{ paper.llm_relevance_pre_review_category or '—' }}</strong></div>
         <div><span class="field-label">置信度</span><strong>{{ paper.llm_relevance_confidence or '—' }}</strong></div>
         <div><span class="field-label">判定依据</span><strong>{{ paper.llm_relevance_basis or '—' }}</strong></div>
+        {% else %}
+        <div><span class="field-label">初筛置信度</span><strong>{{ paper.relevance_screen_confidence or '—' }}</strong></div>
+        <div><span class="field-label">抽样批次</span><strong>{{ audit_cohort }}</strong></div>
+        <div><span class="field-label">抽样序号</span><strong>#{{ paper.sample_rank }}</strong></div>
+        {% endif %}
       </div>
       <h4>初筛理由</h4>
       <div class="evidence-text">{{ paper.relevance_screen_reason or '无' }}</div>
+      {% if review_scope == 'fulltext' %}
       <h4>终审理由</h4>
       <div class="evidence-text">{{ paper.llm_relevance_reason or '无' }}</div>
+      {% endif %}
     </div>
 
     <div class="review-card">
       <h3>摘要</h3>
+      {% if review_scope == 'screen-audit' and not paper.has_input_snapshot %}
+      <p class="text-muted">该旧批次没有保存输入快照；以下内容来自论文当前元数据，不宜单独用于估计历史模型漏检率。</p>
+      {% endif %}
       <div class="paper-abstract">{{ paper.abstract or '无摘要' }}</div>
     </div>
 
+    {% if review_scope == 'fulltext' %}
     <div class="review-card">
       <h3>全文证据</h3>
       {% if fulltext_available %}
@@ -47,11 +61,16 @@
       <p class="text-muted">没有找到 MinerU 全文文件。</p>
       {% endif %}
     </div>
+    {% endif %}
   </section>
 
   <aside class="review-card review-form-card">
     <h3>人工判定</h3>
+    {% if review_scope == 'screen-audit' %}
+    <p class="text-muted">这是摘要门禁的独立抽查。结果只用于估计漏检率，不会覆盖论文分类或进入报告。</p>
+    {% else %}
     <p class="text-muted">请依据论文的主要研究对象、方法和结果填写证据。模型的“可能有用”不单独构成 B 类依据。</p>
+    {% endif %}
     <form id="review-form">
       <fieldset>
         <legend>人工分类</legend>
@@ -66,7 +85,8 @@
       <input class="review-input" id="reviewer" name="reviewer" maxlength="200" value="{{ paper.review_reviewer or '' }}" placeholder="姓名或缩写">
       <label class="form-label" for="notes">审核备注 / 证据</label>
       <textarea class="review-input review-notes" id="notes" name="notes" maxlength="20000" placeholder="例如：正文第 3 节明确展示了……，因此判为 B。">{{ paper.review_notes or '' }}</textarea>
-      <button class="btn btn-primary review-save-btn" type="submit">保存人工审核</button>
+      <button class="btn btn-secondary review-save-btn" type="submit">仅保存</button>
+      <button class="btn btn-primary review-save-btn" type="submit" data-next="true">保存并随机下一篇</button>
       <span id="review-save-status" class="save-status"></span>
     </form>
   </aside>
@@ -74,6 +94,8 @@
 
 <script>
 const reviewDoi = {{ paper.doi|tojson }};
+const reviewScope = {{ review_scope|tojson }};
+const auditCohort = {{ audit_cohort|tojson }};
 document.getElementById('review-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const selected = document.querySelector('input[name="decision"]:checked');
@@ -94,12 +116,18 @@ document.getElementById('review-form').addEventListener('submit', async (event) 
         decision: selected.value,
         reviewer: document.getElementById('reviewer').value,
         notes: document.getElementById('notes').value,
+        scope: reviewScope,
+        cohort: auditCohort,
       }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || '保存失败');
     status.textContent = '已保存';
     status.className = 'save-status ok';
+    if (event.submitter?.dataset.next === 'true') {
+      const params = new URLSearchParams({scope: reviewScope, cohort: auditCohort});
+      window.location.assign(`/relevance-review/random?${params}`);
+    }
   } catch (error) {
     status.textContent = error.message;
     status.className = 'save-status error';

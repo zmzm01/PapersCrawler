@@ -4,7 +4,7 @@
 <h2 data-i18n="papers.title">Papers</h2>
 
 <div class="papers-toolbar">
-  <label data-i18n="papers.category_label">LLM Category:</label>
+  <label data-i18n="papers.category_label">Effective Category:</label>
   <select id="category-select" onchange="changeCategory()">
     <option value="a" {% if category_filter == 'a' %}selected{% endif %} data-i18n="papers.category_a">A Only</option>
     <option value="b" {% if category_filter == 'b' %}selected{% endif %} data-i18n="papers.category_b">B Only</option>
@@ -58,7 +58,7 @@
       <td>{{ p.journal or '—' }}</td>
       <td>
         {% if p.llm_relevance_status == 'success' %}
-          {% set cat = p.llm_relevance_category or '?' %}
+          {% set cat = p.effective_relevance_category or '?' %}
           {% if cat == 'A' %}
           <span class="badge badge-success">A</span>
           {% elif cat == 'B' %}
@@ -69,6 +69,9 @@
           <span class="badge badge-failed">D</span>
           {% else %}
           <span class="badge badge-pending">{{ cat }}</span>
+          {% endif %}
+          {% if p.manual_relevance_decision %}
+          <small title="LLM: {{ p.llm_relevance_category or '?' }}">人工</small>
           {% endif %}
         {% elif p.llm_relevance_status == 'skipped' %}
         <span class="badge badge-skipped" data-i18n="papers.skipped">Skipped</span>

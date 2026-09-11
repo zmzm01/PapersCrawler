@@ -4,15 +4,46 @@
 <div class="review-page-header">
   <div>
     <h2>相关性人工审核</h2>
+    {% if review_scope == 'screen-audit' %}
+    <p class="text-muted">随机抽查旧摘要初筛结果；审核结论独立保存，不会改变正式报告分类。</p>
+    {% if selected_cohort %}
+      {% for audit in audit_cohorts %}
+        {% if audit.cohort == selected_cohort and audit.population_size %}
+          {% if audit.stratify_mode and 'legacy' in audit.stratify_mode %}
+    <p class="text-muted">该历史批次从 {{ audit.population_size }} 篇候选中按来源近似等额抽样，只适合分来源观察，不能直接汇总为全库漏检率。</p>
+          {% else %}
+    <p class="text-muted">该批次从 {{ audit.population_size }} 篇候选中按 {{ audit.stratify_mode or 'none' }} 比例抽样，seed={{ audit.seed }}。</p>
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% else %}
     <p class="text-muted">只展示已经完成全文终审的论文。人工意见会作为后续总结和报告的有效分类。</p>
+    {% endif %}
   </div>
   <div class="review-stats">
     <span class="review-stat">待审核 <strong>{{ pending_count }}</strong></span>
     <span class="review-stat">已审核 <strong>{{ reviewed_count }}</strong></span>
+    <a class="btn btn-primary" href="/relevance-review/random?scope={{ review_scope }}&cohort={{ selected_cohort }}">随机抽一篇</a>
   </div>
 </div>
 
+<div class="review-pagination">
+  <a class="btn {% if review_scope == 'fulltext' %}btn-primary{% else %}btn-secondary{% endif %}" href="/relevance-review?scope=fulltext">全文终审</a>
+  <a class="btn {% if review_scope == 'screen-audit' %}btn-primary{% else %}btn-secondary{% endif %}" href="/relevance-review?scope=screen-audit{% if selected_cohort %}&cohort={{ selected_cohort }}{% endif %}">摘要随机抽查</a>
+</div>
+
 <form class="review-filters" method="get" action="/relevance-review">
+  <input type="hidden" name="scope" value="{{ review_scope }}">
+  {% if review_scope == 'screen-audit' %}
+  <label>抽查批次
+    <select name="cohort">
+      {% for audit in audit_cohorts %}
+      <option value="{{ audit.cohort }}" {% if selected_cohort == audit.cohort %}selected{% endif %}>{{ audit.cohort }}（{{ audit.reviewed_count }}/{{ audit.total_count }}）{% if not audit.population_size or (audit.stratify_mode and 'legacy' in audit.stratify_mode) %} · 旧版抽样{% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
   <label>状态
     <select name="status">
       <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>待审核</option>
@@ -20,6 +51,7 @@
       <option value="all" {% if status_filter == 'all' %}selected{% endif %}>全部</option>
     </select>
   </label>
+  {% if review_scope == 'fulltext' %}
   <label>最终分类
     <select name="category">
       <option value="all" {% if category_filter == 'all' %}selected{% endif %}>全部</option>
@@ -28,6 +60,8 @@
       {% endfor %}
     </select>
   </label>
+  {% endif %}
+  {% if review_scope == 'fulltext' %}
   <label>置信度
     <select name="confidence">
       <option value="all" {% if confidence_filter == 'all' %}selected{% endif %}>全部</option>
@@ -36,9 +70,11 @@
       {% endfor %}
     </select>
   </label>
+  {% endif %}
   <label class="review-search">搜索
     <input type="search" name="search" value="{{ search_text }}" placeholder="标题或 DOI">
   </label>
+  {% if review_scope == 'fulltext' %}
   <label>排序
     <select name="sort">
       <option value="priority" {% if sort_by == 'priority' %}selected{% endif %}>审核优先级</option>
@@ -49,6 +85,7 @@
     <input type="checkbox" name="disagreement" value="true" {% if disagreement_only %}checked{% endif %}>
     初筛与终审不一致
   </label>
+  {% endif %}
   <button class="btn btn-primary" type="submit">筛选</button>
 </form>
 
@@ -60,9 +97,9 @@
     <tr>
       <th>优先级</th>
       <th>论文</th>
-      <th>初筛 → 终审</th>
+      <th>{% if review_scope == 'screen-audit' %}旧摘要初筛{% else %}初筛 → 终审{% endif %}</th>
       <th>置信度</th>
-      <th>Summary 时间</th>
+      <th>{% if review_scope == 'screen-audit' %}抽样序号{% else %}Summary 时间{% endif %}</th>
       <th>人工结果</th>
       <th>依据</th>
     </tr>
@@ -71,23 +108,26 @@
   {% for paper in papers %}
     <tr>
       <td>
-        {% if paper.review_priority == 0 %}<span class="badge badge-failed">C→A/B 复核</span>
+        {% if review_scope == 'screen-audit' %}<span class="badge badge-warning">随机 D 抽查</span>
+        {% elif paper.review_priority == 0 %}<span class="badge badge-failed">C→A/B 复核</span>
         {% elif paper.review_priority == 1 %}<span class="badge badge-failed">B/medium</span>
         {% elif paper.review_priority == 2 %}<span class="badge badge-warning">不一致</span>
         {% elif paper.review_priority == 3 %}<span class="badge badge-skipped">A/medium</span>
         {% else %}<span class="text-muted">普通</span>{% endif %}
       </td>
       <td class="review-title-cell">
-        <a href="/relevance-review/{{ paper.doi }}">{{ paper.title or '无标题' }}</a>
+        <a href="/relevance-review/{{ paper.doi }}?scope={{ review_scope }}&cohort={{ selected_cohort }}">{{ paper.title or '无标题' }}</a>
         <small>{{ paper.doi }}</small>
       </td>
       <td>
         <span class="badge badge-skipped">{{ paper.relevance_screen_category or '—' }}</span>
+        {% if review_scope == 'fulltext' %}
         <span class="review-arrow">→</span>
         <span class="badge {% if paper.llm_relevance_category == 'A' %}badge-success{% elif paper.llm_relevance_category == 'B' %}badge-warning{% elif paper.llm_relevance_category == 'C' %}badge-skipped{% else %}badge-failed{% endif %}">{{ paper.llm_relevance_category or '—' }}</span>
+        {% endif %}
       </td>
-      <td>{{ paper.llm_relevance_confidence or '—' }}</td>
-      <td>{{ (paper.llm_summary_date or '—')[:19] }}</td>
+      <td>{% if review_scope == 'screen-audit' %}{{ paper.relevance_screen_confidence or '—' }}{% else %}{{ paper.llm_relevance_confidence or '—' }}{% endif %}</td>
+      <td>{% if review_scope == 'screen-audit' %}#{{ paper.sample_rank }}{% else %}{{ (paper.llm_summary_date or '—')[:19] }}{% endif %}</td>
       <td>
         {% if paper.review_decision %}
         <span class="badge badge-reviewed">{{ paper.review_decision }}</span>

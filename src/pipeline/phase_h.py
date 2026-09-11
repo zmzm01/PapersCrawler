@@ -270,6 +270,7 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
             logger.info(f"Report sent: {report_path.name}")
         except Exception as e:
             logger.error(f"Email send failed: {e}")
+            raise
     elif send_no_update:
         subject = f"PapersCrawler Report - {date_str} (No Updates)"
         paper_msg = "本期无新增相关论文，无需关注。"
@@ -293,5 +294,6 @@ def phase_h_email(db, auto_dir, report_path=None, to_addrs=None):
             logger.info("No new papers, sent no-update notification")
         except Exception as e:
             logger.error(f"Email send failed: {e}")
+            raise
 
     logger.info("Phase H done")

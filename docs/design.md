@@ -65,7 +65,7 @@ report-site/
 
 相关性分类面向“是否值得进入组内报告”，不把原创实验作为唯一正向证据：实质内容由核心方向主导、提供技术综合/比较/路线图价值的综述可判 A。B 类允许具体方法在邻近领域完成验证后迁移，但必须同时满足三项证据：方法或器件是论文主贡献、论文给出定量验证结果、无需改变测量/反演/器件核心原理即可直接映射到配置的 adjacent example。仅背景提及、通用算法或没有技术映射的潜在用途仍为 C/D。
 
-人工 benchmark 只能测量其样本分布上的质量。历史审核队列主要来自已经通过旧摘要门禁并取得全文的论文，不能用于证明大量摘要 D 没有漏检。`tools/sample_relevance_audit.py` 因此以只读方式按 publisher/year 对旧 D 做确定性分层抽样，输出同时包含旧 `predicted_category` 与待填写 `gold_category` 的 JSONL；这是校准 Phase E recall 的独立样本，不修改流水线状态。
+人工 benchmark 只能测量其样本分布上的质量。历史审核队列主要来自已经通过旧摘要门禁并取得全文的论文，不能用于证明大量摘要 D 没有漏检。`tools/sample_relevance_audit.py` 因此按 publisher/year 总体占比、使用最大余数法对旧 D 做确定性比例分层抽样，避免小来源被等额过采样。输出同时包含旧 `predicted_category` 与待填写 `gold_category` 的 JSONL，也可将同一快照注册为 WebUI cohort；这是校准 Phase E recall 的独立样本，不修改流水线状态或正式人工覆盖层。
 
 ### 元数据文本清洗
 
@@ -105,6 +105,9 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 | `browser_backend_events` | Phase C/E2 浏览器后端、操作结果、耗时与回退审计 |
 | `paper_fulltext_locations` | Crossref/OpenAlex/Publisher 全文候选地址及来源优先级 |
 | `relevance_reviews` | 追加式人工审核记录，保存结论、备注、审核人以及当时的 LLM 分类、confidence 和各阶段模型 ID 快照 |
+| `relevance_audit_items` | 摘要门禁抽查 cohort 的不可变抽样与旧初筛快照 |
+| `relevance_audit_reviews` | 摘要门禁抽查的追加式人工标签；不参与有效相关性分类 |
+| `relevance_audit_cohorts` | 抽查总体规模、筛选条件、seed、分层方法与样本哈希；阻止同名批次被替换或追加 |
 | `skipped_dois` | 永久跳过的非研究文章 DOI |
 | `data/email.yaml` | Phase H 收件人配置 |
 | `data/mineru_output/.../full.md` | MinerU 全文，供 E3/F/人工审核读取 |
@@ -113,6 +116,7 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 报告与总结阶段使用“有效相关性分类”：没有人工审核时取 E3 的
 `llm_relevance_category`，有最新人工审核时取 `relevance_reviews.decision`。因此人工 A/B
 可使原本 C/D 的论文进入 Phase F/G，人工 C/D/uncertain 会阻止原本 A/B 的论文进入总结或报告；
+报告快照和 WebUI 论文列表的分类筛选、计数与展示均使用有效分类；原始 LLM 分类继续保留用于追溯。
 报告快照同时使用有效分类和人工备注（备注非空时）作为展示依据。
 
 ## 配置模型
@@ -216,7 +220,7 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
   `tools/run_pipeline.py --retry-bot-blocks` 可显式绕过冷却和隔离，并仅让已标记为 Bot 阻断的论文
   绕过摘要短路，执行一次人工强制重试；其他已有摘要的论文仍保持短路。
 - 来源站点访问支持 Cloudflare challenge reload、失败熔断、持久化浏览器上下文和 HTML 错误快照。`source_access.routes.<source>` 定义该来源的主访问路由，Phase C 与 E2 的延迟页面解析及 PDF 下载共用；常规 Phase C 抓取重试耗尽后，可用 `source_access.fallback_proxy_url` 启动独立代理上下文再尝试一次。`BasePublisherScraper` 在构造时初始化空 HTML，错误快照优先使用缓存内容，并在页面/事件循环已关闭时跳过 live content 读取，确保导航在生成页面内容前失败时不会被二次快照异常遮蔽。`import_local_pdf.py` 将 PDF 落盘和 MinerU 状态重置作为一次明确提交的数据库操作。
-- 浏览器后端通过统一适配层注入。Phase C 与 E2 默认使用 Camoufox；启动失败、单篇页面抓取失败或 PDF 下载链失败时，按配置使用 Cloakbrowser 回退一次。E2 回退属于原下载尝试，不重复占用配额，回退启动失败仍保持逐篇错误隔离；Phase C 无法恢复主后端时继续保留可用 fallback。`browser_backend_events` 记录 phase、publisher、DOI、operation、backend、结果、耗时和回退标志，供可靠性评估；该审计是非阻塞旁路，写入异常只记录日志。
+- 浏览器后端通过统一适配层注入。Phase C 与 E2 默认使用 Camoufox；启动失败、单篇页面抓取失败或 PDF 下载链失败时，按配置使用 Cloakbrowser 回退一次。两个同步 Playwright manager 不得在同一线程嵌套：E2 切换后端前先关闭当前 downloader，成功后由 fallback 接管同一 publisher 的剩余任务；fallback 启动失败时尝试恢复主后端，保持后续论文可运行。E2 回退属于原下载尝试，不重复占用配额；Phase C 无法恢复主后端时继续保留可用 fallback。downloader 会持续携带后端角色，因此 fallback 接管后的所有后续事件仍正确标记 `is_fallback`。`browser_backend_events` 记录 phase、publisher、DOI、operation、backend、结果、耗时和回退标志，供可靠性评估；该审计是非阻塞旁路，写入异常只记录日志。
 - LLM 请求支持指数退避和 circuit breaker。
 - LLM 支持按角色切换 OpenAI Chat Completions 与 Anthropic Messages 协议；HTTP 4xx 错误会保留有限长度的服务端响应正文，便于定位网关参数不兼容。
 
@@ -277,15 +281,16 @@ WebUI 使用 FastAPI + Jinja2，当前页面如下：
 | Dashboard | `/dashboard` | 只读状态、阶段统计、7 日趋势 |
 | Papers | `/papers` | 只读论文列表、类别筛选、已总结筛选和分页 |
 | Report | `/report` | 只读报告查看和下载 |
-| Relevance Review | `/relevance-review` | 审核队列、分类筛选和 Summary 时间排序 |
+| Relevance Review | `/relevance-review` | 全文终审、随机待审跳转和摘要抽查 cohort |
 | Review Detail | `/relevance-review/{doi}` | 查看摘要/全文/LLM 结果并提交审核 |
 
-唯一写入端点是 `POST /api/relevance-reviews`，只接受固定决策值和长度受限的备注/审核人字段；审核目标必须是 E3 全文终审成功的记录，`uncertain` 以 schema 规定的小写形式保存。审核队列将触发过 `C → A/B` 独立复核的记录置于最高优先级；详情页展示初筛、全文主判、复核模型及复核前类别。队列也支持 Summary 时间（新到旧）排序，空 Summary 时间排在最后。
+唯一写入端点是 `POST /api/relevance-reviews`，只接受固定决策值和长度受限的备注/审核人字段。全文终审结果进入 `relevance_reviews` 并可覆盖有效分类；摘要抽查结果进入隔离的 `relevance_audit_reviews`，只用于估计门禁漏检率。抽查 cohort 保存模型实际看到的标题、摘要及旧判断快照；同名注册必须具有完全相同的样本哈希和抽样参数。旧版 cohort 缺少输入快照时退回当前元数据并显示警告，不能据此直接估计历史漏检率。`uncertain` 以 schema 规定的小写形式保存。审核队列将触发过 `C → A/B` 独立复核的记录置于最高优先级；详情页展示初筛、全文主判、复核模型及复核前类别。队列也支持 Summary 时间（新到旧）排序，空 Summary 时间排在最后。
 
 安全边界：
 
 - 报告下载使用 `resolve()` 和 `relative_to()` 防路径遍历。
 - 人工审核全文只允许从数据库记录的 `data/` 相对路径读取 `full.md`。
+- WebUI 按数据库路径只执行一次 schema 初始化和文本迁移；审核详情使用 DOI 定点查询，避免翻页和保存时重复执行数秒级迁移。
 - 报告 Markdown 在浏览器端经过 DOMPurify 清理。
 - 响应包含 nosniff、clickjacking 和权限策略响应头。
 - 生产环境应由 Nginx 提供 TLS、认证、限速和访问源限制；不要直接暴露公网。

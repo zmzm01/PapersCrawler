@@ -210,14 +210,18 @@ TLS、认证、限速和访问源限制。临时调试才可将 uvicorn 改为 `
 |---|---|
 | `/` | 302 跳转到 Dashboard |
 | `/dashboard` | 阶段状态、统计卡片和 7 日趋势 |
-| `/papers` | 论文列表、A/B 分类、已总结筛选、排序和分页 |
+| `/papers` | 论文列表、有效 A/B 分类、已总结筛选、排序和分页 |
 | `/report` | 查看和下载已有报告 |
-| `/relevance-review` | 人工审核队列 |
+| `/relevance-review` | 全文终审与旧摘要筛选随机抽查队列 |
 | `/relevance-review/{doi}` | 单篇审核详情 |
 
 审核队列只显示 E3 已完成全文终审的论文：`llm_relevance_status=success` 且 `llm_relevance_basis=fulltext`。默认首先显示触发过 `C → A/B` 独立复核的记录，其后是未审核 B/中置信度、其他初筛/终审分歧和 A/中置信度记录。详情页展示初筛模型、全文主判模型、复核模型和复核前类别；旧记录无法可靠回填时显示 `—`。
 
 审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照；快照包含当时的分类、confidence、初筛模型、全文模型和复核模型，后续重跑不会改写历史审核来源。最新人工审核结果作为有效相关性分类，覆盖 E3 的 LLM 分类：人工 A/B 可进入 Phase F 总结和报告，人工 C/D/uncertain 会阻止后续进入报告；未审核时仍使用 E3 分类。原始 LLM 字段保留用于追溯。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
+
+审核页上方可切换“全文终审”和“摘要随机抽查”，并可随机进入一篇待审论文或在保存后直接跳到下一篇。摘要抽查保存到独立的 `relevance_audit_reviews`，不会覆盖有效相关性分类，也不会使抽查中改判的 A/B 直接进入总结或报告。
+
+论文列表的 A/B 筛选、分页计数和分类徽标同样使用有效分类；有人工审核时徽标旁显示“人工”，悬停可查看原始 LLM 分类。
 
 审核队列默认按审核优先级排列，也可在“排序”中选择“Summary 时间（新→旧）”；没有 Summary 时间的论文排在最后，便于先复核已经生成总结的记录。
 
@@ -292,6 +296,9 @@ Optica 的摘要和 PDF 页面通常需要配置专属地区路由；在 `source
 
 Phase C 与 E2 默认使用 Camoufox，并在浏览器启动或单篇页面/PDF任务失败时用
 Cloakbrowser 回退一次。首次安装或升级后需执行 `python -m camoufox fetch` 下载浏览器。
+E2 会先关闭当前 Camoufox 会话，再启动 Cloakbrowser，避免两套同步 Playwright manager
+嵌套导致 `Sync API inside the asyncio loop`；切换成功后，同一出版社的剩余任务继续复用
+Cloakbrowser。若 fallback 无法启动，E2 会尝试恢复 Camoufox，并把失败隔离在当前论文。
 可在 `configs/settings.yaml` 调整：
 
 ```yaml
@@ -392,7 +399,16 @@ python3 tools/sample_relevance_audit.py \
   --output /tmp/relevance-d-audit.jsonl
 ```
 
-抽样使用固定 seed，重复执行会得到相同结果；可用 `--seed` 更换样本，或用 `--stratify publisher|year|none` 改变分层方式。工具只读数据库，默认排除已有人工审核的记录。逐行填写 `gold_category`（A/B/C/D）和可选 `audit_notes` 后，同一 JSONL 已同时包含旧预测和人工标签，可直接评分：
+抽样使用固定 seed，并按各 publisher/year 在候选总体中的占比分配样本数；重复执行会得到相同结果。可用 `--seed` 更换样本，或用 `--stratify publisher|year|none` 改变分层方式。默认只读数据库并排除已有正式人工审核的记录。若要在 WebUI 中审核同一批样本，增加 cohort 名称：
+
+```bash
+python3 tools/sample_relevance_audit.py \
+  --category D --model legacy --size 200 --seed 20260906 \
+  --register-cohort legacy-d-20260906 \
+  --output data/relevance_d_audit_20260906.jsonl
+```
+
+cohort 会保存标题、摘要、初筛结论和模型 ID 的输入快照，并记录总体规模、筛选条件、分层方式、seed 与样本哈希。同名注册只有在样本内容和抽样参数完全一致时才幂等返回；换 seed、修改筛选条件或总体变化导致样本变化时会拒绝写入，应使用新的 cohort 名称。旧版 cohort 没有快照时 WebUI 会明确警告。逐行填写 `gold_category`（A/B/C/D）和可选 `audit_notes` 后，同一 JSONL 已同时包含旧预测和人工标签，可直接评分：
 
 ```bash
 python3 tools/evaluate_relevance.py \
@@ -400,7 +416,7 @@ python3 tools/evaluate_relevance.py \
   --predictions /tmp/relevance-d-audit.jsonl
 ```
 
-由于样本条件固定为旧 D，这个审计主要估计漏检率；不能用它单独计算全库 precision。建议先以 A/B recall ≥ 0.95 为校准目标，再决定是否重跑全部旧 D。
+由于样本条件固定为旧 D，这个审计估计的是“旧 D 中实际属于 A/B 的比例”（门禁假阴性率），不能用它单独计算全库 precision，也不能直接称为完整 recall。比例分层让未加权的总体比例保持可解释；旧版等额分层 cohort 只能分来源观察，不应汇总为全库漏检率。建议先据此估计漏检规模，再决定是否重跑全部旧 D。
 
 2026-09-01 的首轮 37 篇人工样本基线为：四分类准确率 0.432，A/B 对 C/D 的
 precision 0.548、recall 0.850、F1 0.667。拆分阶段后，E 初筛 accuracy/F1 为
@@ -582,7 +598,7 @@ recipients:
 | `preview_report.py` | 生成不改数据库的 JSON + Markdown 报告预览，可选公开导出 |
 | `log_report.py` | 统计、筛选和查看 WARNING/ERROR 日志 |
 | `keyword_audit.py` | 校验关键词目录并统计语料中的术语命中 |
-| `sample_relevance_audit.py` | 从旧摘要分类按出版社/年份确定性分层抽样，导出人工标注 JSONL |
+| `sample_relevance_audit.py` | 从旧摘要分类确定性分层抽样，导出 JSONL，并可注册 WebUI 抽查 cohort |
 | `evaluate_relevance.py` | 计算 benchmark 或人工审核集的相关性指标 |
 | `send_report.py` | 发送指定报告 |
 | `import_local_pdf.py` | 导入本地 PDF 到 E2 队列 |
@@ -851,7 +867,7 @@ Phase F 会把只有一句话、没有具体结果的 JSON 响应标记为 faile
 
 ### SMTP 失败
 
-检查 SMTP 凭据、`data/email.yaml` 中是否有启用收件人、Phase H 是否被跳过，并查看日志和垃圾邮件箱。
+检查 SMTP 凭据、`data/email.yaml` 中是否有启用收件人、Phase H 是否被跳过，并查看日志和垃圾邮件箱。实际发送失败会使 Phase H 标记为 failed，统一 CLI 返回退出码 1；未配置邮件或收件人时仍按配置性跳过处理。
 
 ### WebUI 启动失败
 

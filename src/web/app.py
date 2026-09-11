@@ -21,6 +21,8 @@ if str(_src_path) not in sys.path:
 
 import logging
 import os
+import threading
+from urllib.parse import quote, urlencode
 from pydantic import BaseModel
 
 from config import DATA_DIR
@@ -37,7 +39,12 @@ from config import _check_mineru_token
 _check_mineru_token()
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -93,9 +100,27 @@ class RelevanceReviewPayload(BaseModel):
     decision: str
     notes: str = ""
     reviewer: str = ""
+    scope: str = "fulltext"
+    cohort: str = ""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+_DATABASE_INIT_LOCK = threading.Lock()
+_INITIALIZED_DATABASE_PATHS: set[str] = set()
+
+
+def _ensure_database_initialized(database: DatabaseClient) -> None:
+    """Run expensive schema/data migrations once per WebUI database path."""
+    database_key = str(Path(DB_PATH).resolve())
+    if database_key in _INITIALIZED_DATABASE_PATHS:
+        return
+    with _DATABASE_INIT_LOCK:
+        if database_key in _INITIALIZED_DATABASE_PATHS:
+            return
+        database.init_db_papers()
+        _INITIALIZED_DATABASE_PATHS.add(database_key)
+
 
 def _classify_error(error_text: str) -> str:
     """Classify an error message into a user-friendly category."""
@@ -129,7 +154,7 @@ def _pipeline_status():
     """Build pipeline status dict for Dashboard API."""
     db = DatabaseClient(DB_PATH)
     try:
-        db.init_db_papers()
+        _ensure_database_initialized(db)
         total = len(db.get_all_papers())
         stats = db.get_phase_stats()
         phases = {}
@@ -205,7 +230,7 @@ async def pipeline_weekly_stats():
     """
     db = DatabaseClient(DB_PATH)
     try:
-        db.init_db_papers()
+        _ensure_database_initialized(db)
         today = datetime.now()
         days = []
         for i in range(6, -1, -1):
@@ -281,7 +306,7 @@ async def papers_page(
 ):
     db = DatabaseClient(DB_PATH)
     try:
-        db.init_db_papers()
+        _ensure_database_initialized(db)
         sort_by = sort if sort in ("created", "published", "summary") else "created"
         category_filter = category if category in ("a", "b", "ab", "all") else "ab"
         per_page = per_page if per_page in (50, 100, 200) else 100
@@ -343,33 +368,63 @@ async def relevance_review_page(
     sort: str = "priority",
     page: int = 1,
     per_page: int = 50,
+    scope: str = "fulltext",
+    cohort: str = "",
 ):
     """Render the manual relevance review queue."""
     page = max(1, page)
     per_page = per_page if per_page in (50, 100, 200) else 50
     sort_by = sort if sort in ("priority", "summary") else "priority"
+    review_scope = scope if scope in ("fulltext", "screen-audit") else "fulltext"
     offset = (page - 1) * per_page
     with DatabaseClient(DB_PATH) as db:
-        db.init_db_papers()
-        papers = db.get_relevance_review_queue(
-            status_filter=status,
-            category_filter=category,
-            confidence_filter=confidence,
-            disagreement_only=disagreement,
-            search_text=search,
-            sort_by=sort_by,
-            limit=per_page,
-            offset=offset,
+        _ensure_database_initialized(db)
+        audit_cohorts = db.get_relevance_audit_cohorts()
+        cohort_names = {row["cohort"] for row in audit_cohorts}
+        selected_cohort = cohort if cohort in cohort_names else (
+            audit_cohorts[0]["cohort"] if audit_cohorts else ""
         )
-        total_count = db.count_relevance_review_queue(
-            status_filter=status,
-            category_filter=category,
-            confidence_filter=confidence,
-            disagreement_only=disagreement,
-            search_text=search,
-        )
-        pending_count = db.count_relevance_review_queue(status_filter="pending")
-        reviewed_count = db.count_relevance_review_queue(status_filter="reviewed")
+        if review_scope == "screen-audit" and selected_cohort:
+            papers = db.get_relevance_audit_queue(
+                selected_cohort, status_filter=status, search_text=search,
+                limit=per_page, offset=offset,
+            )
+            total_count = db.count_relevance_audit_queue(
+                selected_cohort, status_filter=status, search_text=search,
+            )
+            pending_count = db.count_relevance_audit_queue(
+                selected_cohort, status_filter="pending",
+            )
+            reviewed_count = db.count_relevance_audit_queue(
+                selected_cohort, status_filter="reviewed",
+            )
+        elif review_scope == "screen-audit":
+            papers = []
+            total_count = pending_count = reviewed_count = 0
+        else:
+            papers = db.get_relevance_review_queue(
+                status_filter=status,
+                category_filter=category,
+                confidence_filter=confidence,
+                disagreement_only=disagreement,
+                search_text=search,
+                sort_by=sort_by,
+                limit=per_page,
+                offset=offset,
+            )
+            total_count = db.count_relevance_review_queue(
+                status_filter=status,
+                category_filter=category,
+                confidence_filter=confidence,
+                disagreement_only=disagreement,
+                search_text=search,
+            )
+            pending_count = db.count_relevance_review_queue(
+                status_filter="pending",
+            )
+            reviewed_count = db.count_relevance_review_queue(
+                status_filter="reviewed",
+            )
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     return templates.TemplateResponse(request, "relevance_review.html", {
         "papers": papers,
@@ -385,26 +440,56 @@ async def relevance_review_page(
         "total_pages": total_pages,
         "pending_count": pending_count,
         "reviewed_count": reviewed_count,
+        "review_scope": review_scope,
+        "audit_cohorts": audit_cohorts,
+        "selected_cohort": selected_cohort,
     })
 
 
-@app.get("/relevance-review/{doi:path}", response_class=HTMLResponse)
-async def relevance_review_detail(request: Request, doi: str):
-    """Render one paper and its current manual review state."""
+@app.get("/relevance-review/random")
+async def random_relevance_review(
+    scope: str = "fulltext",
+    cohort: str = "",
+):
+    """Redirect to a random pending item in the selected review scope."""
+    review_scope = scope if scope in ("fulltext", "screen-audit") else "fulltext"
     with DatabaseClient(DB_PATH) as db:
-        db.init_db_papers()
-        rows = db.get_relevance_review_queue(
-            status_filter="all", search_text=doi, limit=200, offset=0,
-        )
-        paper = next(
-            (row for row in rows if row["doi"].lower() == doi.strip().lower()),
-            None,
-        )
+        _ensure_database_initialized(db)
+        if review_scope == "screen-audit":
+            doi = db.get_random_relevance_audit_doi(cohort, pending_only=True)
+        else:
+            doi = db.get_random_relevance_review_doi(pending_only=True)
+    query = urlencode({"scope": review_scope, "cohort": cohort})
+    if not doi:
+        return RedirectResponse(f"/relevance-review?{query}", status_code=303)
+    encoded_doi = quote(doi, safe="/")
+    return RedirectResponse(
+        f"/relevance-review/{encoded_doi}?{query}", status_code=303,
+    )
+
+
+@app.get("/relevance-review/{doi:path}", response_class=HTMLResponse)
+async def relevance_review_detail(
+    request: Request,
+    doi: str,
+    scope: str = "fulltext",
+    cohort: str = "",
+):
+    """Render one paper and its current manual review state."""
+    review_scope = scope if scope in ("fulltext", "screen-audit") else "fulltext"
+    with DatabaseClient(DB_PATH) as db:
+        _ensure_database_initialized(db)
+        if review_scope == "screen-audit":
+            paper = db.get_relevance_audit_detail(cohort, doi)
+        else:
+            paper = db.get_relevance_review_detail(doi)
     if paper is None:
         return HTMLResponse("Paper not found", status_code=404)
 
     fulltext = ""
-    fulltext_path = _resolve_mineru_fulltext(paper["mineru_output_dir"])
+    fulltext_path = None
+    if review_scope == "fulltext":
+        fulltext_path = _resolve_mineru_fulltext(paper["mineru_output_dir"])
     if fulltext_path:
         try:
             # Keep the detail page responsive while retaining enough context
@@ -417,6 +502,8 @@ async def relevance_review_detail(request: Request, doi: str):
         "paper": paper,
         "fulltext": fulltext,
         "fulltext_available": bool(fulltext),
+        "review_scope": review_scope,
+        "audit_cohort": cohort,
     })
 
 
@@ -429,12 +516,23 @@ async def save_relevance_review(payload: RelevanceReviewPayload):
         return JSONResponse({"error": "Notes are too long"}, status_code=422)
     if len(payload.reviewer) > 200:
         return JSONResponse({"error": "Reviewer name is too long"}, status_code=422)
+    if payload.scope not in {"fulltext", "screen-audit"}:
+        return JSONResponse({"error": "Invalid review scope"}, status_code=422)
+    if payload.scope == "screen-audit" and not payload.cohort.strip():
+        return JSONResponse({"error": "Audit cohort is required"}, status_code=422)
     try:
         with DatabaseClient(DB_PATH) as db:
-            db.init_db_papers()
-            review_id = db.save_relevance_review(
-                payload.doi, payload.decision, payload.notes, payload.reviewer,
-            )
+            _ensure_database_initialized(db)
+            if payload.scope == "screen-audit":
+                review_id = db.save_relevance_audit_review(
+                    payload.cohort, payload.doi, payload.decision,
+                    payload.notes, payload.reviewer,
+                )
+            else:
+                review_id = db.save_relevance_review(
+                    payload.doi, payload.decision, payload.notes,
+                    payload.reviewer,
+                )
     except DataBaseDOINotExists:
         return JSONResponse({"error": "Paper not found"}, status_code=404)
     except ValueError as error:

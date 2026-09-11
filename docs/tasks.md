@@ -2,6 +2,31 @@
 
 > 本文只保留近期进展、当前决策和未决事项。完整历史流水账已归档至 [`docs/archive/tasks-legacy.md`](archive/tasks-legacy.md)。
 
+## 2026-09-11：修正相关性抽查的统计与快照完整性
+
+- 旧 D 抽样从各 publisher/year 等额轮询改为按总体大小比例分配，避免小来源过采样后被误当成全库漏检率。
+- cohort 新增总体规模、筛选参数、seed 和样本哈希；同名批次只有完全一致时才允许幂等注册，禁止换 seed 或总体变化后静默追加。
+- 新 cohort 保存抽样时的标题、摘要、期刊、来源和年份快照；旧 cohort 缺少快照时 WebUI 明确提示当前展示的是可变元数据。
+- E2 downloader 持续记录是否为 fallback，使 Cloakbrowser 接管 publisher 后的后续下载事件仍正确计入 fallback 统计。
+
+## 2026-09-10：加速人工审核并接入旧 D 随机抽查
+
+- 修复 WebUI 每次请求重复运行数据库初始化、迁移和元数据清洗的问题：同一进程/数据库只初始化一次，审核详情改为 DOI 定点查询，并为审核队列增加索引。
+- 人工审核页增加“全文终审 / 摘要随机抽查”双模式、随机待审跳转和“保存并随机下一篇”；此前固定 seed 的 200 篇旧 D 已注册为 `legacy-d-20260906` cohort。
+- 摘要抽查的样本和人工标签存入独立表，不写 `relevance_reviews`，因此 A/B 抽查发现只用于评估漏检率，不会直接改变总结或报告资格。
+
+## 2026-09-10：修复 E2 Cloakbrowser 回退的 Playwright 循环冲突
+
+- 今日生产日志中 3 篇 E2 下载在 Camoufox 失败后启动 Cloakbrowser 时触发 `Playwright Sync API inside the asyncio loop`；根因是两套同步 Playwright manager 在同一线程内嵌套。
+- E2 的延迟页面解析和 PDF 下载统一改为独占式后端切换：先关闭当前 downloader，再启动 fallback；成功后复用 fallback 完成同一出版社的剩余任务。
+- fallback 启动失败时尝试恢复 Camoufox，避免已关闭的 downloader 使同组后续论文连带失败；新增切换顺序和恢复路径回归测试。
+
+## 2026-09-10：统一有效分类并传播邮件发送失败
+
+- WebUI `/papers` 的 A/B 筛选、分页计数和徽标改用最新人工审核覆盖后的有效分类；人工审核记录同时保留原始 LLM 分类用于追溯。
+- Phase H 的 SMTP 实际发送失败不再只写日志后返回成功，而是向 runner 传播异常，使阶段状态为 failed、CLI 返回非零；未配置邮件或收件人仍正常跳过。
+- README 的每日 cron 示例与设计和使用手册统一为 02:00；保留 Phase G 同日重跑覆盖当日日报的既有语义。
+
 ## 2026-09-09：Camoufox 主后端与 Cloakbrowser 自动回退
 
 - Phase C 与 E2 通过统一适配层默认使用 Camoufox；启动、单篇页面抓取和 PDF 下载失败时可回退 Cloakbrowser 一次，E2 回退不重复占用下载配额。

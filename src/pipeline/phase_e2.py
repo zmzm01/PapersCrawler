@@ -2,19 +2,19 @@
 Phase E2: MinerU PDF full-text parsing.
 """
 
-import logging
 import inspect
+import logging
 import random
 import time
 from datetime import datetime
 
-from config import CFG, BROWSER_SESSION_DIR, MINERU_OUTPUT_DIR
 from common import format_error_for_record
+from config import BROWSER_SESSION_DIR, CFG, MINERU_OUTPUT_DIR
 from db.database import FetchStatus
 from pipeline.base import SCRAPER_MAP, record_browser_event
 from processors.mineru_paper_parser import MinerUParser
-from sources.publisher import BasePublisherScraper
 from sources.fulltext import resolve_candidates
+from sources.publisher import BasePublisherScraper
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,9 @@ def _launch_downloader(db, publisher, downloader_class, session_dir, proxy,
         backend_session_dir = session_dir / f"backend_{backend}"
         backend_session_dir.mkdir(parents=True, exist_ok=True)
         downloader = downloader_class(backend_session_dir)
-        is_fallback = index > 0 or preferred_backend is not None
+        is_fallback = (
+            backend == fallback and backend != CFG.BROWSER_PRIMARY_BACKEND
+        )
         started = time.monotonic()
         try:
             parameters = inspect.signature(
@@ -42,6 +44,7 @@ def _launch_downloader(db, publisher, downloader_class, session_dir, proxy,
                 downloader.start_browser(proxy)
             if not hasattr(downloader, "browser_backend"):
                 downloader.browser_backend = backend
+            downloader.is_fallback_backend = is_fallback
             record_browser_event(
                 db,
                 "E2", publisher, None, "launch", backend, "success",
@@ -60,6 +63,58 @@ def _launch_downloader(db, publisher, downloader_class, session_dir, proxy,
             )
             downloader.close()
     raise last_error
+
+
+def _is_fallback_downloader(downloader):
+    """Return whether the active downloader represents a fallback backend."""
+    return bool(getattr(downloader, "is_fallback_backend", False))
+
+
+def _switch_downloader_backend(db, publisher, downloader, downloader_class,
+                               session_dir, proxy, target_backend):
+    """Replace an active downloader without nesting sync Playwright loops.
+
+    Parameters
+    ----------
+    db : DatabaseClient
+        Database used for browser audit events.
+    publisher : str
+        Publisher key for audit events.
+    downloader : BasePublisherScraper
+        Currently active downloader. It is closed before the replacement is
+        launched because Playwright sync managers cannot be nested safely.
+    downloader_class : type
+        Scraper class used to create the replacement.
+    session_dir : pathlib.Path
+        Base browser session directory.
+    proxy : dict or None
+        Publisher-specific proxy configuration.
+    target_backend : str
+        Browser backend to activate.
+
+    Returns
+    -------
+    tuple
+        ``(active_downloader, launch_error)``. When the target backend cannot
+        start, the primary backend is restored when possible and the original
+        target launch exception is returned.
+    """
+    downloader.close()
+    try:
+        replacement = _launch_downloader(
+            db, publisher, downloader_class, session_dir, proxy,
+            preferred_backend=target_backend,
+        )
+        return replacement, None
+    except Exception as launch_error:
+        try:
+            restored = _launch_downloader(
+                db, publisher, downloader_class, session_dir, proxy,
+                preferred_backend=CFG.BROWSER_PRIMARY_BACKEND,
+            )
+        except Exception:
+            raise launch_error
+        return restored, launch_error
 
 
 def _failure_kind(error):
@@ -262,6 +317,7 @@ def phase_e2_mineru(db):
                             duration_ms=round(
                                 (time.monotonic() - started) * 1000
                             ),
+                            is_fallback=_is_fallback_downloader(downloader),
                         )
                     else:
                         raise RuntimeError(
@@ -277,6 +333,7 @@ def phase_e2_mineru(db):
                         duration_ms=round(
                             (time.monotonic() - started) * 1000
                         ),
+                        is_fallback=_is_fallback_downloader(downloader),
                     )
                     logger.warning(
                         f"Lazy fetch failed [{doi}]: {e}"
@@ -286,12 +343,13 @@ def phase_e2_mineru(db):
                         and downloader.browser_backend
                         != CFG.BROWSER_FALLBACK_BACKEND
                     ):
-                        try:
-                            fallback_downloader = _launch_downloader(
-                                db, publisher, downloader_class, dl_dir, proxy,
-                                preferred_backend=CFG.BROWSER_FALLBACK_BACKEND,
+                        downloader, fallback_launch_error = (
+                            _switch_downloader_backend(
+                                db, publisher, downloader, downloader_class,
+                                dl_dir, proxy, CFG.BROWSER_FALLBACK_BACKEND,
                             )
-                        except Exception as fallback_launch_error:
+                        )
+                        if fallback_launch_error is not None:
                             logger.warning(
                                 "Fallback browser launch failed [%s]: %s",
                                 doi,
@@ -300,10 +358,10 @@ def phase_e2_mineru(db):
                         else:
                             fallback_started = time.monotonic()
                             try:
-                                fallback_downloader.fetch_page(
+                                downloader.fetch_page(
                                     page_url, timeout=30000,
                                 )
-                                parsed = fallback_downloader.parse_page()
+                                parsed = downloader.parse_page()
                                 if not parsed or not parsed.pdf_url:
                                     raise RuntimeError(
                                         "Fallback lazy fetch returned no pdf_url"
@@ -318,7 +376,7 @@ def phase_e2_mineru(db):
                                 record_browser_event(
                                     db,
                                     "E2", publisher, doi, "lazy_page_fetch",
-                                    fallback_downloader.browser_backend,
+                                    downloader.browser_backend,
                                     "success",
                                     duration_ms=round(
                                         (time.monotonic() - fallback_started)
@@ -329,7 +387,7 @@ def phase_e2_mineru(db):
                                 record_browser_event(
                                     db,
                                     "E2", publisher, doi, "lazy_page_fetch",
-                                    fallback_downloader.browser_backend,
+                                    downloader.browser_backend,
                                     "failed",
                                     failure_kind=type(fallback_error).__name__,
                                     error=format_error_for_record(fallback_error),
@@ -338,8 +396,6 @@ def phase_e2_mineru(db):
                                         * 1000
                                     ), is_fallback=True,
                                 )
-                            finally:
-                                fallback_downloader.close()
                 downloader.page.wait_for_timeout(3000)
 
         try:
@@ -418,6 +474,9 @@ def phase_e2_mineru(db):
                                             (time.monotonic() - download_started)
                                             * 1000
                                         ),
+                                        is_fallback=_is_fallback_downloader(
+                                            downloader,
+                                        ),
                                     )
                                     break
                                 download_errors.append(
@@ -432,6 +491,9 @@ def phase_e2_mineru(db):
                                         (time.monotonic() - download_started)
                                         * 1000
                                     ),
+                                    is_fallback=_is_fallback_downloader(
+                                        downloader,
+                                    ),
                                 )
                             except Exception as error:
                                 record_browser_event(
@@ -444,6 +506,9 @@ def phase_e2_mineru(db):
                                         (time.monotonic() - download_started)
                                         * 1000
                                     ),
+                                    is_fallback=_is_fallback_downloader(
+                                        downloader,
+                                    ),
                                 )
                                 download_errors.append(f"{candidate_url}: {error}")
                         if (
@@ -452,18 +517,25 @@ def phase_e2_mineru(db):
                             and downloader.browser_backend
                             != CFG.BROWSER_FALLBACK_BACKEND
                         ):
-                            fallback_downloader = _launch_downloader(
-                                db, publisher, downloader_class, dl_dir, proxy,
-                                preferred_backend=CFG.BROWSER_FALLBACK_BACKEND,
+                            downloader, fallback_launch_error = (
+                                _switch_downloader_backend(
+                                    db, publisher, downloader, downloader_class,
+                                    dl_dir, proxy, CFG.BROWSER_FALLBACK_BACKEND,
+                                )
                             )
-                            try:
+                            if fallback_launch_error is not None:
+                                download_errors.append(
+                                    "fallback launch: "
+                                    f"{fallback_launch_error}"
+                                )
+                            else:
                                 for candidate in candidates:
                                     candidate_url = candidate.get("url")
                                     if not candidate_url:
                                         continue
                                     download_started = time.monotonic()
                                     try:
-                                        candidate_bytes = fallback_downloader.download_pdf(
+                                        candidate_bytes = downloader.download_pdf(
                                             candidate_url, page_url=page_url,
                                         )
                                         if candidate_bytes and candidate_bytes[:5] == b"%PDF-":
@@ -473,7 +545,7 @@ def phase_e2_mineru(db):
                                                 db,
                                                 "E2", publisher, doi,
                                                 "pdf_download",
-                                                fallback_downloader.browser_backend,
+                                                downloader.browser_backend,
                                                 "success",
                                                 duration_ms=round(
                                                     (time.monotonic()
@@ -485,7 +557,7 @@ def phase_e2_mineru(db):
                                             db,
                                             "E2", publisher, doi,
                                             "pdf_download",
-                                            fallback_downloader.browser_backend,
+                                            downloader.browser_backend,
                                             "failed",
                                             failure_kind="invalid_pdf",
                                             error="invalid PDF content",
@@ -503,7 +575,7 @@ def phase_e2_mineru(db):
                                             db,
                                             "E2", publisher, doi,
                                             "pdf_download",
-                                            fallback_downloader.browser_backend,
+                                            downloader.browser_backend,
                                             "failed",
                                             failure_kind=_failure_kind(error),
                                             error=format_error_for_record(error),
@@ -515,8 +587,6 @@ def phase_e2_mineru(db):
                                         download_errors.append(
                                             f"fallback {candidate_url}: {error}"
                                         )
-                            finally:
-                                fallback_downloader.close()
                         if not pdf_bytes:
                             raise RuntimeError("; ".join(download_errors)[:500] or
                                                "No PDF candidate succeeded")

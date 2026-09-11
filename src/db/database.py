@@ -39,6 +39,7 @@ db.py
     → Phase G: 报告生成 (使用 get_papers_for_report())
 """
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -451,7 +452,78 @@ class DatabaseClient:
             "CREATE INDEX IF NOT EXISTS idx_relevance_reviews_doi_id "
             "ON relevance_reviews(doi, id DESC)"
         )
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS relevance_audit_cohorts (
+            cohort TEXT PRIMARY KEY,
+            sample_hash TEXT NOT NULL,
+            sample_size INTEGER NOT NULL,
+            population_size INTEGER,
+            category TEXT,
+            model_filter TEXT,
+            stratify_mode TEXT,
+            seed INTEGER,
+            created_date TEXT NOT NULL
+        )
+        """)
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS relevance_audit_items (
+            cohort TEXT NOT NULL,
+            doi TEXT NOT NULL,
+            sample_rank INTEGER NOT NULL,
+            source_title TEXT,
+            source_abstract TEXT,
+            source_journal TEXT,
+            source_publisher TEXT,
+            source_paper_year TEXT,
+            source_screen_category TEXT,
+            source_screen_confidence TEXT,
+            source_screen_reason TEXT,
+            source_screen_model TEXT,
+            created_date TEXT NOT NULL,
+            PRIMARY KEY (cohort, doi)
+        )
+        """)
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS relevance_audit_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cohort TEXT NOT NULL,
+            doi TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK (
+                decision IN ('A', 'B', 'C', 'D', 'uncertain')
+            ),
+            notes TEXT NOT NULL DEFAULT '',
+            reviewer TEXT NOT NULL DEFAULT '',
+            source_screen_category TEXT,
+            source_screen_confidence TEXT,
+            source_screen_model TEXT,
+            created_date TEXT NOT NULL
+        )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relevance_audit_items_cohort_rank "
+            "ON relevance_audit_items(cohort, sample_rank)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relevance_audit_reviews_item_id "
+            "ON relevance_audit_reviews(cohort, doi, id DESC)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_papers_relevance_review_queue "
+            "ON papers(llm_relevance_status, llm_relevance_basis, "
+            "llm_relevance_category, llm_relevance_confidence)"
+        )
         self.conn.commit()
+
+        for column_definition in [
+            "source_title TEXT",
+            "source_abstract TEXT",
+            "source_journal TEXT",
+            "source_publisher TEXT",
+            "source_paper_year TEXT",
+        ]:
+            self._add_column_if_missing(
+                column_definition, table_name="relevance_audit_items",
+            )
 
         for col_def in [
             "location_source TEXT", "route TEXT", "requested_url TEXT",
@@ -555,6 +627,7 @@ class DatabaseClient:
         try:
             if table_name not in {
                     "papers", "fulltext_download_events", "relevance_reviews",
+                    "relevance_audit_items",
             }:
                 raise ValueError(f"Unsupported migration table: {table_name}")
             self.conn.execute(
@@ -1606,6 +1679,559 @@ class DatabaseClient:
         self.conn.commit()
         return cursor.lastrowid
 
+    def get_relevance_review_detail(self, doi):
+        """Return one full-text review item by DOI using an indexed lookup.
+
+        Parameters
+        ----------
+        doi : str
+            Paper DOI, matched case-insensitively.
+
+        Returns
+        -------
+        sqlite3.Row or None
+            Paper and latest review metadata.
+        """
+        return self.conn.execute(
+            """SELECT p.id, p.doi, p.title, p.abstract, p.journal,
+                      p.publisher, p.page_url, p.pdf_url,
+                      p.mineru_output_dir, p.relevance_screen_category,
+                      p.relevance_screen_confidence,
+                      p.relevance_screen_reason, p.relevance_screen_model,
+                      p.llm_relevance_category, p.llm_relevance_subfields,
+                      p.llm_relevance_confidence, p.llm_relevance_reason,
+                      p.llm_relevance_basis, p.llm_relevance_model,
+                      p.llm_relevance_review_model,
+                      p.llm_relevance_pre_review_category,
+                      p.llm_relevance_date, p.llm_summary_date,
+                      review.id AS review_id,
+                      review.decision AS review_decision,
+                      review.notes AS review_notes,
+                      review.reviewer AS review_reviewer,
+                      review.created_date AS review_date,
+                      0 AS is_screen_audit,
+                      NULL AS audit_cohort
+               FROM papers AS p
+               LEFT JOIN relevance_reviews AS review
+                 ON review.id = (
+                    SELECT MAX(candidate.id)
+                    FROM relevance_reviews AS candidate
+                    WHERE candidate.doi = p.doi
+                 )
+               WHERE LOWER(p.doi) = LOWER(?)
+                 AND p.llm_relevance_status = 'success'
+                 AND p.llm_relevance_basis = 'fulltext'
+               LIMIT 1""",
+            ((doi or "").strip(),),
+        ).fetchone()
+
+    def get_random_relevance_review_doi(self, pending_only=True):
+        """Return a random DOI from the full-text manual-review queue.
+
+        Parameters
+        ----------
+        pending_only : bool, optional
+            Restrict selection to papers without a manual review.
+
+        Returns
+        -------
+        str or None
+            Selected DOI, or ``None`` when the queue is empty.
+        """
+        review_condition = "AND review.latest_id IS NULL" if pending_only else ""
+        row = self.conn.execute(
+            f"""WITH latest_review AS (
+                    SELECT doi, MAX(id) AS latest_id
+                    FROM relevance_reviews GROUP BY doi
+                )
+                SELECT p.doi
+                FROM papers AS p
+                LEFT JOIN latest_review AS review ON review.doi = p.doi
+                WHERE p.llm_relevance_status = 'success'
+                  AND p.llm_relevance_basis = 'fulltext'
+                  {review_condition}
+                ORDER BY RANDOM()
+                LIMIT 1"""
+        ).fetchone()
+        return row["doi"] if row else None
+
+    def register_relevance_audit_cohort(self, cohort, records, metadata=None):
+        """Register immutable screening snapshots as a WebUI audit cohort.
+
+        Parameters
+        ----------
+        cohort : str
+            Stable cohort identifier.
+        records : iterable of dict
+            Records containing DOI and screen prediction fields.
+        metadata : dict, optional
+            Sampling parameters such as population size, stratum mode and
+            random seed.
+
+        Returns
+        -------
+        int
+            Number of newly registered items.
+        """
+        normalized_cohort = (cohort or "").strip()
+        if not normalized_cohort or len(normalized_cohort) > 200:
+            raise ValueError("cohort must contain 1 to 200 characters")
+        materialized_records = list(records)
+        if not materialized_records:
+            raise ValueError("audit cohort must contain at least one record")
+        normalized_records = []
+        seen_dois = set()
+        for sample_rank, record in enumerate(materialized_records, start=1):
+            doi = str(record.get("doi") or record.get("id") or "").strip()
+            if not doi:
+                raise ValueError("every audit record must contain a DOI")
+            if not self.paper_doi_exists(doi):
+                raise DataBaseDOINotExists(f"DOI {doi} not found in DB")
+            normalized_doi = doi.lower()
+            if normalized_doi in seen_dois:
+                raise ValueError(f"duplicate DOI in audit cohort: {doi}")
+            seen_dois.add(normalized_doi)
+            normalized_records.append({
+                "doi": normalized_doi,
+                "sample_rank": sample_rank,
+                "title": record.get("title") or "",
+                "abstract": record.get("abstract") or "",
+                "journal": record.get("journal") or "",
+                "publisher": record.get("publisher") or "",
+                "paper_year": record.get("paper_year") or "",
+                "category": record.get("predicted_category")
+                or record.get("relevance_screen_category"),
+                "confidence": record.get("predicted_confidence")
+                or record.get("relevance_screen_confidence"),
+                "reason": record.get("predicted_reason")
+                or record.get("relevance_screen_reason"),
+                "model": record.get("predicted_model")
+                or record.get("relevance_screen_model"),
+            })
+
+        sample_hash = hashlib.sha256(
+            json.dumps(
+                normalized_records, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        existing_items = self.conn.execute(
+            """SELECT sample_rank, doi FROM relevance_audit_items
+               WHERE cohort = ? ORDER BY sample_rank, doi""",
+            (normalized_cohort,),
+        ).fetchall()
+        expected_identity = [
+            (record["sample_rank"], record["doi"])
+            for record in normalized_records
+        ]
+        existing_identity = [
+            (row["sample_rank"], row["doi"]) for row in existing_items
+        ]
+        if existing_items and existing_identity != expected_identity:
+            raise ValueError(
+                f"audit cohort {normalized_cohort!r} already exists with a "
+                "different sample"
+            )
+
+        metadata = metadata or {}
+        timestamp = str(datetime.now())
+        try:
+            existing_metadata = self.conn.execute(
+                "SELECT * FROM relevance_audit_cohorts WHERE cohort = ?",
+                (normalized_cohort,),
+            ).fetchone()
+            if existing_metadata:
+                expected_metadata = {
+                    "population_size": metadata.get("population_size"),
+                    "category": metadata.get("category"),
+                    "model_filter": metadata.get("model_filter"),
+                    "stratify_mode": metadata.get("stratify_mode"),
+                    "seed": metadata.get("seed"),
+                }
+                metadata_mismatch = any(
+                    expected_value is not None
+                    and existing_metadata[field] != expected_value
+                    for field, expected_value in expected_metadata.items()
+                )
+                if (
+                    existing_metadata["sample_hash"] != sample_hash
+                    or metadata_mismatch
+                ):
+                    raise ValueError(
+                        f"audit cohort {normalized_cohort!r} snapshot or "
+                        "sampling parameters do not match"
+                    )
+            self.conn.execute(
+                """INSERT OR IGNORE INTO relevance_audit_cohorts
+                   (cohort, sample_hash, sample_size, population_size, category,
+                    model_filter, stratify_mode, seed, created_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    normalized_cohort, sample_hash, len(normalized_records),
+                    metadata.get("population_size"), metadata.get("category"),
+                    metadata.get("model_filter"),
+                    metadata.get("stratify_mode"), metadata.get("seed"),
+                    timestamp,
+                ),
+            )
+            for record in normalized_records:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO relevance_audit_items
+                   (cohort, doi, sample_rank, source_title, source_abstract,
+                    source_journal, source_publisher, source_paper_year,
+                    source_screen_category,
+                    source_screen_confidence, source_screen_reason,
+                    source_screen_model, created_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        normalized_cohort, record["doi"], record["sample_rank"],
+                        record["title"], record["abstract"], record["journal"],
+                        record["publisher"], record["paper_year"],
+                        record["category"], record["confidence"],
+                        record["reason"], record["model"], timestamp,
+                    ),
+                )
+                if existing_items:
+                    self.conn.execute(
+                        """UPDATE relevance_audit_items
+                           SET source_title = COALESCE(source_title, ?),
+                               source_abstract = COALESCE(source_abstract, ?),
+                               source_journal = COALESCE(source_journal, ?),
+                               source_publisher = COALESCE(source_publisher, ?),
+                               source_paper_year = COALESCE(source_paper_year, ?)
+                           WHERE cohort = ? AND doi = ?""",
+                        (
+                            record["title"], record["abstract"],
+                            record["journal"], record["publisher"],
+                            record["paper_year"], normalized_cohort,
+                            record["doi"],
+                        ),
+                    )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return 0 if existing_items else len(normalized_records)
+
+    def get_relevance_audit_cohorts(self):
+        """Return audit cohorts with total and reviewed counts.
+
+        Returns
+        -------
+        list[sqlite3.Row]
+            Cohort summaries ordered from newest to oldest.
+        """
+        return self.conn.execute("""
+            WITH latest_review AS (
+                SELECT cohort, doi, MAX(id) AS latest_id
+                FROM relevance_audit_reviews
+                GROUP BY cohort, doi
+            )
+            SELECT item.cohort, COUNT(*) AS total_count,
+                   SUM(CASE WHEN review.latest_id IS NULL
+                            THEN 0 ELSE 1 END) AS reviewed_count,
+                   MIN(item.created_date) AS created_date,
+                   cohort_meta.population_size,
+                   cohort_meta.stratify_mode,
+                   cohort_meta.seed
+            FROM relevance_audit_items AS item
+            LEFT JOIN relevance_audit_cohorts AS cohort_meta
+              ON cohort_meta.cohort = item.cohort
+            LEFT JOIN latest_review AS review
+              ON review.cohort = item.cohort AND review.doi = item.doi
+            GROUP BY item.cohort
+            ORDER BY created_date DESC, item.cohort DESC
+        """).fetchall()
+
+    @staticmethod
+    def _audit_status_condition(status_filter):
+        """Return a validated SQL condition for an audit review status."""
+        if status_filter == "reviewed":
+            return "review.id IS NOT NULL"
+        if status_filter == "all":
+            return "1 = 1"
+        return "review.id IS NULL"
+
+    def get_relevance_audit_queue(self, cohort, status_filter="pending",
+                                  search_text="", limit=100, offset=0):
+        """Return one screening-audit cohort with latest human decisions.
+
+        Parameters
+        ----------
+        cohort : str
+            Audit cohort identifier.
+        status_filter : str, optional
+            ``pending``, ``reviewed`` or ``all``.
+        search_text : str, optional
+            DOI or title substring.
+        limit : int, optional
+            Maximum number of rows.
+        offset : int, optional
+            Number of rows to skip.
+
+        Returns
+        -------
+        list[sqlite3.Row]
+            Audit items with their latest human label.
+        """
+        conditions = [
+            "item.cohort = ?",
+            self._audit_status_condition(status_filter),
+        ]
+        parameters = [cohort]
+        if search_text.strip():
+            conditions.append("(LOWER(p.doi) LIKE ? OR LOWER(p.title) LIKE ?)")
+            pattern = f"%{search_text.strip().lower()}%"
+            parameters.extend([pattern, pattern])
+        parameters.extend([
+            max(1, min(int(limit), 200)), max(0, int(offset)),
+        ])
+        return self.conn.execute(
+            f"""WITH latest_review AS (
+                    SELECT candidate.*
+                    FROM relevance_audit_reviews AS candidate
+                    JOIN (
+                        SELECT cohort, doi, MAX(id) AS latest_id
+                        FROM relevance_audit_reviews
+                        GROUP BY cohort, doi
+                    ) AS latest ON latest.latest_id = candidate.id
+                )
+                SELECT p.id, p.doi,
+                       COALESCE(item.source_title, p.title) AS title,
+                       COALESCE(item.source_abstract, p.abstract) AS abstract,
+                       COALESCE(item.source_journal, p.journal) AS journal,
+                       COALESCE(item.source_publisher, p.publisher) AS publisher,
+                       p.page_url, p.pdf_url,
+                       p.mineru_output_dir,
+                       item.source_screen_category
+                           AS relevance_screen_category,
+                       item.source_screen_confidence
+                           AS relevance_screen_confidence,
+                       item.source_screen_reason AS relevance_screen_reason,
+                       item.source_screen_model AS relevance_screen_model,
+                       NULL AS llm_relevance_category,
+                       NULL AS llm_relevance_subfields,
+                       NULL AS llm_relevance_confidence,
+                       NULL AS llm_relevance_reason,
+                       'screen_audit' AS llm_relevance_basis,
+                       NULL AS llm_relevance_model,
+                       NULL AS llm_relevance_review_model,
+                       NULL AS llm_relevance_pre_review_category,
+                       NULL AS llm_relevance_date,
+                       NULL AS llm_summary_date,
+                       review.id AS review_id,
+                       review.decision AS review_decision,
+                       review.notes AS review_notes,
+                       review.reviewer AS review_reviewer,
+                       review.created_date AS review_date,
+                       CASE WHEN review.id IS NULL THEN 0 ELSE 1 END
+                           AS is_reviewed,
+                       0 AS review_priority, 1 AS is_screen_audit,
+                       item.cohort AS audit_cohort,
+                       item.sample_rank,
+                       CASE WHEN item.source_title IS NOT NULL
+                                  AND item.source_abstract IS NOT NULL
+                            THEN 1 ELSE 0 END AS has_input_snapshot
+                FROM relevance_audit_items AS item
+                JOIN papers AS p ON p.doi = item.doi
+                LEFT JOIN latest_review AS review
+                  ON review.cohort = item.cohort AND review.doi = item.doi
+                WHERE {' AND '.join(conditions)}
+                ORDER BY is_reviewed ASC, item.sample_rank ASC
+                LIMIT ? OFFSET ?""",
+            tuple(parameters),
+        ).fetchall()
+
+    def count_relevance_audit_queue(self, cohort, status_filter="pending",
+                                    search_text=""):
+        """Count screening-audit items matching the WebUI filters.
+
+        Parameters
+        ----------
+        cohort : str
+            Audit cohort identifier.
+        status_filter : str, optional
+            ``pending``, ``reviewed`` or ``all``.
+        search_text : str, optional
+            DOI or title substring.
+
+        Returns
+        -------
+        int
+            Number of matching items.
+        """
+        conditions = [
+            "item.cohort = ?",
+            self._audit_status_condition(status_filter),
+        ]
+        parameters = [cohort]
+        if search_text.strip():
+            conditions.append("(LOWER(p.doi) LIKE ? OR LOWER(p.title) LIKE ?)")
+            pattern = f"%{search_text.strip().lower()}%"
+            parameters.extend([pattern, pattern])
+        return self.conn.execute(
+            f"""WITH latest_review AS (
+                    SELECT cohort, doi, MAX(id) AS id
+                    FROM relevance_audit_reviews
+                    GROUP BY cohort, doi
+                )
+                SELECT COUNT(*)
+                FROM relevance_audit_items AS item
+                JOIN papers AS p ON p.doi = item.doi
+                LEFT JOIN latest_review AS review
+                  ON review.cohort = item.cohort AND review.doi = item.doi
+                WHERE {' AND '.join(conditions)}""",
+            tuple(parameters),
+        ).fetchone()[0]
+
+    def get_relevance_audit_detail(self, cohort, doi):
+        """Return one screening-audit item by cohort and DOI.
+
+        Parameters
+        ----------
+        cohort : str
+            Audit cohort identifier.
+        doi : str
+            Paper DOI, matched case-insensitively.
+
+        Returns
+        -------
+        sqlite3.Row or None
+            Audit item and its latest human label.
+        """
+        return self.conn.execute(
+            """SELECT p.id, p.doi,
+                      COALESCE(item.source_title, p.title) AS title,
+                      COALESCE(item.source_abstract, p.abstract) AS abstract,
+                      COALESCE(item.source_journal, p.journal) AS journal,
+                      COALESCE(item.source_publisher, p.publisher) AS publisher,
+                      p.page_url, p.pdf_url,
+                      p.mineru_output_dir,
+                      item.source_screen_category
+                          AS relevance_screen_category,
+                      item.source_screen_confidence
+                          AS relevance_screen_confidence,
+                      item.source_screen_reason AS relevance_screen_reason,
+                      item.source_screen_model AS relevance_screen_model,
+                      NULL AS llm_relevance_category,
+                      NULL AS llm_relevance_subfields,
+                      NULL AS llm_relevance_confidence,
+                      NULL AS llm_relevance_reason,
+                      'screen_audit' AS llm_relevance_basis,
+                      NULL AS llm_relevance_model,
+                      NULL AS llm_relevance_review_model,
+                      NULL AS llm_relevance_pre_review_category,
+                      NULL AS llm_relevance_date,
+                      NULL AS llm_summary_date,
+                      review.id AS review_id,
+                      review.decision AS review_decision,
+                      review.notes AS review_notes,
+                      review.reviewer AS review_reviewer,
+                      review.created_date AS review_date,
+                      1 AS is_screen_audit, item.cohort AS audit_cohort,
+                      item.sample_rank,
+                      CASE WHEN item.source_title IS NOT NULL
+                                 AND item.source_abstract IS NOT NULL
+                           THEN 1 ELSE 0 END AS has_input_snapshot
+               FROM relevance_audit_items AS item
+               JOIN papers AS p ON p.doi = item.doi
+               LEFT JOIN relevance_audit_reviews AS review
+                 ON review.id = (
+                    SELECT MAX(candidate.id)
+                    FROM relevance_audit_reviews AS candidate
+                    WHERE candidate.cohort = item.cohort
+                      AND candidate.doi = item.doi
+                 )
+               WHERE item.cohort = ? AND item.doi = ?
+               LIMIT 1""",
+            ((cohort or "").strip(), (doi or "").strip().lower()),
+        ).fetchone()
+
+    def get_random_relevance_audit_doi(self, cohort, pending_only=True):
+        """Return a random DOI from one screening-audit cohort.
+
+        Parameters
+        ----------
+        cohort : str
+            Audit cohort identifier.
+        pending_only : bool, optional
+            Restrict selection to items without a human audit label.
+
+        Returns
+        -------
+        str or None
+            Selected DOI, or ``None`` when the cohort queue is empty.
+        """
+        condition = "AND review.latest_id IS NULL" if pending_only else ""
+        row = self.conn.execute(
+            f"""WITH latest_review AS (
+                    SELECT cohort, doi, MAX(id) AS latest_id
+                    FROM relevance_audit_reviews
+                    GROUP BY cohort, doi
+                )
+                SELECT item.doi
+                FROM relevance_audit_items AS item
+                LEFT JOIN latest_review AS review
+                  ON review.cohort = item.cohort AND review.doi = item.doi
+                WHERE item.cohort = ? {condition}
+                ORDER BY RANDOM() LIMIT 1""",
+            (cohort,),
+        ).fetchone()
+        return row["doi"] if row else None
+
+    def save_relevance_audit_review(self, cohort, doi, decision,
+                                    notes="", reviewer=""):
+        """Append an audit-only screen review without affecting reports.
+
+        Parameters
+        ----------
+        cohort : str
+            Audit cohort identifier.
+        doi : str
+            DOI registered in the cohort.
+        decision : str
+            One of A/B/C/D/uncertain.
+        notes : str, optional
+            Human evidence and reasoning.
+        reviewer : str, optional
+            Reviewer name or initials.
+
+        Returns
+        -------
+        int
+            Newly created audit-review ID.
+        """
+        normalized_decision = (decision or "").strip().lower()
+        if normalized_decision not in {"a", "b", "c", "d", "uncertain"}:
+            raise ValueError("decision must be A, B, C, D or uncertain")
+        item = self.conn.execute(
+            """SELECT * FROM relevance_audit_items
+               WHERE cohort = ? AND doi = ?""",
+            ((cohort or "").strip(), (doi or "").strip().lower()),
+        ).fetchone()
+        if item is None:
+            raise DataBaseDOINotExists(f"Audit item {cohort}/{doi} not found")
+        stored_decision = (
+            normalized_decision if normalized_decision == "uncertain"
+            else normalized_decision.upper()
+        )
+        cursor = self.conn.execute(
+            """INSERT INTO relevance_audit_reviews
+               (cohort, doi, decision, notes, reviewer,
+                source_screen_category, source_screen_confidence,
+                source_screen_model, created_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                item["cohort"], item["doi"], stored_decision,
+                (notes or "").strip(), (reviewer or "").strip(),
+                item["source_screen_category"],
+                item["source_screen_confidence"],
+                item["source_screen_model"], str(datetime.now()),
+            ),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
     @staticmethod
     def _local_date():
         """Return the project-local calendar date (Asia/Shanghai)."""
@@ -2188,39 +2814,46 @@ class DatabaseClient:
         list[sqlite3.Row]
         """
         order_clause = {
-            "created": "created_date DESC",
-            "published": ("COALESCE(paperdate_page, paperdate_crossref, "
-                          "paperdate_rss) DESC, created_date DESC"),
-            "summary": "llm_summary_date DESC, created_date DESC",
+            "created": "p.created_date DESC",
+            "published": ("COALESCE(p.paperdate_page, p.paperdate_crossref, "
+                          "p.paperdate_rss) DESC, p.created_date DESC"),
+            "summary": "p.llm_summary_date DESC, p.created_date DESC",
         }
         order = order_clause.get(sort_by, order_clause["created"])
         category_where = {
-            "ab": ("llm_relevance_status = 'success' "
-                   "AND llm_relevance_category IN ('A', 'B')"),
-            "a":  ("llm_relevance_status = 'success' "
-                   "AND llm_relevance_category = 'A'"),
-            "b":  ("llm_relevance_status = 'success' "
-                   "AND llm_relevance_category = 'B'"),
+            "ab": ("p.llm_relevance_status = 'success' AND "
+                   f"{EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')"),
+            "a":  ("p.llm_relevance_status = 'success' AND "
+                   f"{EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'A'"),
+            "b":  ("p.llm_relevance_status = 'success' AND "
+                   f"{EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'B'"),
         }
         conditions = []
         cond = category_where.get(category_filter)
         if cond:
             conditions.append(cond)
         if has_summary:
-            conditions.append("llm_summary_status = 'success'")
+            conditions.append("p.llm_summary_status = 'success'")
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         cur = self.conn.execute(f"""
-        SELECT doi, title, abstract, journal, publisher,
-               paperdate_rss, paperdate_crossref, paperdate_page,
-               created_date,
-               llm_relevance_result, llm_relevance_category,
-               llm_relevance_subfields, llm_relevance_status,
-               llm_relevance_date,
-               llm_summary_status, llm_summary_date, llm_summary_result
-        FROM papers
+        {LATEST_RELEVANCE_REVIEW_CTE}
+        SELECT p.doi, p.title, p.abstract, p.journal, p.publisher,
+               p.paperdate_rss, p.paperdate_crossref, p.paperdate_page,
+               p.created_date,
+               p.llm_relevance_result, p.llm_relevance_category,
+               {EFFECTIVE_RELEVANCE_CATEGORY_SQL}
+                   AS effective_relevance_category,
+               latest_relevance_review.decision
+                   AS manual_relevance_decision,
+               p.llm_relevance_subfields, p.llm_relevance_status,
+               p.llm_relevance_date,
+               p.llm_summary_status, p.llm_summary_date, p.llm_summary_result
+        FROM papers AS p
+        LEFT JOIN latest_relevance_review
+          ON latest_relevance_review.doi = p.doi
         {where_clause}
         ORDER BY
-          CASE WHEN llm_relevance_status IN ('skipped', 'pending') THEN 1 ELSE 0 END,
+          CASE WHEN p.llm_relevance_status IN ('skipped', 'pending') THEN 1 ELSE 0 END,
           {order}
         LIMIT ? OFFSET ?
         """, (limit, offset))
@@ -2242,21 +2875,28 @@ class DatabaseClient:
         int
         """
         category_where = {
-            "ab": ("llm_relevance_status = 'success' "
-                   "AND llm_relevance_category IN ('A', 'B')"),
-            "a":  ("llm_relevance_status = 'success' "
-                   "AND llm_relevance_category = 'A'"),
-            "b":  ("llm_relevance_status = 'success' "
-                   "AND llm_relevance_category = 'B'"),
+            "ab": ("p.llm_relevance_status = 'success' AND "
+                   f"{EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')"),
+            "a":  ("p.llm_relevance_status = 'success' AND "
+                   f"{EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'A'"),
+            "b":  ("p.llm_relevance_status = 'success' AND "
+                   f"{EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'B'"),
         }
         conditions = []
         cond = category_where.get(category_filter)
         if cond:
             conditions.append(cond)
         if has_summary:
-            conditions.append("llm_summary_status = 'success'")
+            conditions.append("p.llm_summary_status = 'success'")
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        cur = self.conn.execute(f"SELECT COUNT(*) FROM papers {where_clause}")
+        cur = self.conn.execute(f"""
+            {LATEST_RELEVANCE_REVIEW_CTE}
+            SELECT COUNT(*)
+            FROM papers AS p
+            LEFT JOIN latest_relevance_review
+              ON latest_relevance_review.doi = p.doi
+            {where_clause}
+        """)
         return cur.fetchone()[0]
 
     def count_reset_impact(self, columns_where):

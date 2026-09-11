@@ -51,6 +51,24 @@ def test_timeago_and_safe_fulltext_resolution(tmp_path, monkeypatch):
     assert web_app._resolve_mineru_fulltext("mineru/paper") is None
 
 
+def test_database_initialization_is_cached_per_path(tmp_path, monkeypatch):
+    """Repeated WebUI requests do not rerun expensive database migrations."""
+    calls = []
+
+    class FakeDatabase:
+        def init_db_papers(self):
+            calls.append("init")
+
+    database_path = tmp_path / "papers.db"
+    monkeypatch.setattr(web_app, "DB_PATH", database_path)
+    web_app._INITIALIZED_DATABASE_PATHS.discard(str(database_path.resolve()))
+
+    web_app._ensure_database_initialized(FakeDatabase())
+    web_app._ensure_database_initialized(FakeDatabase())
+
+    assert calls == ["init"]
+
+
 def test_pipeline_status_and_weekly_stats(monkeypatch):
     """Dashboard data functions close the database and classify errors."""
 
@@ -139,11 +157,8 @@ def test_review_validation_and_missing_detail(tmp_path, monkeypatch):
         def init_db_papers(self):
             return None
 
-        def get_relevance_review_queue(self, **kwargs):
-            return []
-
-        def count_relevance_review_queue(self, **kwargs):
-            return 0
+        def get_relevance_review_detail(self, doi):
+            return None
 
     monkeypatch.setattr(web_app, "DatabaseClient", lambda path: FakeDB())
     request = SimpleNamespace()
@@ -167,6 +182,14 @@ def test_review_validation_and_missing_detail(tmp_path, monkeypatch):
         )
     )
     assert long_reviewer.status_code == 422
+    invalid_scope = asyncio.run(
+        web_app.save_relevance_review(
+            web_app.RelevanceReviewPayload(
+                doi="x", decision="A", scope="unknown",
+            )
+        )
+    )
+    assert invalid_scope.status_code == 422
 
 
 def test_security_headers_middleware():

@@ -321,6 +321,90 @@ def test_save_relevance_review_requires_fulltext_result(db):
         db.save_relevance_review("10.0000/review-abstract", "B")
 
 
+def test_screen_audit_cohort_is_isolated_from_effective_reviews(db):
+    """Screen-audit decisions persist without overriding report relevance."""
+    _insert_review_candidate(db, "10.0000/audit-d", "D", "high", "D")
+    inserted = db.register_relevance_audit_cohort("legacy-d", [{
+        "doi": "10.0000/audit-d",
+        "predicted_category": "D",
+        "predicted_confidence": "high",
+        "predicted_reason": "legacy reason",
+        "predicted_model": None,
+    }])
+
+    assert inserted == 1
+    assert db.count_relevance_audit_queue("legacy-d", "pending") == 1
+    assert db.get_random_relevance_audit_doi("legacy-d") == "10.0000/audit-d"
+    detail = db.get_relevance_audit_detail("legacy-d", "10.0000/AUDIT-D")
+    assert detail["sample_rank"] == 1
+    assert detail["relevance_screen_reason"] == "legacy reason"
+
+    db.save_relevance_audit_review(
+        "legacy-d", "10.0000/audit-d", "B", "摘要显示潜在漏检", "alice",
+    )
+
+    reviewed = db.get_relevance_audit_queue("legacy-d", "reviewed")
+    assert reviewed[0]["review_decision"] == "B"
+    assert db.count_relevance_audit_queue("legacy-d", "pending") == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM relevance_reviews WHERE doi = '10.0000/audit-d'"
+    ).fetchone()[0] == 0
+    assert db.get_relevance_review_detail("10.0000/audit-d")[
+        "review_decision"
+    ] is None
+
+
+def test_screen_audit_cohort_is_immutable_and_uses_input_snapshot(db):
+    """Cohorts reject replacement samples and retain sampled model input."""
+    _insert_review_candidate(db, "10.0000/audit-snapshot", "D", "high", "D")
+    _insert_review_candidate(db, "10.0000/audit-other", "D", "high", "D")
+    original_record = {
+        "doi": "10.0000/audit-snapshot",
+        "title": "Original title",
+        "abstract": "Original abstract",
+        "journal": "Original journal",
+        "publisher": "original-publisher",
+        "paper_year": "2025",
+        "predicted_category": "D",
+    }
+    metadata = {
+        "population_size": 100,
+        "category": "D",
+        "model_filter": "legacy",
+        "stratify_mode": "publisher-year",
+        "seed": 7,
+    }
+
+    assert db.register_relevance_audit_cohort(
+        "immutable", [original_record], metadata,
+    ) == 1
+    assert db.register_relevance_audit_cohort(
+        "immutable", [original_record], metadata,
+    ) == 0
+
+    db.conn.execute(
+        "UPDATE papers SET title = 'Changed', abstract = 'Changed' "
+        "WHERE doi = '10.0000/audit-snapshot'"
+    )
+    db.conn.commit()
+    detail = db.get_relevance_audit_detail(
+        "immutable", "10.0000/audit-snapshot",
+    )
+    assert detail["title"] == "Original title"
+    assert detail["abstract"] == "Original abstract"
+    assert detail["has_input_snapshot"] == 1
+
+    changed_record = dict(original_record, doi="10.0000/audit-other")
+    with pytest.raises(ValueError, match="different sample"):
+        db.register_relevance_audit_cohort(
+            "immutable", [changed_record], metadata,
+        )
+    with pytest.raises(ValueError, match="sampling parameters"):
+        db.register_relevance_audit_cohort(
+            "immutable", [original_record], dict(metadata, seed=8),
+        )
+
+
 # ---- Phase F: LLM 总结 ----
 
 def test_update_llm_summary(db):
@@ -791,6 +875,23 @@ def test_get_papers_category_filter_all(db):
     papers_none = db.get_papers()  # category_filter=None
     assert len(papers_all) == 5
     assert len(papers_all) == len(papers_none)
+
+
+def test_get_papers_category_filter_uses_latest_manual_review(db):
+    """Paper list filtering and counts use the effective review category."""
+    _insert_review_candidate(db, "10.0000/list-downgrade", "A", "high")
+    _insert_review_candidate(db, "10.0000/list-promote", "C", "high")
+    db.save_relevance_review("10.0000/list-downgrade", "C", reviewer="alice")
+    db.save_relevance_review("10.0000/list-promote", "A", reviewer="alice")
+
+    papers = db.get_papers(category_filter="a")
+
+    assert [paper["doi"] for paper in papers] == ["10.0000/list-promote"]
+    assert papers[0]["llm_relevance_category"] == "C"
+    assert papers[0]["effective_relevance_category"] == "A"
+    assert papers[0]["manual_relevance_decision"] == "A"
+    assert db.get_papers_count(category_filter="a") == 1
+    assert db.get_papers_count(category_filter="ab") == 1
 
 
 def test_get_papers_count_no_filter(db):
