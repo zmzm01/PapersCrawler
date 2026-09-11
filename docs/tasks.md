@@ -7,6 +7,7 @@
 - 将全局 URL/Key 与分散角色配置改为 `llm.providers` 命名配置集，由 `active_provider` 一次切换五个 LLM 角色，不做运行时自动故障转移。
 - 保留 Command Code 现有模型映射；Phase F summary 的实际模型是 `zai-org/GLM-5.2`，不是 V4 Pro。OpenRouter 目录无该 ID，因此使用同系列 `z-ai/glm-5`。
 - 新增 `tools/check_llm_config.py` 通过模型目录做非计费检查；旧全局 LLM 环境变量仅在未定义 Provider 时兼容并警告弃用。
+- 追加 DeepSeek 官方 API 配置集，五个角色统一使用官方当前模型 ID `deepseek-flash`，密钥由 `DEEPSEEK_API_KEY` 提供。
 
 ## 2026-09-11：修正相关性抽查的统计与快照完整性
 

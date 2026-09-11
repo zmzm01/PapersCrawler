@@ -147,6 +147,8 @@ LLM 调用在 `common.call_llm_api_with_retry` 统一执行重试、熔断和响
 
 协议适配层负责请求头、端点和响应结构转换。`llm.providers` 为每个后端保存 URL、密钥环境变量名和五个角色；`llm.active_provider` 在启动或热加载时原子选择整套配置，不在请求失败时自动跨 Provider 切换。模型目录只由 `tools/check_llm_config.py` 显式检查，不阻塞流水线启动。旧的全局 `LLM_BASE_URL`/`LLM_API_KEY` 仅在没有 Provider 配置时兼容读取并警告弃用。Responses 与 Messages 的思考参数不直接发送 OpenAI Chat 的 `thinking` 字段；Responses 可选用 `reasoning_effort`。
 
+内置配置集包含 Command Code、OpenRouter 和 DeepSeek 官方 API。DeepSeek 使用 OpenAI-compatible `https://api.deepseek.com/chat/completions`，五个角色统一指定官方当前模型 ID `deepseek-flash`，但仍保留各角色的 thinking、timeout 和输出上限。
+
 当前 Command Code 配置按角色选择协议和模型：Phase E 与 E3 使用在人工审核集上实测效果更好的 flash 模型；`relevance_escalation` 只在 E3 主判跨越 A/B 与 C/D 边界时调用第二模型，其中 `C → A/B` 是最高风险变化，而不是依赖未校准的 confidence。Phase F 和 FormulaFixer 各自使用独立角色。模型均采用服务返回的精确 ID，并随相关性结果写入数据库；可通过 Provider 的 `model_list_url` 诊断。模型名称不代表本任务上的效果：当前 37 篇对照中 V4 Pro 的整体 A/B F1 低于 V4 Flash；GOAT 虽包含 GPT-5.6 Sol，但其用量成本不适合批量全文复核；套餐内 Sonnet 5 调用返回 `MODEL_NOT_IN_PLAN`。
 
 LLM 文本进入 JSON 解析前还会做一次边界清洗：提取 Markdown ` ```json ... ``` ` 或前后夹杂说明中的 JSON 对象，修复常见的裸 LaTeX 反斜杠和字符串内英文引号，再交给标准 JSON 解析器。该兼容层只修复明确的格式问题，无法替代模型输出校验；解析失败仍会按单篇错误隔离并保留 pending/failed 状态。

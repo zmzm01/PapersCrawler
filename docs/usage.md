@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 
 # 编辑 .env，至少填写：
-# CROSSREF_MAILTO / MINERU_TOKEN / OPENROUTER_API_KEY / LLM_API_KEY
+# CROSSREF_MAILTO / MINERU_TOKEN / 当前 active_provider 对应的 API Key
 vim configs/keywords.yaml
 
 # 桌面环境
@@ -448,8 +448,8 @@ V4 Pro，不换掉主判 Flash，也不使用 GOAT 中用量成本过高的 GPT-
 | `MINERU_TOKEN` | MinerU Token |
 | `OPENROUTER_API_KEY` | OpenRouter Provider API Key |
 | `LLM_API_KEY` | Command Code API Key；也是旧配置的通用 Key |
+| `DEEPSEEK_API_KEY` | DeepSeek 官方 API Key |
 | `LLM_BASE_URL` / `LLM_MODEL_LIST` | 仅供旧 LLM 配置兼容 |
-| `DEEPSEEK_API_KEY` | 旧版兼容变量；仅在未设置 `LLM_API_KEY` 时使用 |
 | `PAPERSCRAWLER_LOG_DIR` | 可选日志目录覆盖；测试默认自动指向临时目录 |
 | `SMTP_HOST/PORT/USE_TLS` | SMTP 连接 |
 | `SMTP_USERNAME/PASSWORD` | SMTP 凭据 |
@@ -485,7 +485,10 @@ V4 Pro，不换掉主判 Flash，也不使用 GOAT 中用量成本过高的 GPT-
 ```dotenv
 LLM_API_KEY=your-command-code-api-key
 OPENROUTER_API_KEY=your-openrouter-api-key
+DEEPSEEK_API_KEY=your-deepseek-api-key
 ```
+
+三套内置后端分别使用 `active_provider: command_code | openrouter | deepseek`。DeepSeek 官方配置的 `base_url` 为 `https://api.deepseek.com`，五个角色均使用 `deepseek-flash`。
 
 完整 Provider 模板见 `configs/settings.yaml.example`，核心结构如下：
 

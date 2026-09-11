@@ -57,7 +57,7 @@ python -m camoufox fetch
 # 2) 配置密钥
 cp .env.example .env
 # 编辑 .env 填入 CROSSREF_MAILTO / MINERU_TOKEN / OPENROUTER_API_KEY
-# configs/settings.yaml 的 llm.active_provider 可在 OpenRouter/Command Code 间切换
+# llm.active_provider 可在 OpenRouter / Command Code / DeepSeek 间切换
 
 # 3) 自定义研究领域（可选，默认聚焦激光/等离子体/束流）
 vim configs/keywords.yaml

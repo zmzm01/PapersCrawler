@@ -101,6 +101,35 @@ llm:
           timeout: 300
         formula: *formula
 
+    deepseek:
+      base_url: https://api.deepseek.com
+      model_list_url: https://api.deepseek.com/models
+      api_key_env: DEEPSEEK_API_KEY
+      protocol: openai_chat
+      roles:
+        relevance:
+          model: deepseek-flash
+          thinking: disabled
+          timeout: 300
+        relevance_escalation:
+          model: deepseek-flash
+          thinking: enabled
+          timeout: 300
+        fulltext_relevance:
+          model: deepseek-flash
+          thinking: enabled
+          timeout: 300
+        summary:
+          model: deepseek-flash
+          thinking: disabled
+          max_tokens: 256000
+          timeout: 300
+        formula:
+          model: deepseek-flash
+          thinking: disabled
+          max_tokens: 4096
+          timeout: 120
+
 fulltext_download:
   daily_max: 3
   publisher_daily_max: 2

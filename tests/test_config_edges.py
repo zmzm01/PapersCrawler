@@ -18,6 +18,10 @@ def _provider_settings(active_provider="openrouter"):
         role_name: {"model": f"command/{role_name}"}
         for role_name in config.LLM_ROLE_CONFIG_TARGETS
     }
+    deepseek_roles = {
+        role_name: {"model": "deepseek-flash"}
+        for role_name in config.LLM_ROLE_CONFIG_TARGETS
+    }
     return {
         "llm": {
             "active_provider": active_provider,
@@ -34,6 +38,13 @@ def _provider_settings(active_provider="openrouter"):
                     "api_key_env": "LLM_API_KEY",
                     "protocol": "openai_chat",
                     "roles": command_roles,
+                },
+                "deepseek": {
+                    "base_url": "https://api.deepseek.com",
+                    "model_list_url": "https://api.deepseek.com/models",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "protocol": "openai_chat",
+                    "roles": deepseek_roles,
                 },
             },
         },
@@ -72,6 +83,16 @@ def test_named_llm_provider_switches_all_roles(monkeypatch):
             role_config = getattr(config.CFG, target_name)
             assert role_config["model"] == f"command/{role_name}"
             assert role_config["api_key"] == "command-secret"
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-secret")
+        config._apply_settings(_provider_settings("deepseek"))
+        assert config.CFG.LLM_ACTIVE_PROVIDER == "deepseek"
+        for target_name in config.LLM_ROLE_CONFIG_TARGETS.values():
+            role_config = getattr(config.CFG, target_name)
+            assert role_config["model"] == "deepseek-flash"
+            assert role_config["api_url"] == (
+                "https://api.deepseek.com/chat/completions"
+            )
+            assert role_config["api_key"] == "deepseek-secret"
     finally:
         for target_name, original_config in original_configs.items():
             runtime_config = getattr(config.CFG, target_name)
