@@ -1,9 +1,95 @@
 """Coverage for configuration fallbacks and runtime reload helpers."""
 
 import base64
+import copy
 import json
 
 import config
+import pytest
+
+
+def _provider_settings(active_provider="openrouter"):
+    """Build a complete two-provider LLM fixture."""
+    roles = {
+        role_name: {"model": f"openrouter/{role_name}"}
+        for role_name in config.LLM_ROLE_CONFIG_TARGETS
+    }
+    command_roles = {
+        role_name: {"model": f"command/{role_name}"}
+        for role_name in config.LLM_ROLE_CONFIG_TARGETS
+    }
+    return {
+        "llm": {
+            "active_provider": active_provider,
+            "providers": {
+                "openrouter": {
+                    "base_url": "https://openrouter.example/v1",
+                    "model_list_url": "https://openrouter.example/v1/models",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "protocol": "openai_chat",
+                    "roles": roles,
+                },
+                "command_code": {
+                    "base_url": "https://command.example/v1",
+                    "api_key_env": "LLM_API_KEY",
+                    "protocol": "openai_chat",
+                    "roles": command_roles,
+                },
+            },
+        },
+    }
+
+
+def test_named_llm_provider_switches_all_roles(monkeypatch):
+    """The active provider supplies endpoints, credentials and every model."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-secret")
+    original_configs = {
+        target_name: copy.deepcopy(getattr(config.CFG, target_name))
+        for target_name in config.LLM_ROLE_CONFIG_TARGETS.values()
+    }
+    original_scalars = {
+        name: getattr(config.CFG, name)
+        for name in (
+            "LLM_ACTIVE_PROVIDER", "LLM_BASE_URL", "LLM_MODEL_LIST_URL",
+            "LLM_API_KEY",
+        )
+    }
+    try:
+        config._apply_settings(_provider_settings())
+        assert config.CFG.LLM_ACTIVE_PROVIDER == "openrouter"
+        assert config.CFG.LLM_API_KEY == "openrouter-secret"
+        assert config.CFG.LLM_MODEL_LIST_URL.endswith("/models")
+        for role_name, target_name in config.LLM_ROLE_CONFIG_TARGETS.items():
+            role_config = getattr(config.CFG, target_name)
+            assert role_config["model"] == f"openrouter/{role_name}"
+            assert role_config["api_url"].endswith("/chat/completions")
+            assert role_config["api_key"] == "openrouter-secret"
+        monkeypatch.setenv("LLM_API_KEY", "command-secret")
+        config._apply_settings(_provider_settings("command_code"))
+        assert config.CFG.LLM_ACTIVE_PROVIDER == "command_code"
+        assert config.CFG.LLM_API_KEY == "command-secret"
+        for role_name, target_name in config.LLM_ROLE_CONFIG_TARGETS.items():
+            role_config = getattr(config.CFG, target_name)
+            assert role_config["model"] == f"command/{role_name}"
+            assert role_config["api_key"] == "command-secret"
+    finally:
+        for target_name, original_config in original_configs.items():
+            runtime_config = getattr(config.CFG, target_name)
+            runtime_config.clear()
+            runtime_config.update(original_config)
+        for name, value in original_scalars.items():
+            setattr(config.CFG, name, value)
+
+
+def test_named_llm_provider_validation(monkeypatch):
+    """Invalid provider selections and missing credentials fail clearly."""
+    settings = _provider_settings("missing")
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        config._resolve_llm_provider(settings["llm"])
+    settings = _provider_settings()
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        config._resolve_llm_provider(settings["llm"])
 
 
 def test_yaml_loaders_and_scope_rendering(tmp_path, monkeypatch):

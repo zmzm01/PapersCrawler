@@ -162,6 +162,15 @@ def _get_llm_api_key() -> str:
     return os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
 
 
+LLM_ROLE_CONFIG_TARGETS = {
+    "relevance": "LLM_API_CONFIG_DICT_RELE",
+    "relevance_escalation": "LLM_API_CONFIG_DICT_RELE_ESCALATION",
+    "fulltext_relevance": "LLM_API_CONFIG_DICT_FULLTEXT",
+    "summary": "LLM_API_CONFIG_DICT_SUMM",
+    "formula": "LLM_API_CONFIG_DICT_FORMULA",
+}
+
+
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 
 # ---------- HTTP 请求 ----------
@@ -197,6 +206,8 @@ CFG.NTFY_PRIORITY = "default"
 CFG.LLM_BASE_URL = os.getenv("LLM_BASE_URL") or DEFAULT_LLM_BASE_URL
 CFG.LLM_MODEL_LIST_URL = os.getenv("LLM_MODEL_LIST", "").strip()
 CFG.LLM_API_KEY = _get_llm_api_key()
+CFG.LLM_ACTIVE_PROVIDER = "legacy"
+_LEGACY_LLM_WARNING_EMITTED = False
 CFG.LLM_API_CONFIG_DICT_RELE = {
     "api_url": build_llm_endpoint_url(CFG.LLM_BASE_URL),
     "api_key": CFG.LLM_API_KEY,
@@ -384,7 +395,9 @@ CFG.FULLTEXT_RELEVANCE_MAX_CHARS = 60000
 # settings.yaml 覆盖: 将 YAML 配置加载到 CFG 属性
 # ==================================================================
 
-def _apply_llm_role_settings(config_dict, role_settings, base_url, default_protocol):
+def _apply_llm_role_settings(config_dict, role_settings, base_url,
+                             default_protocol, api_key=None,
+                             reset_optional=False):
     """Apply shared LLM settings for one pipeline role.
 
     Parameters
@@ -401,16 +414,86 @@ def _apply_llm_role_settings(config_dict, role_settings, base_url, default_proto
     protocol = role_settings.get("protocol", default_protocol)
     config_dict["protocol"] = protocol
     config_dict["api_url"] = build_llm_endpoint_url(base_url, protocol)
-    for key in (
+    if api_key is not None:
+        config_dict["api_key"] = api_key
+    optional_keys = (
         "model",
         "thinking",
         "reasoning_effort",
         "timeout",
         "max_tokens",
         "max_output_tokens",
-    ):
+    )
+    if reset_optional:
+        for key in optional_keys:
+            config_dict.pop(key, None)
+    for key in optional_keys:
         if key in role_settings:
             config_dict[key] = role_settings[key]
+
+
+def _resolve_llm_provider(llm_cfg):
+    """Resolve and validate the selected named LLM provider.
+
+    Parameters
+    ----------
+    llm_cfg : dict
+        The ``llm`` section from ``settings.yaml``.
+
+    Returns
+    -------
+    tuple[str, dict, str]
+        Active provider name, provider mapping and resolved API key.
+    """
+    providers = llm_cfg.get("providers")
+    if not providers:
+        return "", {}, ""
+    if not isinstance(providers, dict):
+        raise ValueError("llm.providers must be a mapping")
+    active_provider = str(llm_cfg.get("active_provider", "")).strip()
+    if not active_provider:
+        raise ValueError("llm.active_provider is required when providers are configured")
+    provider = providers.get(active_provider)
+    if not isinstance(provider, dict):
+        raise ValueError(f"Unknown LLM provider: {active_provider}")
+    base_url = str(provider.get("base_url", "")).strip()
+    build_llm_endpoint_url(
+        base_url, provider.get("protocol", LLM_PROTOCOL_OPENAI_CHAT),
+    )
+    api_key_env = str(provider.get("api_key_env", "")).strip()
+    if not api_key_env:
+        raise ValueError(f"LLM provider {active_provider!r} requires api_key_env")
+    api_key = os.getenv(api_key_env, "").strip()
+    if not api_key:
+        raise ValueError(
+            f"LLM provider {active_provider!r} requires environment variable "
+            f"{api_key_env}"
+        )
+    roles = provider.get("roles")
+    if not isinstance(roles, dict):
+        raise ValueError(f"LLM provider {active_provider!r} requires roles")
+    missing_roles = [name for name in LLM_ROLE_CONFIG_TARGETS if name not in roles]
+    if missing_roles:
+        raise ValueError(
+            f"LLM provider {active_provider!r} is missing roles: "
+            f"{', '.join(missing_roles)}"
+        )
+    for role_name in LLM_ROLE_CONFIG_TARGETS:
+        role_settings = roles[role_name]
+        if not isinstance(role_settings, dict) or not str(
+                role_settings.get("model", "")).strip():
+            raise ValueError(
+                f"LLM provider {active_provider!r} role {role_name!r} "
+                "requires a model"
+            )
+        build_llm_endpoint_url(
+            base_url, role_settings.get(
+                "protocol", provider.get(
+                    "protocol", LLM_PROTOCOL_OPENAI_CHAT,
+                ),
+            ),
+        )
+    return active_provider, provider, api_key
 
 def _apply_settings(settings):
     """用 settings dict 更新 CFG 属性。
@@ -422,30 +505,79 @@ def _apply_settings(settings):
     settings : dict
         由 load_settings() 返回的配置字典，可为空。
     """
+    global _LEGACY_LLM_WARNING_EMITTED
+
     if not settings:
         return
 
     # LLM API 配置
-    llm_cfg = settings.get("llm", {})
-    env_base_url = os.getenv("LLM_BASE_URL", "").strip()
-    base_url = env_base_url or llm_cfg.get("base_url", CFG.LLM_BASE_URL)
-    CFG.LLM_BASE_URL = str(base_url).strip()
-    CFG.LLM_MODEL_LIST_URL = os.getenv("LLM_MODEL_LIST", "").strip()
-    CFG.LLM_API_KEY = _get_llm_api_key()
-    default_protocol = llm_cfg.get("protocol", LLM_PROTOCOL_OPENAI_CHAT)
-    rele = llm_cfg.get("relevance", {})
-    rele_escalation = llm_cfg.get("relevance_escalation", {})
-    summ = llm_cfg.get("summary", {})
-    fulltext = llm_cfg.get("fulltext_relevance", {})
     formula_cfg = settings.get("formula_fix", {})
-    formula_llm = formula_cfg.get("llm", {})
-    _apply_llm_role_settings(
-        CFG.LLM_API_CONFIG_DICT_RELE, rele, CFG.LLM_BASE_URL, default_protocol,
-    )
+    llm_cfg = settings.get("llm", {})
+    active_provider, provider_cfg, provider_api_key = _resolve_llm_provider(llm_cfg)
+    if active_provider:
+        CFG.LLM_ACTIVE_PROVIDER = active_provider
+        CFG.LLM_BASE_URL = str(provider_cfg["base_url"]).strip()
+        CFG.LLM_MODEL_LIST_URL = str(
+            provider_cfg.get("model_list_url", "")
+        ).strip()
+        CFG.LLM_API_KEY = provider_api_key
+        default_protocol = provider_cfg.get(
+            "protocol", LLM_PROTOCOL_OPENAI_CHAT,
+        )
+        role_settings = provider_cfg["roles"]
+        rele = role_settings["relevance"]
+        rele_escalation = role_settings["relevance_escalation"]
+        summ = role_settings["summary"]
+        fulltext = role_settings["fulltext_relevance"]
+        formula_llm = role_settings["formula"]
+        for role_name, target_name in LLM_ROLE_CONFIG_TARGETS.items():
+            _apply_llm_role_settings(
+                getattr(CFG, target_name), role_settings[role_name],
+                CFG.LLM_BASE_URL, default_protocol, provider_api_key,
+                reset_optional=True,
+            )
+    else:
+        if not _LEGACY_LLM_WARNING_EMITTED:
+            logging.getLogger(__name__).warning(
+                "Deprecated legacy LLM configuration; define "
+                "llm.active_provider and llm.providers"
+            )
+            _LEGACY_LLM_WARNING_EMITTED = True
+        CFG.LLM_ACTIVE_PROVIDER = "legacy"
+        env_base_url = os.getenv("LLM_BASE_URL", "").strip()
+        base_url = env_base_url or llm_cfg.get("base_url", CFG.LLM_BASE_URL)
+        CFG.LLM_BASE_URL = str(base_url).strip()
+        CFG.LLM_MODEL_LIST_URL = os.getenv("LLM_MODEL_LIST", "").strip()
+        CFG.LLM_API_KEY = _get_llm_api_key()
+        default_protocol = llm_cfg.get("protocol", LLM_PROTOCOL_OPENAI_CHAT)
+        rele = llm_cfg.get("relevance", {})
+        rele_escalation = llm_cfg.get("relevance_escalation", {})
+        summ = llm_cfg.get("summary", {})
+        fulltext = llm_cfg.get("fulltext_relevance", {})
+        formula_llm = formula_cfg.get("llm", {})
+        role_pairs = (
+            (CFG.LLM_API_CONFIG_DICT_RELE, rele),
+            (CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION, rele_escalation),
+            (CFG.LLM_API_CONFIG_DICT_SUMM, summ),
+            (CFG.LLM_API_CONFIG_DICT_FULLTEXT, fulltext),
+        )
+        for config_dict, role_config in role_pairs:
+            _apply_llm_role_settings(
+                config_dict, role_config, CFG.LLM_BASE_URL,
+                default_protocol, CFG.LLM_API_KEY,
+            )
+        formula_base_url = formula_llm.get("base_url", CFG.LLM_BASE_URL)
+        _apply_llm_role_settings(
+            CFG.LLM_API_CONFIG_DICT_FORMULA, formula_llm,
+            str(formula_base_url).strip(), default_protocol, CFG.LLM_API_KEY,
+        )
+    escalation_behavior = llm_cfg.get("relevance_escalation", {})
+    if not active_provider:
+        escalation_behavior = rele_escalation
     CFG.RELEVANCE_ESCALATION_ENABLED = bool(
-        rele_escalation.get("enabled", CFG.RELEVANCE_ESCALATION_ENABLED)
+        escalation_behavior.get("enabled", CFG.RELEVANCE_ESCALATION_ENABLED)
     )
-    configured_transitions = rele_escalation.get(
+    configured_transitions = escalation_behavior.get(
         "transitions", CFG.RELEVANCE_ESCALATION_TRANSITIONS,
     )
     if isinstance(configured_transitions, str):
@@ -455,29 +587,10 @@ def _apply_settings(settings):
         for value in configured_transitions
         if str(value).strip()
     )
-    _apply_llm_role_settings(
-        CFG.LLM_API_CONFIG_DICT_RELE_ESCALATION,
-        rele_escalation,
-        CFG.LLM_BASE_URL,
-        default_protocol,
-    )
-    _apply_llm_role_settings(
-        CFG.LLM_API_CONFIG_DICT_SUMM, summ, CFG.LLM_BASE_URL, default_protocol,
-    )
-    _apply_llm_role_settings(
-        CFG.LLM_API_CONFIG_DICT_FULLTEXT,
-        fulltext,
-        CFG.LLM_BASE_URL,
-        default_protocol,
-    )
-    formula_base_url = formula_llm.get("base_url", CFG.LLM_BASE_URL)
-    _apply_llm_role_settings(
-        CFG.LLM_API_CONFIG_DICT_FORMULA,
-        formula_llm,
-        str(formula_base_url).strip(),
-        default_protocol,
-    )
-    CFG.FULLTEXT_RELEVANCE_MAX_CHARS = fulltext.get(
+    fulltext_behavior = llm_cfg.get("fulltext_relevance", {})
+    if not active_provider:
+        fulltext_behavior = fulltext
+    CFG.FULLTEXT_RELEVANCE_MAX_CHARS = fulltext_behavior.get(
         "evidence_max_chars", CFG.FULLTEXT_RELEVANCE_MAX_CHARS,
     )
     CFG.LLM_CONCURRENT_MAX = llm_cfg.get("concurrent_max", CFG.LLM_CONCURRENT_MAX)

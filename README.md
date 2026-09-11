@@ -56,7 +56,8 @@ python -m camoufox fetch
 
 # 2) 配置密钥
 cp .env.example .env
-# 编辑 .env 填入 CROSSREF_MAILTO / MINERU_TOKEN / LLM_API_KEY
+# 编辑 .env 填入 CROSSREF_MAILTO / MINERU_TOKEN / OPENROUTER_API_KEY
+# configs/settings.yaml 的 llm.active_provider 可在 OpenRouter/Command Code 间切换
 
 # 3) 自定义研究领域（可选，默认聚焦激光/等离子体/束流）
 vim configs/keywords.yaml
@@ -100,7 +101,7 @@ LOG_LEVEL=INFO PYTHONPATH=src uvicorn src.web.app:app --host 127.0.0.1 --port 80
 - **数据库**：SQLite（WAL 模式）
 - **抓取**：Camoufox（默认）+ Cloakbrowser（自动回退）
 - **PDF 解析**：MinerU API
-- **LLM**：多协议 API（OpenAI Chat / Anthropic Messages；默认 DeepSeek）
+- **LLM**：可切换 Provider 配置集（OpenAI Chat / Responses / Anthropic Messages）
 - **配置**：YAML + `.env`（密钥 gitignored）
 - **报告站点**：Astro + Node.js/npm；通过项目内 Wrangler 和 `.env` 配置上传到 Cloudflare Pages
 

@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 
 # 编辑 .env，至少填写：
-# CROSSREF_MAILTO / MINERU_TOKEN / LLM_BASE_URL / LLM_API_KEY
+# CROSSREF_MAILTO / MINERU_TOKEN / OPENROUTER_API_KEY / LLM_API_KEY
 vim configs/keywords.yaml
 
 # 桌面环境
@@ -446,9 +446,9 @@ V4 Pro，不换掉主判 Flash，也不使用 GOAT 中用量成本过高的 GPT-
 |---|---|
 | `CROSSREF_MAILTO` | CrossRef API 联系邮箱 |
 | `MINERU_TOKEN` | MinerU Token |
-| `LLM_BASE_URL` | LLM 服务地址；可填 `/v1` 基础地址或完整 `/chat/completions` endpoint |
-| `LLM_MODEL_LIST` | 可选的 `/models` 目录 endpoint，用于查询可用模型 |
-| `LLM_API_KEY` | LLM API Key |
+| `OPENROUTER_API_KEY` | OpenRouter Provider API Key |
+| `LLM_API_KEY` | Command Code API Key；也是旧配置的通用 Key |
+| `LLM_BASE_URL` / `LLM_MODEL_LIST` | 仅供旧 LLM 配置兼容 |
 | `DEEPSEEK_API_KEY` | 旧版兼容变量；仅在未设置 `LLM_API_KEY` 时使用 |
 | `PAPERSCRAWLER_LOG_DIR` | 可选日志目录覆盖；测试默认自动指向临时目录 |
 | `SMTP_HOST/PORT/USE_TLS` | SMTP 连接 |
@@ -464,70 +464,64 @@ V4 Pro，不换掉主判 Flash，也不使用 GOAT 中用量成本过高的 GPT-
 | 组 | 关键字段 |
 |---|---|
 | `skip_phases` | A_RSS、A_CR、B、C、E、E2、E3、F、G、H |
-| `llm` | 可选 base_url 回退、relevance、fulltext_relevance、summary、concurrent_max、retry |
+| `llm` | active_provider、providers、复核/全文行为、并发、重试与熔断 |
 | `fulltext_download` | daily_max、publisher_daily_max、delay_min/max_seconds |
 | `pipeline` | CrossRef 回溯、处理上限、Nature 过滤、非研究过滤、解释页开关 |
 | `publisher` | 页面延迟、CrossRef 摘要短路、失败熔断、Bot 阻断冷却/隔离、challenge reload、常规 proxy、末级 fallback proxy URL |
 | `email` | 模板名 |
-| `formula_fix` | skip、force、concurrent_max、llm |
+| `formula_fix` | skip、force、concurrent_max、max_repair_rounds |
 | `ntfy` | enabled、timeout、title、priority |
 
 #### LLM 协议与模型配置
 
-`LLM_BASE_URL` 是优先级最高的服务地址配置；每个角色可以通过 `protocol` 选择请求协议。`base_url` 仍可写在 `settings.yaml` 作为没有环境变量时的回退，但生产配置建议放在 `.env`。地址既可以是 `/v1` 基础地址，也可以是完整 `/chat/completions` endpoint。
+`llm.active_provider` 选择一套 `llm.providers` 配置。修改后会同时切换 relevance、relevance_escalation、fulltext_relevance、summary 和 formula 五个角色；运行时不会因 401、429 或服务错误自动跨 Provider 切换。`api_key_env` 只保存环境变量名，密钥值仍放在 `.env`。
 
 - `openai_chat`：发送到 `/chat/completions`，兼容 OpenAI、DeepSeek 及多数网关。
 - `openai_responses`：发送到 `/responses`，使用 Responses API 的 `instructions`、`input`、`text.format` 和 `output` 响应结构；适用于 OpenCode Zen 的 Muse Spark Contributor。
 - `anthropic_messages`：发送到 `/messages`，使用 `x-api-key`、`anthropic-version` 和 Anthropic Messages 响应格式。
 
-配置支持全局 `llm.protocol`，也支持在 `relevance`、`fulltext_relevance`、`summary` 中分别覆写。Command Code 的 `.env` 示例：
+密钥配置：
 
 ```dotenv
-LLM_BASE_URL=https://api.commandcode.ai/provider/v1/chat/completions
-LLM_MODEL_LIST=https://api.commandcode.ai/provider/v1/models
 LLM_API_KEY=your-command-code-api-key
+OPENROUTER_API_KEY=your-openrouter-api-key
 ```
 
-对应的角色配置示例：
+完整 Provider 模板见 `configs/settings.yaml.example`，核心结构如下：
 
 ```yaml
 llm:
-  relevance:
-    protocol: openai_chat
-    model: Qwen/Qwen3.7-Flash
+  active_provider: openrouter
   relevance_escalation:
     enabled: true
-    protocol: openai_chat
-    model: deepseek/deepseek-v4-pro
     transitions: [A->C, A->D, B->C, B->D, C->A, C->B, D->A, D->B]
-  summary:
-    protocol: openai_chat
-    model: MiniMaxAI/MiniMax-M3
-    thinking: disabled
-    max_tokens: 65536
-
   fulltext_relevance:
-    protocol: openai_chat
-    model: Qwen/Qwen3.7-Flash
-    thinking: enabled
     evidence_max_chars: 200000
-
-formula_fix:
-  skip: false
-  force: false
-  concurrent_max: 10
-  max_repair_rounds: 1
-  llm:
-    protocol: openai_chat
-    model: Qwen/Qwen3.7-Flash
-    thinking: disabled
-    max_tokens: 4096
-    timeout: 120
+  providers:
+    openrouter:
+      base_url: https://openrouter.ai/api/v1
+      model_list_url: https://openrouter.ai/api/v1/models
+      api_key_env: OPENROUTER_API_KEY
+      protocol: openai_chat
+      roles:
+        summary:
+          model: z-ai/glm-5
+          thinking: disabled
+          max_tokens: 256000
+        # 还必须配置其余四个角色
 ```
+
+每套 Provider 必须包含五个角色且每个角色有 `model`。以下命令只请求模型目录，不发送 prompt：
+
+```bash
+python tools/check_llm_config.py
+```
+
+返回码 0 表示全部存在，1 表示有缺失模型，2 表示鉴权、网络或目录格式错误。旧的全局 URL/Key 仅在未定义 `providers` 时生效，并输出弃用警告。
 
 程序内部先构造统一的 `model/messages/thinking` 请求，再由协议适配层转换。Responses 协议会把 system prompt 放到 `instructions`，把用户消息放到 `input`，并将 JSON 模式转换为 `text.format.type=json_object`；返回结果从 `output_text` 或 `output` 文本块读取。Messages 协议不发送 OpenAI 专用的 `response_format`，结构化输出依靠 Prompt 中的“只输出合法 JSON”约束。对于需要严格 JSON 的总结，建议使用 `thinking: disabled`，避免思考内容与 JSON 混在同一输出中；Responses 如需控制推理，可配置 `reasoning_effort: low|medium|high`。
 
-FormulaFixer 使用 `formula_fix.llm` 的独立配置，不会自动使用 `relevance` 或 `summary` 的模型；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。处理顺序固定为“本地伪转义修复 → 为识别到的裸公式添加 `\(...\)` 包裹 → KaTeX 校验 → LLM 修复 → 再包裹并验收”。`formula_fix.max_repair_rounds`（默认 `1`）控制每个字段最多几轮修复；若上一轮仍报错，下一轮把新的错误信息和上一轮结果再交给 LLM。超过上限或请求失败时保留本地预包裹结果，避免报告再次出现已识别的裸公式。若 `report-site` 的 npm 依赖已经安装，FormulaFixer 会把 KaTeX 解析错误（公式源码与错误原因）附到对应的 LLM 请求；Node 或依赖缺失时自动降级为启发式检测和 LLM 修复。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
+FormulaFixer 使用激活 Provider 的 `roles.formula` 独立模型，不会自动使用 `relevance` 或 `summary`；`formula_fix.concurrent_max` 也不会占用 `llm.concurrent_max`。处理顺序固定为“本地伪转义修复 → 为识别到的裸公式添加 `\(...\)` 包裹 → KaTeX 校验 → LLM 修复 → 再包裹并验收”。`formula_fix.max_repair_rounds`（默认 `1`）控制每个字段最多几轮修复；若上一轮仍报错，下一轮把新的错误信息和上一轮结果再交给 LLM。超过上限或请求失败时保留本地预包裹结果，避免报告再次出现已识别的裸公式。若 `report-site` 的 npm 依赖已经安装，FormulaFixer 会把 KaTeX 解析错误（公式源码与错误原因）附到对应的 LLM 请求；Node 或依赖缺失时自动降级为启发式检测和 LLM 修复。若 FormulaFixer 服务不稳定，可先设 `formula_fix.skip: true` 完成 Phase F 总结。
 
 FormulaFixer 之前的历史结果也可以单独修复，不必重新调用 Phase F：
 
@@ -545,7 +539,7 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 
 模型返回值在标准 JSON 解析前会自动提取 ` ```json ... ``` ` 围栏或前后夹杂说明中的 JSON 对象，并兼容常见的裸 LaTeX 反斜杠和字符串内英文引号。若仍解析失败，查看日志中的 `Invalid escape` 或 `LLM non-JSON response`，该篇不会污染其他论文的状态。
 
-如果使用其他 OpenAI-compatible 网关，只需替换 `.env` 中的 `LLM_BASE_URL`、`LLM_API_KEY` 和角色模型 ID。若角色配置使用 `openai_responses` 或 `anthropic_messages`，程序会根据协议把已配置的 `/chat/completions` endpoint 规范化为对应路径。若日志出现 HTTP 401/403，先确认 API Key、角色模型和 endpoint 是否匹配；若 HTTP 200 后出现 `Invalid escape`，则查看 JSON 解析兼容层日志。
+如果使用其他 OpenAI-compatible 网关，在 `llm.providers` 中新增命名配置并更改 `active_provider` 即可。若日志出现 HTTP 401/403，先确认 API Key、角色模型和 endpoint 是否匹配；若 HTTP 200 后出现 `Invalid escape`，则查看 JSON 解析兼容层日志。
 
 ### 期刊和研究范围
 

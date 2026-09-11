@@ -145,15 +145,15 @@ LLM 调用在 `common.call_llm_api_with_retry` 统一执行重试、熔断和响
 - `openai_responses` 将 system 消息转换为 `instructions`、其余消息转换为 `input`，发送到 `/responses`，并从 `output_text` 或 `output[].content[].text` 提取回答；`response_format` 转换为 Responses API 的 `text.format`。
 - `anthropic_messages` 将 system 消息拆为顶层 `system`，发送 `max_tokens` 和 `messages` 到 `/messages`，并从 `content` 文本块提取回答。
 
-协议适配层负责请求头（Bearer 或 `x-api-key`）、端点和响应结构转换，因此模型名称不会散落在代码中形成特殊分支。`LLM_BASE_URL` 优先从 `.env` 读取，可填写 `/v1` 基础地址或完整的 `/chat/completions` endpoint；若角色切换协议，适配层会先去除已有端点后再追加目标路径。`LLM_MODEL_LIST` 是可选的模型目录 endpoint，供用户查询可用模型，流水线不会因目录请求失败而中断。Responses 与 Messages 的思考参数不直接发送 OpenAI Chat 的 `thinking` 字段；Responses 可选用 `reasoning_effort`。Anthropic Messages 不支持 OpenAI 的 `response_format`，结构化任务继续由 Prompt 约束 JSON；思考块只在提取文本时被忽略。严格 JSON 的任务默认使用 `thinking: disabled`，而需要推理时可按协议配置。
+协议适配层负责请求头、端点和响应结构转换。`llm.providers` 为每个后端保存 URL、密钥环境变量名和五个角色；`llm.active_provider` 在启动或热加载时原子选择整套配置，不在请求失败时自动跨 Provider 切换。模型目录只由 `tools/check_llm_config.py` 显式检查，不阻塞流水线启动。旧的全局 `LLM_BASE_URL`/`LLM_API_KEY` 仅在没有 Provider 配置时兼容读取并警告弃用。Responses 与 Messages 的思考参数不直接发送 OpenAI Chat 的 `thinking` 字段；Responses 可选用 `reasoning_effort`。
 
-当前 Command Code 配置按角色选择协议和模型：Phase E 与 E3 使用在人工审核集上实测效果更好的 flash 模型；`relevance_escalation` 只在 E3 主判跨越 A/B 与 C/D 边界时调用第二模型，其中 `C → A/B` 是最高风险变化，而不是依赖未校准的 confidence。Phase F 和 FormulaFixer 各自使用独立角色。模型均采用服务返回的精确 ID，并随相关性结果写入数据库；可在 `.env` 的 `LLM_MODEL_LIST` endpoint 查询。模型名称不代表本任务上的效果：当前 37 篇对照中 V4 Pro 的整体 A/B F1 低于 V4 Flash；GOAT 虽包含 GPT-5.6 Sol，但其用量成本不适合批量全文复核；套餐内 Sonnet 5 调用返回 `MODEL_NOT_IN_PLAN`。
+当前 Command Code 配置按角色选择协议和模型：Phase E 与 E3 使用在人工审核集上实测效果更好的 flash 模型；`relevance_escalation` 只在 E3 主判跨越 A/B 与 C/D 边界时调用第二模型，其中 `C → A/B` 是最高风险变化，而不是依赖未校准的 confidence。Phase F 和 FormulaFixer 各自使用独立角色。模型均采用服务返回的精确 ID，并随相关性结果写入数据库；可通过 Provider 的 `model_list_url` 诊断。模型名称不代表本任务上的效果：当前 37 篇对照中 V4 Pro 的整体 A/B F1 低于 V4 Flash；GOAT 虽包含 GPT-5.6 Sol，但其用量成本不适合批量全文复核；套餐内 Sonnet 5 调用返回 `MODEL_NOT_IN_PLAN`。
 
 LLM 文本进入 JSON 解析前还会做一次边界清洗：提取 Markdown ` ```json ... ``` ` 或前后夹杂说明中的 JSON 对象，修复常见的裸 LaTeX 反斜杠和字符串内英文引号，再交给标准 JSON 解析器。该兼容层只修复明确的格式问题，无法替代模型输出校验；解析失败仍会按单篇错误隔离并保留 pending/failed 状态。
 
-### FormulaFixer 独立配置与并发
+### FormulaFixer 独立角色与并发
 
-FormulaFixer 是 Phase F 总结后的可选文本后处理，不复用相关性角色的模型配置。`formula_fix.llm` 独立配置协议、模型、思考模式、输出上限和超时，`formula_fix.concurrent_max` 独立限制公式修复线程数。Phase F 的总结请求完成后，每篇论文的 FormulaFixer 任务进入独立线程池；每个任务使用自己的 HTTP Session，避免在线程间共享连接对象。公式修复失败只回退该文本节点，不影响结构化总结写入。
+FormulaFixer 是 Phase F 总结后的可选文本后处理，不复用相关性角色。模型协议、模型、思考模式和超时位于每个 Provider 的 `roles.formula`；`formula_fix` 只保存开关、修复轮数和独立并发上限。
 
 FormulaFixer 在校验和 LLM 修复之前先执行确定性的预包裹：保留已有 `\(...\)` / `\[...\]`，并为含 LaTeX 命令或显式上下标的裸数学片段保守添加 `\(...\)`。LLM 回复也经过同一预包裹后再验收，因此即使模型遗漏分隔符或请求失败，写回内容也不会退回已识别的裸公式。
 

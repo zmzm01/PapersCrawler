@@ -34,23 +34,12 @@ ntfy:
 # LLM API 配置
 # ---------------------------------------------------------------------------
 llm:
-  # 推荐在 .env 的 LLM_BASE_URL 中配置服务地址；可填写 /v1 基础地址
-  # 或完整 /chat/completions endpoint。未设置时才使用代码内置回退。
+  # 只需修改这一项即可整套切换 LLM 后端。
+  active_provider: openrouter
 
-  # 相关性判断（Phase E）— 高频初筛，使用低成本快速模型
-  relevance:
-    protocol: openai_chat
-    model: Qwen/Qwen3.7-Flash
-    thinking: disabled
-    timeout: 300
-
-  # 可选的 E→E3 相关/非相关跨边界复核；仅在列出的变化发生时调用第二模型。
+  # Provider 无关的流程行为。
   relevance_escalation:
     enabled: false
-    protocol: openai_chat
-    model: deepseek/deepseek-v4-pro
-    thinking: enabled
-    timeout: 300
     transitions:
       - A->C
       - A->D
@@ -60,27 +49,57 @@ llm:
       - C->B
       - D->A
       - D->B
-
-  # 论文总结（Phase F）— 中文结构化总结，兼顾质量与成本
-  summary:
-    # Responses API 示例；如果网关提供 Responses 协议，可切换该角色。
-    # protocol: openai_responses
-    # model: meta/muse-spark-1.2-contributor
-    protocol: openai_chat
-    model: MiniMaxAI/MiniMax-M3
-    thinking: disabled
-    timeout: 300
-
-  # 正文相关性终审（Phase E3）— 模型应以人工 benchmark 结果选择
   fulltext_relevance:
-    protocol: openai_chat
-    model: Qwen/Qwen3.7-Flash
-    thinking: enabled
-    timeout: 300
     evidence_max_chars: 200000
 
-  # 并发上限：Phase E/F 同时发起的 LLM 请求数
   concurrent_max: 100
+
+  providers:
+    command_code:
+      base_url: https://api.commandcode.ai/provider/v1
+      model_list_url: https://api.commandcode.ai/provider/v1/models
+      api_key_env: LLM_API_KEY
+      protocol: openai_chat
+      roles:
+        relevance: &relevance
+          model: deepseek/deepseek-v4-flash
+          thinking: disabled
+          timeout: 300
+        relevance_escalation: &relevance_escalation
+          model: deepseek/deepseek-v4-pro
+          thinking: enabled
+          timeout: 300
+        fulltext_relevance: &fulltext_relevance
+          model: deepseek/deepseek-v4-flash
+          thinking: enabled
+          timeout: 300
+        summary: &summary
+          model: zai-org/GLM-5.2
+          thinking: disabled
+          max_tokens: 256000
+          timeout: 300
+        formula: &formula
+          model: deepseek/deepseek-v4-flash
+          thinking: disabled
+          max_tokens: 4096
+          timeout: 120
+
+    openrouter:
+      base_url: https://openrouter.ai/api/v1
+      model_list_url: https://openrouter.ai/api/v1/models
+      api_key_env: OPENROUTER_API_KEY
+      protocol: openai_chat
+      roles:
+        # OpenRouter 使用其模型目录中的精确 ID。
+        relevance: *relevance
+        relevance_escalation: *relevance_escalation
+        fulltext_relevance: *fulltext_relevance
+        summary:
+          model: z-ai/glm-5
+          thinking: disabled
+          max_tokens: 256000
+          timeout: 300
+        formula: *formula
 
 fulltext_download:
   daily_max: 3
@@ -163,9 +182,3 @@ formula_fix:
   concurrent_max: 10
   # 每个字段最多执行几轮「KaTeX 校验 → LLM 修复 → KaTeX 验收」
   max_repair_rounds: 1
-  llm:
-    protocol: openai_chat
-    model: Qwen/Qwen3.7-Flash
-    thinking: disabled
-    max_tokens: 4096
-    timeout: 120
