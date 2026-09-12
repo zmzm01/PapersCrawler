@@ -34,6 +34,7 @@ Playwright 会话，避免同步运行循环冲突。
 - **25 个期刊覆盖**：APS(9) / AIP(6) / Nature(4) / Science(2) / Optica(2) / Cambridge(1) / IOP(1)
 - **来源站点访问策略**：Camoufox 持久化上下文 + 浏览器指纹伪装 + 真人节奏 + Cloakbrowser 独占式自动回退 + 失败熔断；回退失败按单篇隔离，旁路审计不影响抓取；已有 CrossRef/OpenAlex 摘要时跳过页面访问，Bot Manager 阻断自动冷却/隔离；可为 Optica 等来源配置专属访问路由，Phase C 与 E2 共用
 - **CLI + WebUI 双模式**：CLI 适合运行/调度，WebUI 提供监控、报告阅览、相关性人工审核、随机待审跳转和独立的旧摘要 D 类比例分层抽查
+- **连续审核体验**：人工审核支持整行进入、移动端卡片布局和保存快捷键，详情、返回、分页与随机跳转保留当前筛选上下文
 - **统一流水线入口**：日常、每周和全流程运行均通过 `tools/run_pipeline.py`
 - **按日分文件日志**：运行日志按日期保存并自动清理旧文件，配套工具可直接统计 WARNING/ERROR；支持用 `PAPERSCRAWLER_LOG_DIR` 隔离测试日志，避免单文件持续膨胀
 - **结构化报告输出**：先生成版本化 JSON 快照，再渲染 Markdown；自动报告可导出到公开站点

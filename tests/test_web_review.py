@@ -1,19 +1,20 @@
 """Integration tests for the manual relevance review WebUI."""
 
 import asyncio
+import html
 import importlib
 
 from starlette.requests import Request
 
 from db.database import DatabaseClient, FetchStatus
 
-
 web_app = importlib.import_module("web.app")
 
 
-def _seed_review_paper(database_path, data_dir):
+def _seed_review_paper(
+    database_path, data_dir, doi="10.0000/web-review",
+):
     """Create one full-text relevance paper in a temporary database."""
-    doi = "10.0000/web-review"
     output_dir = "mineru_output/web-review"
     with DatabaseClient(database_path) as database:
         database.init_db_papers()
@@ -169,12 +170,64 @@ def test_random_review_redirect_preserves_scope(tmp_path, monkeypatch):
 
     response = asyncio.run(web_app.random_relevance_review(
         scope="screen-audit", cohort="legacy-d-200",
+        return_to=(
+            "/relevance-review?scope=screen-audit&cohort=legacy-d-200"
+            "&status=reviewed&search=laser"
+        ),
     ))
 
     assert response.status_code == 303
-    assert response.headers["location"].endswith(
-        f"{doi}?scope=screen-audit&cohort=legacy-d-200"
+    location = response.headers["location"]
+    assert location.startswith(f"/relevance-review/{doi}?")
+    assert "return_to=%2Frelevance-review%3Fscope%3Dscreen-audit" in location
+
+
+def test_review_links_encode_doi_and_preserve_filters(tmp_path, monkeypatch):
+    """Queue/detail navigation keeps filters and safely encodes DOI suffixes."""
+    database_path = tmp_path / "papers.db"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    doi = _seed_review_paper(
+        database_path, data_dir, doi="10.0000/review?source=ui#item",
     )
+    with DatabaseClient(database_path) as database:
+        database.update_relevance_screen(
+            doi, "A", "[]", "medium", "different screen result",
+            FetchStatus.SUCCESS.value, "2026-08-20",
+        )
+    monkeypatch.setattr(web_app, "DB_PATH", database_path)
+    monkeypatch.setattr(web_app, "DATA_DIR", data_dir)
+
+    queue_response = asyncio.run(web_app.relevance_review_page(
+        _make_request("/relevance-review"), status="all", category="B",
+        confidence="medium", disagreement=True, search="review",
+        sort="summary", page=1, per_page=100,
+    ))
+    body = html.unescape(queue_response.body.decode())
+
+    assert "/relevance-review/10.0000/review%3Fsource%3Dui%23item?" in body
+    assert "status%3Dall" in body
+    assert "category%3DB" in body
+    assert "confidence%3Dmedium" in body
+    assert "disagreement%3DTrue" in body
+    assert "search%3Dreview" in body
+    assert "sort%3Dsummary" in body
+    assert 'class="review-row"' in body
+    assert ">清空筛选</a>" in body
+    assert ">审核</a>" in body
+
+    return_to = (
+        "/relevance-review?scope=fulltext&status=all&category=B"
+        "&confidence=medium&disagreement=True&search=review&sort=summary"
+    )
+    detail_response = asyncio.run(web_app.relevance_review_detail(
+        _make_request(f"/relevance-review/{doi}"), doi, return_to=return_to,
+    ))
+    detail_body = html.unescape(detail_response.body.decode())
+    assert f'href="{return_to}"' in detail_body
+    assert "const randomReviewUrl" in detail_body
+    assert "Ctrl Enter" in detail_body
+    assert "submitButtons.forEach" in detail_body
 
 
 def test_papers_summary_filter_queries_before_pagination(tmp_path, monkeypatch):

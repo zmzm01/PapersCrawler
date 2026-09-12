@@ -24,18 +24,22 @@
   <div class="review-stats">
     <span class="review-stat">待审核 <strong>{{ pending_count }}</strong></span>
     <span class="review-stat">已审核 <strong>{{ reviewed_count }}</strong></span>
-    <a class="btn btn-primary" href="/relevance-review/random?scope={{ review_scope }}&cohort={{ selected_cohort }}">随机抽一篇</a>
+    <a class="btn btn-primary" href="{{ random_url }}">随机抽一篇</a>
   </div>
 </div>
 
 <div class="review-pagination">
-  <a class="btn {% if review_scope == 'fulltext' %}btn-primary{% else %}btn-secondary{% endif %}" href="/relevance-review?scope=fulltext">全文终审</a>
-  <a class="btn {% if review_scope == 'screen-audit' %}btn-primary{% else %}btn-secondary{% endif %}" href="/relevance-review?scope=screen-audit{% if selected_cohort %}&cohort={{ selected_cohort }}{% endif %}">摘要随机抽查</a>
+  <a class="btn {% if review_scope == 'fulltext' %}btn-primary{% else %}btn-secondary{% endif %}" href="{{ fulltext_scope_url }}">全文终审</a>
+  <a class="btn {% if review_scope == 'screen-audit' %}btn-primary{% else %}btn-secondary{% endif %}" href="{{ audit_scope_url }}">摘要随机抽查</a>
 </div>
 
 <form class="review-filters" method="get" action="/relevance-review">
   <input type="hidden" name="scope" value="{{ review_scope }}">
   {% if review_scope == 'screen-audit' %}
+  <input type="hidden" name="category" value="{{ category_filter }}">
+  <input type="hidden" name="confidence" value="{{ confidence_filter }}">
+  <input type="hidden" name="sort" value="{{ sort_by }}">
+  {% if disagreement_only %}<input type="hidden" name="disagreement" value="true">{% endif %}
   <label>抽查批次
     <select name="cohort">
       {% for audit in audit_cohorts %}
@@ -87,6 +91,9 @@
   </label>
   {% endif %}
   <button class="btn btn-primary" type="submit">筛选</button>
+  {% if has_active_filters %}
+  <a class="btn btn-link" href="{{ reset_filters_url }}">清空筛选</a>
+  {% endif %}
 </form>
 
 {% if not papers %}
@@ -102,12 +109,13 @@
       <th>{% if review_scope == 'screen-audit' %}抽样序号{% else %}Summary 时间{% endif %}</th>
       <th>人工结果</th>
       <th>依据</th>
+      <th><span class="sr-only">操作</span></th>
     </tr>
   </thead>
   <tbody>
   {% for paper in papers %}
-    <tr>
-      <td>
+    <tr class="review-row" data-href="{{ detail_urls[paper.doi] }}" tabindex="0">
+      <td data-label="优先级">
         {% if review_scope == 'screen-audit' %}<span class="badge badge-warning">随机 D 抽查</span>
         {% elif paper.review_priority == 0 %}<span class="badge badge-failed">C→A/B 复核</span>
         {% elif paper.review_priority == 1 %}<span class="badge badge-failed">B/medium</span>
@@ -115,25 +123,26 @@
         {% elif paper.review_priority == 3 %}<span class="badge badge-skipped">A/medium</span>
         {% else %}<span class="text-muted">普通</span>{% endif %}
       </td>
-      <td class="review-title-cell">
-        <a href="/relevance-review/{{ paper.doi }}?scope={{ review_scope }}&cohort={{ selected_cohort }}">{{ paper.title or '无标题' }}</a>
+      <td class="review-title-cell" data-label="论文">
+        <a href="{{ detail_urls[paper.doi] }}">{{ paper.title or '无标题' }}</a>
         <small>{{ paper.doi }}</small>
       </td>
-      <td>
+      <td data-label="{% if review_scope == 'screen-audit' %}旧摘要初筛{% else %}初筛 → 终审{% endif %}">
         <span class="badge badge-skipped">{{ paper.relevance_screen_category or '—' }}</span>
         {% if review_scope == 'fulltext' %}
         <span class="review-arrow">→</span>
         <span class="badge {% if paper.llm_relevance_category == 'A' %}badge-success{% elif paper.llm_relevance_category == 'B' %}badge-warning{% elif paper.llm_relevance_category == 'C' %}badge-skipped{% else %}badge-failed{% endif %}">{{ paper.llm_relevance_category or '—' }}</span>
         {% endif %}
       </td>
-      <td>{% if review_scope == 'screen-audit' %}{{ paper.relevance_screen_confidence or '—' }}{% else %}{{ paper.llm_relevance_confidence or '—' }}{% endif %}</td>
-      <td>{% if review_scope == 'screen-audit' %}#{{ paper.sample_rank }}{% else %}{{ (paper.llm_summary_date or '—')[:19] }}{% endif %}</td>
-      <td>
+      <td data-label="置信度">{% if review_scope == 'screen-audit' %}{{ paper.relevance_screen_confidence or '—' }}{% else %}{{ paper.llm_relevance_confidence or '—' }}{% endif %}</td>
+      <td data-label="{% if review_scope == 'screen-audit' %}抽样序号{% else %}Summary 时间{% endif %}">{% if review_scope == 'screen-audit' %}#{{ paper.sample_rank }}{% else %}{{ (paper.llm_summary_date or '—')[:19] }}{% endif %}</td>
+      <td data-label="人工结果">
         {% if paper.review_decision %}
         <span class="badge badge-reviewed">{{ paper.review_decision }}</span>
         {% else %}<span class="text-muted">未审核</span>{% endif %}
       </td>
-      <td>{{ paper.llm_relevance_basis or '—' }}</td>
+      <td class="review-basis-cell" data-label="依据">{{ paper.llm_relevance_basis or '—' }}</td>
+      <td class="review-action-cell"><a class="btn btn-secondary btn-sm" href="{{ detail_urls[paper.doi] }}">审核</a></td>
     </tr>
   {% endfor %}
   </tbody>
@@ -145,4 +154,16 @@
   {% if page < total_pages %}<a class="btn btn-secondary" href="{{ request.url.include_query_params(page=page + 1) }}">下一页</a>{% endif %}
 </div>
 {% endif %}
+<script>
+document.querySelectorAll('.review-row').forEach((row) => {
+  row.addEventListener('click', (event) => {
+    if (!event.target.closest('a, button, input, select')) {
+      window.location.assign(row.dataset.href);
+    }
+  });
+  row.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') window.location.assign(row.dataset.href);
+  });
+});
+</script>
 {% endblock %}

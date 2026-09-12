@@ -22,7 +22,8 @@ if str(_src_path) not in sys.path:
 import logging
 import os
 import threading
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
+
 from pydantic import BaseModel
 
 from config import DATA_DIR
@@ -120,6 +121,30 @@ def _ensure_database_initialized(database: DatabaseClient) -> None:
             return
         database.init_db_papers()
         _INITIALIZED_DATABASE_PATHS.add(database_key)
+
+
+def _review_queue_url(**overrides) -> str:
+    """Build an internal review queue URL from validated filter values."""
+    parameters = {
+        key: value for key, value in overrides.items()
+        if value not in (None, "", False)
+    }
+    query = urlencode(parameters)
+    return f"/relevance-review?{query}" if query else "/relevance-review"
+
+
+def _safe_review_return_url(return_to: str, fallback: str) -> str:
+    """Accept only a local relevance-review queue URL for back navigation."""
+    if not return_to:
+        return fallback
+    parsed = urlsplit(return_to)
+    if (
+        not parsed.scheme
+        and not parsed.netloc
+        and parsed.path == "/relevance-review"
+    ):
+        return return_to
+    return fallback
 
 
 def _classify_error(error_text: str) -> str:
@@ -426,6 +451,62 @@ async def relevance_review_page(
                 status_filter="reviewed",
             )
     total_pages = max(1, (total_count + per_page - 1) // per_page)
+    current_queue_url = _review_queue_url(
+        scope=review_scope,
+        cohort=selected_cohort if review_scope == "screen-audit" else "",
+        status=status,
+        category=category,
+        confidence=confidence,
+        disagreement=disagreement,
+        search=search,
+        sort=sort_by,
+        page=min(page, total_pages),
+        per_page=per_page,
+    )
+    scope_parameters = {
+        "status": status,
+        "category": category,
+        "confidence": confidence,
+        "disagreement": disagreement,
+        "search": search,
+        "sort": sort_by,
+        "per_page": per_page,
+    }
+    fulltext_scope_url = _review_queue_url(
+        scope="fulltext", **scope_parameters,
+    )
+    audit_scope_url = _review_queue_url(
+        scope="screen-audit", cohort=selected_cohort, **scope_parameters,
+    )
+    detail_urls = {
+        paper["doi"]: (
+            f"/relevance-review/{quote(paper['doi'], safe='/')}?"
+            + urlencode({
+                "scope": review_scope,
+                "cohort": selected_cohort,
+                "return_to": current_queue_url,
+            })
+        )
+        for paper in papers
+    }
+    random_url = "/relevance-review/random?" + urlencode({
+        "scope": review_scope,
+        "cohort": selected_cohort,
+        "return_to": current_queue_url,
+    })
+    reset_filters_url = _review_queue_url(
+        scope=review_scope,
+        cohort=selected_cohort if review_scope == "screen-audit" else "",
+    )
+    has_active_filters = any((
+        status != "pending",
+        category != "all",
+        confidence != "all",
+        disagreement,
+        bool(search),
+        sort_by != "priority",
+        per_page != 50,
+    ))
     return templates.TemplateResponse(request, "relevance_review.html", {
         "papers": papers,
         "status_filter": status,
@@ -443,6 +524,12 @@ async def relevance_review_page(
         "review_scope": review_scope,
         "audit_cohorts": audit_cohorts,
         "selected_cohort": selected_cohort,
+        "detail_urls": detail_urls,
+        "random_url": random_url,
+        "reset_filters_url": reset_filters_url,
+        "has_active_filters": has_active_filters,
+        "fulltext_scope_url": fulltext_scope_url,
+        "audit_scope_url": audit_scope_url,
     })
 
 
@@ -450,6 +537,7 @@ async def relevance_review_page(
 async def random_relevance_review(
     scope: str = "fulltext",
     cohort: str = "",
+    return_to: str = "",
 ):
     """Redirect to a random pending item in the selected review scope."""
     review_scope = scope if scope in ("fulltext", "screen-audit") else "fulltext"
@@ -459,9 +547,15 @@ async def random_relevance_review(
             doi = db.get_random_relevance_audit_doi(cohort, pending_only=True)
         else:
             doi = db.get_random_relevance_review_doi(pending_only=True)
-    query = urlencode({"scope": review_scope, "cohort": cohort})
+    fallback_url = _review_queue_url(scope=review_scope, cohort=cohort)
+    queue_url = _safe_review_return_url(return_to, fallback_url)
+    query = urlencode({
+        "scope": review_scope,
+        "cohort": cohort,
+        "return_to": queue_url,
+    })
     if not doi:
-        return RedirectResponse(f"/relevance-review?{query}", status_code=303)
+        return RedirectResponse(queue_url, status_code=303)
     encoded_doi = quote(doi, safe="/")
     return RedirectResponse(
         f"/relevance-review/{encoded_doi}?{query}", status_code=303,
@@ -474,6 +568,7 @@ async def relevance_review_detail(
     doi: str,
     scope: str = "fulltext",
     cohort: str = "",
+    return_to: str = "",
 ):
     """Render one paper and its current manual review state."""
     review_scope = scope if scope in ("fulltext", "screen-audit") else "fulltext"
@@ -485,6 +580,14 @@ async def relevance_review_detail(
             paper = db.get_relevance_review_detail(doi)
     if paper is None:
         return HTMLResponse("Paper not found", status_code=404)
+
+    fallback_url = _review_queue_url(scope=review_scope, cohort=cohort)
+    queue_url = _safe_review_return_url(return_to, fallback_url)
+    random_url = "/relevance-review/random?" + urlencode({
+        "scope": review_scope,
+        "cohort": cohort,
+        "return_to": queue_url,
+    })
 
     fulltext = ""
     fulltext_path = None
@@ -504,6 +607,8 @@ async def relevance_review_detail(
         "fulltext_available": bool(fulltext),
         "review_scope": review_scope,
         "audit_cohort": cohort,
+        "queue_url": queue_url,
+        "random_url": random_url,
     })
 
 
