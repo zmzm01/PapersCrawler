@@ -131,3 +131,65 @@ def test_export_merges_multiple_sources(tmp_path):
     ) == 2
     assert (output_root / "papers" / "papers-20260820.json").exists()
     assert (output_root / "papers" / "papers-history.json").exists()
+
+
+def test_export_publishes_markdown_download_and_removes_stale_file(tmp_path):
+    """Only Markdown paired with a public sidecar is published for download."""
+    source_dir = tmp_path / "automatic"
+    output_root = tmp_path / "output"
+    markdown_root = tmp_path / "downloads"
+    source_dir.mkdir()
+    markdown_root.mkdir()
+    payload = build_public_report([], "20260913")
+    (source_dir / "report_20260913.public.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    (source_dir / "report_20260913.md").write_text(
+        "# Public report\n", encoding="utf-8"
+    )
+    (markdown_root / "papers-old.md").write_text("old", encoding="utf-8")
+
+    export_reports(
+        output_root,
+        source_dir,
+        tmp_path / "missing.db",
+        markdown_root=markdown_root,
+    )
+
+    exported_payload = json.loads(
+        (output_root / "papers" / "papers-20260913.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert exported_payload["downloadUrl"] == "/downloads/papers-20260913.md"
+    assert (markdown_root / "papers-20260913.md").read_text(
+        encoding="utf-8"
+    ) == "# Public report\n"
+    assert not (markdown_root / "papers-old.md").exists()
+
+
+def test_export_omits_download_url_without_matching_markdown(tmp_path):
+    """A missing Markdown source cannot create a broken download link."""
+    source_dir = tmp_path / "automatic"
+    output_root = tmp_path / "output"
+    markdown_root = tmp_path / "downloads"
+    source_dir.mkdir()
+    payload = build_public_report([], "20260913")
+    payload["downloadUrl"] = "/downloads/stale.md"
+    (source_dir / "report_20260913.public.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    export_reports(
+        output_root,
+        source_dir,
+        tmp_path / "missing.db",
+        markdown_root=markdown_root,
+    )
+
+    exported_payload = json.loads(
+        (output_root / "papers" / "papers-20260913.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "downloadUrl" not in exported_payload

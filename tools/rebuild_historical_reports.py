@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Rebuild legacy weekly reports into the current public-report schema.
+"""Rebuild historical weekly reports using current selection rules.
 
-The tool discovers dated Markdown reports in ``data/reports/auto`` before a
-given cutover date.  It treats each report date as the inclusive end of a
-``created_date`` window; the next report starts on the day after the previous
-report date.  It rewrites the Markdown and creates a same-stem ``.public.json``
-sidecar without updating any paper's ``report_date``.
+The tool discovers dated Markdown reports across the legacy and automatic
+directories. It treats each report date as the inclusive end of a
+``created_date`` window and reconstructs content from the database. The first,
+cumulative report keeps A/B only; later reports include all A/B/C papers.
 
 Examples
 --------
 Rebuild every weekly report before the first report made by the new mechanism::
 
-    python tools/rebuild_historical_reports.py --before 2026-08-23
+    python tools/rebuild_historical_reports.py
 
 Inspect the inferred date windows without writing files::
 
-    python tools/rebuild_historical_reports.py --before 2026-08-23 --dry-run
+    python tools/rebuild_historical_reports.py --dry-run
 """
 
 from __future__ import annotations
@@ -54,17 +53,31 @@ def _parse_date(value: str, argument: str) -> datetime:
         ) from exc
 
 
-def _historical_report_paths(report_dir: Path, cutover_date: datetime) -> list[Path]:
-    """Return dated automatic reports strictly before ``cutover_date``."""
+def _historical_report_paths(
+    report_dirs: Path | list[Path],
+    cutover_date: datetime | None = None,
+) -> list[Path]:
+    """Return unique dated reports across one or more source directories."""
+    directories = [report_dirs] if isinstance(report_dirs, Path) else report_dirs
     report_paths = []
-    for report_path in report_dir.glob("report_*.md"):
-        match = _REPORT_NAME.fullmatch(report_path.name)
-        if match is None:
-            continue
-        report_date = datetime.strptime(match.group(1), "%Y%m%d")
-        if report_date < cutover_date:
-            report_paths.append(report_path)
-    return sorted(report_paths)
+    paths_by_date = {}
+    for report_dir in directories:
+        for report_path in report_dir.glob("report_*.md"):
+            match = _REPORT_NAME.fullmatch(report_path.name)
+            if match is None:
+                continue
+            report_date = datetime.strptime(match.group(1), "%Y%m%d")
+            if cutover_date is not None and report_date >= cutover_date:
+                continue
+            if report_date in paths_by_date:
+                raise ValueError(
+                    f"Duplicate historical report date {report_date:%Y-%m-%d}: "
+                    f"{paths_by_date[report_date]} and {report_path}"
+                )
+            paths_by_date[report_date] = report_path
+    for report_date in sorted(paths_by_date):
+        report_paths.append(paths_by_date[report_date])
+    return report_paths
 
 
 def _report_date(report_path: Path) -> datetime:
@@ -80,6 +93,7 @@ def _write_rebuilt_report(
     report_path: Path,
     start_date: datetime | None,
     end_date: datetime,
+    include_adjacent: bool,
 ) -> int:
     """Write one report and its current-schema public sidecar.
 
@@ -94,6 +108,7 @@ def _write_rebuilt_report(
         end_date,
         from_date=start_date.strftime("%Y-%m-%d") if start_date else None,
         through_date=end_date.strftime("%Y-%m-%d"),
+        include_adjacent_before_cutoff=include_adjacent,
     )
     paper_list = build_report_papers(paper_rows)
     if not paper_list:
@@ -172,15 +187,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--before",
-        required=True,
         type=lambda value: _parse_date(value, "--before"),
-        help="新机制首份报告日期；仅重建严格早于此日期的报告",
+        help="可选截止日期；仅重建严格早于此日期的报告",
     )
     parser.add_argument(
         "--report-dir",
         type=Path,
-        default=AUTO_REPORT_DIR,
-        help="历史自动报告目录（默认 data/reports/auto）",
+        action="append",
+        dest="report_dirs",
+        help="报告目录，可重复；默认合并 data/reports/legacy 和 auto",
     )
     parser.add_argument(
         "--export-root",
@@ -205,14 +220,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    report_paths = _historical_report_paths(args.report_dir, args.before)
+    report_dirs = args.report_dirs or [
+        AUTO_REPORT_DIR.parent / "legacy",
+        AUTO_REPORT_DIR,
+    ]
+    report_paths = _historical_report_paths(report_dirs, args.before)
     if not report_paths:
-        print(f"No dated reports before {args.before:%Y-%m-%d} in {args.report_dir}")
+        cutoff_note = (
+            f" before {args.before:%Y-%m-%d}" if args.before else ""
+        )
+        print(f"No dated reports{cutoff_note} in {', '.join(map(str, report_dirs))}")
         return
 
     previous_date = None
     if args.dry_run:
-        for report_path in report_paths:
+        for report_index, report_path in enumerate(report_paths):
             current_date = _report_date(report_path)
             start_text = (
                 (previous_date + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -221,17 +243,23 @@ def main() -> None:
             archive_note = f" -> {args.archive_dir}" if args.archive_dir else ""
             print(
                 f"{report_path.name}: created_date {start_text} .. "
-                f"{current_date:%Y-%m-%d}{archive_note}"
+                f"{current_date:%Y-%m-%d}; "
+                f"adjacent C: {'excluded' if report_index == 0 else 'included'}"
+                f"{archive_note}"
             )
             previous_date = current_date
         return
 
     with DatabaseClient(DB_PATH) as database:
-        for report_path in report_paths:
+        for report_index, report_path in enumerate(report_paths):
             current_date = _report_date(report_path)
             start_date = previous_date + timedelta(days=1) if previous_date else None
             paper_count = _write_rebuilt_report(
-                database, report_path, start_date, current_date
+                database,
+                report_path,
+                start_date,
+                current_date,
+                include_adjacent=report_index > 0,
             )
             start_text = start_date.strftime("%Y-%m-%d") if start_date else "earliest"
             if paper_count == 0:
@@ -254,7 +282,7 @@ def main() -> None:
     if not args.no_export:
         from tools.export_public_reports import export_reports
 
-        sources = [args.report_dir]
+        sources = list(report_dirs)
         if args.archive_dir:
             sources.append(args.archive_dir)
         count = export_reports(args.export_root, sources, DB_PATH)

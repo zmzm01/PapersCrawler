@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_SITE_DIR = PROJECT_ROOT / "report-site"
 REPORT_DATA_DIR = REPORT_SITE_DIR / "src" / "data" / "reports"
+REPORT_DOWNLOAD_DIR = REPORT_SITE_DIR / "public" / "downloads"
 AUTO_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "auto"
 LEGACY_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "legacy"
 DB_PATH = PROJECT_ROOT / "data" / "papers.db"
@@ -207,7 +208,12 @@ def main() -> int:
     sources = [AUTO_REPORT_DIR]
     if LEGACY_REPORT_DIR.exists():
         sources.append(LEGACY_REPORT_DIR)
-    exported = export_reports(REPORT_DATA_DIR, sources, DB_PATH)
+    exported = export_reports(
+        REPORT_DATA_DIR,
+        sources,
+        DB_PATH,
+        markdown_root=REPORT_DOWNLOAD_DIR,
+    )
     print(f"Exported {exported} public report(s) to {REPORT_DATA_DIR}")
 
     node_bin = _resolve_node_bin()

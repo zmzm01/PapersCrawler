@@ -114,6 +114,7 @@ def _fetch_papers(
     before_date: str | None = None,
     from_date: str | None = None,
     through_date: str | None = None,
+    include_adjacent_before_cutoff: bool = False,
 ):
     """Fetch papers for report by scope.
 
@@ -133,15 +134,20 @@ def _fetch_papers(
     through_date : str, optional
         Inclusive upper bound for ``created_date`` in ``YYYY-MM-DD`` format.
         This is intended for reconstructing a historical report window.
+    include_adjacent_before_cutoff : bool, optional
+        Include C papers regardless of the live-report activation date. This
+        is reserved for explicit historical reconstruction.
 
     Returns
     -------
     list[sqlite3.Row]
     """
     where_clauses = [_BASE_WHERE]
-    adjacent_date_key = CFG.REPORT_ADJACENT_OBSERVATION_SINCE.replace(
-        "-", ""
-    )[:8]
+    adjacent_date_key = (
+        "00000000"
+        if include_adjacent_before_cutoff
+        else CFG.REPORT_ADJACENT_OBSERVATION_SINCE.replace("-", "")[:8]
+    )
     query_params = [adjacent_date_key, adjacent_date_key]
 
     if before_date:

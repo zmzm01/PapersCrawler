@@ -41,3 +41,4 @@ report-site/dist/
 report-site/.astro/
 report-site/src/data/reports/
 report-site/src/generated-reports.ts
+report-site/public/downloads/

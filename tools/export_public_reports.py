@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sqlite3
 import warnings
 from pathlib import Path
@@ -72,6 +73,7 @@ def export_reports(
     output_root: Path,
     source_dir: Path | Iterable[Path],
     database_path: Path,
+    markdown_root: Path | None = None,
 ) -> int:
     """Synchronize generated public sidecars into a static-site export root.
 
@@ -85,6 +87,8 @@ def export_reports(
         to be synchronized without deleting either set.
     database_path : Path
         SQLite database used for optional historical enrichment.
+    markdown_root : Path, optional
+        Static directory for downloadable public Markdown reports.
 
     Returns
     -------
@@ -99,18 +103,38 @@ def export_reports(
 
     reports = []
     exported_ids = set()
+    exported_markdown = set()
+    if markdown_root is not None:
+        markdown_root.mkdir(parents=True, exist_ok=True)
     for source in sorted(sidecars, key=lambda path: str(path), reverse=True):
         payload = json.loads(source.read_text(encoding="utf-8"))
         if payload.get("source") != "papers" or not isinstance(payload.get("id"), str) or not VALID_ID.fullmatch(payload["id"]):
             raise ValueError(f"Invalid public report sidecar: {source}")
-        target = destination / f"{payload['id']}.json"
         payload = enrich_from_database(payload, database_path)
+        markdown_source = source.with_name(
+            source.name.removesuffix(".public.json") + ".md"
+        )
+        if markdown_root is not None and markdown_source.is_file():
+            markdown_name = f"{payload['id']}.md"
+            markdown_target = markdown_root / markdown_name
+            temporary_target = markdown_target.with_suffix(".md.tmp")
+            shutil.copyfile(markdown_source, temporary_target)
+            temporary_target.replace(markdown_target)
+            payload["downloadUrl"] = f"/downloads/{markdown_name}"
+            exported_markdown.add(markdown_name)
+        else:
+            payload.pop("downloadUrl", None)
+        target = destination / f"{payload['id']}.json"
         write_json(target, payload)
         exported_ids.add(payload["id"])
         reports.append({key: payload[key] for key in ("id", "source", "title", "publishedAt", "summary", "tags")})
     if destination.exists():
         for stale_path in destination.glob("papers-*.json"):
             if stale_path.stem not in exported_ids:
+                stale_path.unlink()
+    if markdown_root is not None:
+        for stale_path in markdown_root.glob("papers-*.md"):
+            if stale_path.name not in exported_markdown:
                 stale_path.unlink()
     write_json(destination / "index.json", reports)
     return len(reports)
@@ -134,9 +158,19 @@ def main() -> None:
         default=PROJECT_ROOT / "data" / "papers.db",
         help="Optional database used to enrich historical sidecars",
     )
+    parser.add_argument(
+        "--markdown-out",
+        type=Path,
+        help="Optional static directory for downloadable Markdown reports",
+    )
     args = parser.parse_args()
     sources = args.sources or [PROJECT_ROOT / "data" / "reports" / "auto"]
-    count = export_reports(args.out, sources, args.database)
+    count = export_reports(
+        args.out,
+        sources,
+        args.database,
+        markdown_root=args.markdown_out,
+    )
     print(f"Exported {count} PapersCrawler public report(s).")
 
 

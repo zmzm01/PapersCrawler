@@ -16,7 +16,12 @@ const paperCount = contentItems(report.content, 'papers').length;
 	<div class="report-shell" id="report-start">
 		<ReportToc report={report} />
 		<div class="report-main">
-			<a class="back" href="/">← 返回报告归档</a>
+			<div class="report-actions">
+				<a class="back" href="/">← 返回报告归档</a>
+				{report.downloadUrl && (
+					<a class="download" href={report.downloadUrl} download>下载 Markdown ↓</a>
+				)}
+			</div>
 			<p class="eyebrow">PAPERSCRAWLER · {formatDate(report.publishedAt)} · {paperCount} PAPERS</p>
 			<h1>{report.title}</h1>
 			<p class="report-summary">{report.summary}</p>

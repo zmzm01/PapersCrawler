@@ -27,6 +27,40 @@ def test_historical_report_paths_selects_only_dated_reports_before_cutover(tmp_p
     ]
 
 
+def test_historical_report_paths_merge_directories_in_date_order(tmp_path):
+    """Legacy and automatic locations form one continuous report timeline."""
+    legacy_dir = tmp_path / "legacy"
+    automatic_dir = tmp_path / "auto"
+    legacy_dir.mkdir()
+    automatic_dir.mkdir()
+    (legacy_dir / "report_20260816.md").touch()
+    (automatic_dir / "report_20260823.md").touch()
+
+    reports = _historical_report_paths([automatic_dir, legacy_dir])
+
+    assert reports == [
+        legacy_dir / "report_20260816.md",
+        automatic_dir / "report_20260823.md",
+    ]
+
+
+def test_historical_report_paths_reject_duplicate_dates(tmp_path):
+    """A date in two locations is ambiguous and must not be overwritten."""
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    (first_dir / "report_20260816.md").touch()
+    (second_dir / "report_20260816.md").touch()
+
+    try:
+        _historical_report_paths([first_dir, second_dir])
+    except ValueError as error:
+        assert "Duplicate historical report date 2026-08-16" in str(error)
+    else:
+        raise AssertionError("Expected duplicate report dates to fail")
+
+
 def test_archive_report_moves_all_public_report_artifacts(tmp_path):
     """Archiving keeps legacy report companions together outside auto output."""
     report_path = tmp_path / "report_20260816.md"

@@ -95,3 +95,6 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
     assert build_environment["CLOUDFLARE_API_TOKEN"] == "token-value"
     assert deploy.call_args.args[2] == "site-name"
     assert export.call_args.args[1] == [tmp_path]
+    assert export.call_args.kwargs["markdown_root"] == (
+        deploy_report_site.REPORT_DOWNLOAD_DIR
+    )

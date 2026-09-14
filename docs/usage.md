@@ -607,7 +607,7 @@ recipients:
 | `browser_backend_report.py` | 汇总 Camoufox/Cloakbrowser 可靠性审计 |
 | `dedup_doi_case.py` | 清理历史 DOI 大小写重复 |
 | `export_public_reports.py` | 导出静态站点 JSON |
-| `rebuild_historical_reports.py` | 按 `created_date` 批量重建新机制前的周报及 sidecar |
+| `rebuild_historical_reports.py` | 跨 `legacy/auto` 按 `created_date` 批量重建历史周报及 sidecar |
 | `deploy_report_site.py` | 构建并可选上传公开 Cloudflare Pages 报告站点 |
 
 根目录的 `run_daily.sh` 和 `run_weekly.sh` 是 cron 包装脚本，内部调用
@@ -649,23 +649,19 @@ python tools/preview_report.py --scope all \
 截止日当天不包含；`--export-public` 会把自动报告目录和当前预览目录一起同步到
 公开导出目录。可用 `--export-root PATH` 覆盖导出目录。
 
-### 批量重建新机制前的周报
+### 批量重建历史周报
 
-当站点的报告 JSON schema 或导出机制升级后，使用下列命令重建旧周报。`--before` 是**新机制生成的第一份周报日期**；例如当前首份新机制报告是 `2026-08-23`：
+当筛选规则、报告模板或公开 schema 升级后，使用下列命令按当前数据库状态重建全部历史周报：
 
 ```bash
 # 先确认将重建的报告和 created_date 窗口，不写入任何文件
-python tools/rebuild_historical_reports.py --before 2026-08-23 --dry-run
+python tools/rebuild_historical_reports.py --dry-run
 
-# 重写旧 Markdown、补建 .public.json，并移入公开历史归档目录
-python tools/rebuild_historical_reports.py \
-  --before 2026-08-23 \
-  --archive-dir data/reports/legacy \
-  --no-export
+# 重写 legacy/auto 中的 Markdown 与 .public.json
+python tools/rebuild_historical_reports.py --no-export
 ```
 
-工具只处理 `data/reports/auto/` 中严格早于 `--before` 的
-`report_YYYYMMDD.md`。每份报告的范围是从上一份周报日期的次日（含）到当前报告日期（含）的 `created_date`；第一份报告包括更早的全部记录。没有符合报告资格的 A/B 论文时，该周不会生成报告；重建已有的空报告会清理其 Markdown、sidecar 和解释页。它不会修改数据库的 `report_date`，不会调用 LLM，也不会发送邮件。`--archive-dir` 会一并移动 Markdown、sidecar 和已有解释页；使用 `--no-export` 可交由随后 `deploy_report_site.py` 统一导出。`--export-root PATH` 可覆写独立导出目录。
+工具默认合并扫描 `data/reports/legacy/` 与 `data/reports/auto/` 中的 `report_YYYYMMDD.md`。每份报告的范围是从上一份报告日期的次日（含）到当前报告日期（含）的 `created_date`；第一份报告包括更早的全部记录。累计首期只收录 A/B，后续窗口收录全部 A/B/C，并使用最新人工审核覆盖 LLM 分类。没有符合资格的论文时不会生成空报告。它不会修改数据库的 `report_date`，不会调用 LLM，也不会发送邮件。`--report-dir PATH` 可重复指定以覆写默认目录，`--before DATE` 可限制重建截止日期；使用 `--no-export` 可交由随后 `deploy_report_site.py` 统一导出。
 
 ### `export_public_reports.py`
 
@@ -673,7 +669,8 @@ python tools/rebuild_historical_reports.py \
 
 ```bash
 python tools/export_public_reports.py \
-  --out /path/to/MySite/.generated/reports
+  --out report-site/src/data/reports \
+  --markdown-out report-site/public/downloads
 
 # 多个来源目录可以重复 --source
 python tools/export_public_reports.py \
@@ -682,7 +679,7 @@ python tools/export_public_reports.py \
   --source data/reports/user
 ```
 
-输出为 `papers/index.json` 和按报告 ID 命名的 JSON 文件。默认来源是
+输出为 `papers/index.json` 和按报告 ID 命名的 JSON 文件；指定 `--markdown-out` 时还会复制与 sidecar 配对的公开 Markdown，并在 JSON 中写入下载地址。默认来源是
 `data/reports/auto/`；默认导出根目录是 `PUBLIC_REPORT_EXPORT_DIR`，未设置时为
 项目同级 `MySite/.generated/reports`。
 
@@ -700,7 +697,7 @@ npm run check
 npm run build
 ```
 
-站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。报告中的内部 `study_type` 不会公开显示。
+站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。报告详情页可下载同内容的 Markdown。报告中的内部 `study_type` 不会公开显示。
 
 构建前需要将公开 JSON 导出到 Astro 的生成数据目录。公开站点只读取当前自动报告
 `data/reports/auto/` 和公开历史归档 `data/reports/legacy/`；`data/reports/user/` 的组内特别报告不会导出：

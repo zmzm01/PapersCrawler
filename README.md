@@ -42,8 +42,8 @@ Playwright 会话，避免同步运行循环冲突。
 - **可验证公式与印刷级 PDF**：FormulaFixer 先为裸公式添加数学模式包裹，再执行可配置的 KaTeX 校验与 LLM 修复；Markdown 可离线预渲染为静态 KaTeX HTML，再由 Prince 生成 PDF（免费版带水印）
 - **多协议 LLM 接入**：按角色支持 Chat Completions、OpenAI Responses 和 Anthropic Messages；可接入 Command Code、OpenCode Zen 等 OpenAI-compatible 网关及其模型，并兼容模型偶发的 Markdown/JSON 格式包装；FormulaFixer 使用独立模型和并发池
 - **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
-- **历史周报重建**：`tools/rebuild_historical_reports.py` 可按相邻周报日期划分的 `created_date` 窗口，批量补建旧报告的当前 JSON sidecar，并跳过无合格论文的空周报
-- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，带独立 favicon 和统一阅读字号；自动报告和公开历史归档可见，组内特别报告保持隔离
+- **历史周报重建**：`tools/rebuild_historical_reports.py` 可跨 `legacy/auto` 按相邻报告日期重建全部历史周报；累计首期仅保留 A/B，其余各期同时收录 C 类邻近观察
+- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，支持下载公开 Markdown；自动报告和公开历史归档可见，组内特别报告保持隔离
 - **可检查的静态公式渲染**：Markdown/KaTeX/Prince 脚本带 JSDoc 类型约束，可纳入 Astro 类型检查
 - **报告解释页**：`report_YYYYMMDD_explained.html` 展示 LLM prompt 快照
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文

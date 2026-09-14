@@ -232,7 +232,7 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
 
 ### 6. 报告分离
 
-报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类；A/B 为完整总结，启用日期后的 C 为轻量邻近观察。报告头部按 A、B、C 分别统计并解释引入 C 的原因。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；内部的日期窗口查询也支持包含式上下界，供历史重建使用。`tools/rebuild_historical_reports.py --before <新机制首份日期>` 会扫描此前的 `report_YYYYMMDD.md`，以相邻报告日期之间的 `created_date`（首份报告从最早记录开始）重建 Markdown 和当前 schema 的 sidecar，不修改 `report_date`，随后一次性导出站点数据。只有显式指定 `--export-public` 才会同步单份预览报告。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
+报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类；A/B 为完整总结，启用日期后的 C 为轻量邻近观察。报告头部按 A、B、C 分别统计并解释引入 C 的原因。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；内部的日期窗口查询也支持包含式上下界，供历史重建使用。`tools/rebuild_historical_reports.py` 默认合并扫描 `data/reports/legacy/` 与 `data/reports/auto/` 的报告日期，以相邻报告日期之间的 `created_date`（首份报告从最早记录开始）按当前数据库状态重建 Markdown 和当前 schema 的 sidecar，不修改 `report_date`。历史重建中累计首期仅保留 A/B，后续窗口收录全部 A/B/C；这是显式历史迁移策略，不改变日常自动报告的 C 启用日期。只有显式指定 `--export-public` 才会同步单份预览报告。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
 
 规范化 Summary 在数据库内部维持固定 schema 和 `未提供` 占位语义，便于质量门禁与重跑；展示层采用
 稀疏输出：Markdown、HTML 和公开 JSON 递归忽略完整值为 `未提供`、`暂无`、`无` 或空字符串的字段，
@@ -336,10 +336,10 @@ Phase H 从 `data/email.yaml` 读取收件人，失败时回退 `.env` 的 `SMTP
 
 `report-site/` 是 PapersCrawler 自己拥有的静态报告站点，不依赖 `../MySite`。它只消费
 公开报告 JSON，构建时生成报告归档、论文目录、A/B/C 等级、标签、链接和结构化解读。
-生成数据位于 gitignored 的 `report-site/src/data/reports/`，不会进入 Git 历史。公开站点只读取
+生成数据位于 gitignored 的 `report-site/src/data/reports/`，公开 Markdown 下载文件位于 gitignored 的 `report-site/public/downloads/`，均不会进入 Git 历史。公开站点只读取
 `data/reports/auto/` 和 `data/reports/legacy/`：前者是当前自动周报，后者是迁移后保留的历史周报。
 `data/reports/user/` 是组内特别报告的隔离目录，部署脚本没有将其导出的选项。历史重建若某个日期窗口没有合格论文，不会生成空 Markdown 或 sidecar；若重建已有的空报告，会一并清理其解释页，避免公开站点出现零条目页面。
-全局布局提供站点 favicon，并使用统一的正文阅读字号；论文卡片的期刊、作者和 DOI 等元信息仍以较小字号呈现。`study_type` 是内部 schema 字段，前端不得在“关键方法与设置”中渲染。
+全局布局提供站点 favicon，并使用统一的正文阅读字号；报告详情页提供与当前公开内容对应的 Markdown 下载链接。论文卡片的期刊、作者和 DOI 等元信息仍以较小字号呈现。`study_type` 是内部 schema 字段，前端不得在“关键方法与设置”中渲染。
 
 Astro 使用静态输出，不读取 SQLite、API 密钥或内部 WebUI 数据。`tools/deploy_report_site.py`
 负责将当前自动报告和公开历史归档导出到 Astro 数据目录、加载 nvm 中的 Node.js、构建 `report-site/dist/`，

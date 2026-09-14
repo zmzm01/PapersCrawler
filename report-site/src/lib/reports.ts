@@ -10,6 +10,7 @@ export interface PublicReport {
 	generatedAt?: string;
 	summary: string;
 	tags: readonly string[];
+	downloadUrl?: string;
 	scope?: ReportRecord;
 	content: ReportRecord;
 }
@@ -29,6 +30,7 @@ function isPublicReport(value: unknown): value is PublicReport {
 		typeof value.title === 'string' &&
 		typeof value.publishedAt === 'string' &&
 		typeof value.summary === 'string' &&
+		(value.downloadUrl === undefined || typeof value.downloadUrl === 'string') &&
 		Array.isArray(value.tags) &&
 		value.tags.every((tag) => typeof tag === 'string') &&
 		isRecord(value.content)

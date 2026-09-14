@@ -116,3 +116,34 @@ def test_fetch_papers_uses_latest_manual_decision(db):
 
     assert [paper["doi"] for paper in papers] == ["10.0000/manual-a"]
     assert papers[0]["effective_relevance_category"] == "A"
+
+
+def test_historical_fetch_can_include_c_before_live_cutoff(db):
+    """Explicit reconstruction includes old C papers without summaries."""
+    database = db
+    doi = "10.0000/historical-c"
+    database.insert_rss_basicinfo(
+        doi, doi, "https://example.com", "Journal", "Publisher", "2026"
+    )
+    database.insert_paper_created_date(doi, "20260816")
+    database.update_llm_relevance(
+        doi,
+        "C",
+        "[]",
+        "medium",
+        "adjacent",
+        FetchStatus.SUCCESS.value,
+        "20260816",
+        basis="fulltext",
+    )
+
+    normal = _fetch_papers(db, "all", datetime(2026, 8, 16))
+    historical = _fetch_papers(
+        db,
+        "all",
+        datetime(2026, 8, 16),
+        include_adjacent_before_cutoff=True,
+    )
+
+    assert normal == []
+    assert [paper["doi"] for paper in historical] == [doi]

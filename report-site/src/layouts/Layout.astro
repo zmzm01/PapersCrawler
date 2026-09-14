@@ -133,6 +133,10 @@ const currentYear = new Date().getFullYear();
 	.report-main { min-width: 0; }
 	.back { color: var(--muted); display: inline-block; font-size: .82rem; margin-bottom: 1.25rem; text-decoration: none; }
 	.back:hover { color: var(--accent); }
+	.report-actions { align-items: center; display: flex; justify-content: space-between; margin-bottom: 1.25rem; }
+	.report-actions .back { margin-bottom: 0; }
+	.download { border: 1px solid var(--accent); border-radius: .35rem; color: var(--accent); font-size: .82rem; font-weight: 700; padding: .38rem .7rem; text-decoration: none; }
+	.download:hover { background: var(--accent); color: var(--surface); }
 	.report-main > h1 { font-family: var(--display); font-size: clamp(2.4rem, 6vw, 4.4rem); letter-spacing: -.06em; line-height: 1.05; margin: .45rem 0; overflow-wrap: anywhere; }
 	.report-summary { color: var(--muted); font-size: 1.1rem; line-height: 1.7; margin: 0; max-width: 58rem; overflow-wrap: anywhere; }
 	.report-toc { align-self: start; border-top: 3px solid var(--accent); height: calc(100vh - 8rem); min-height: 12rem; overflow-y: auto; overscroll-behavior: contain; padding-top: .8rem; position: sticky; scrollbar-color: var(--accent-soft) transparent; scrollbar-width: thin; top: 6.4rem; }
