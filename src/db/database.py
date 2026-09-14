@@ -2703,13 +2703,20 @@ class DatabaseClient:
         """)
         return cur.fetchall()
 
-    def get_papers_for_report(self):
+    def get_papers_for_report(self, adjacent_since=""):
         """
-        获取待汇入报告的新论文：全文终审和 LLM 总结均成功且尚未被报告过。
+        获取待汇入报告的新论文：A/B 使用完整总结，C 作为轻量邻近观察。
 
-        查询条件: llm_summary_status = 'success'
-                  AND report_date IS NULL
-                  AND 有效相关性分类 IN ('A', 'B')；最新人工审核结果覆盖 LLM 分类
+        Parameters
+        ----------
+        adjacent_since : str, optional
+            C 类邻近观察的最早 ``created_date``（含），格式为 YYYY-MM-DD。
+            空字符串关闭 C 类报告。
+
+        查询条件: report_date IS NULL
+                  AND (A/B 的 llm_summary_status = 'success'
+                       OR 启用日期后的 C)
+                  AND 最新人工审核结果覆盖 LLM 分类
                   AND llm_relevance_status = 'success'
                   AND llm_relevance_basis = 'fulltext'
         用 report_date 替代 report_status 作为过滤条件，支持按日期重置重报。
@@ -2720,6 +2727,7 @@ class DatabaseClient:
         Returns:
             list[sqlite3.Row]
         """
+        adjacent_date_key = adjacent_since.replace("-", "")[:8]
         cur = self.conn.execute(f"""
         {LATEST_RELEVANCE_REVIEW_CTE}
         SELECT p.*,
@@ -2731,13 +2739,22 @@ class DatabaseClient:
         FROM papers AS p
         LEFT JOIN latest_relevance_review
           ON latest_relevance_review.doi = p.doi
-        WHERE p.llm_summary_status = 'success'
-          AND p.report_date IS NULL
-          AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+        WHERE p.report_date IS NULL
+          AND (
+            (
+              p.llm_summary_status = 'success'
+              AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+            )
+            OR (
+              ? <> ''
+              AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'C'
+              AND replace(substr(p.created_date, 1, 10), '-', '') >= ?
+            )
+          )
           AND p.llm_relevance_status = 'success'
           AND p.llm_relevance_basis = 'fulltext'
         ORDER BY p.paperdate_rss DESC
-        """)
+        """, (adjacent_date_key, adjacent_date_key))
         return cur.fetchall()
 
     def mark_papers_reported(self, dois, timestamp):

@@ -64,12 +64,19 @@ export function contentItems(content: ReportRecord, key: string): ReportRecord[]
 
 export function contentText(item: ReportRecord, key: string): string | undefined {
 	const value = item[key];
-	return typeof value === 'string' && value.trim() ? value : undefined;
+	if (typeof value !== 'string') return undefined;
+	const text = value.trim();
+	return text && !['未提供', '暂无', '无'].includes(text) ? text : undefined;
 }
 
 export function contentTextList(item: ReportRecord, key: string): string[] {
 	const value = item[key];
-	return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+	return Array.isArray(value)
+		? value.filter((entry): entry is string => (
+			typeof entry === 'string' && Boolean(entry.trim()) &&
+			!['未提供', '暂无', '无'].includes(entry.trim())
+		))
+		: [];
 }
 
 export function recordValue(value: unknown): ReportRecord {

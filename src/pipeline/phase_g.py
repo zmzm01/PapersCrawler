@@ -44,7 +44,9 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
     logger.info("--- Phase G: Report generation ---")
 
     if is_auto:
-        papers = db.get_papers_for_report()
+        papers = db.get_papers_for_report(
+            adjacent_since=CFG.REPORT_ADJACENT_OBSERVATION_SINCE,
+        )
     else:
         placeholders = ",".join("?" for _ in doi_list)
         # 与 get_papers_for_report 保持一致：relevance 过滤必须显式存在，
@@ -61,8 +63,11 @@ def phase_g_report(db, auto_dir, user_dir, doi_list=None):
             FROM papers AS p
             LEFT JOIN latest_relevance_review
               ON latest_relevance_review.doi = p.doi
-            WHERE p.llm_summary_status = 'success'
-              AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')
+            WHERE (
+                (p.llm_summary_status = 'success'
+                 AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B'))
+                OR {EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'C'
+              )
               AND p.llm_relevance_status = 'success'
               AND p.llm_relevance_basis = 'fulltext'
               AND p.doi IN ({placeholders})

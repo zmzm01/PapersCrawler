@@ -342,6 +342,9 @@ CFG.SKIP_NATURE_NEWS = True
 CFG.PREFETCH_NON_RESEARCH = True
 CFG.POSTFETCH_NON_RESEARCH = True
 CFG.GENERATE_EXPLAINED_HTML = True
+# C 类以轻量“邻近观察”条目进入报告的启用日期。日期以前的历史 C 不补入，
+# 避免功能首次启用时形成大规模积压。
+CFG.REPORT_ADJACENT_OBSERVATION_SINCE = "2026-09-07"
 CFG.NON_RESEARCH_KEYWORDS = [
     "erratum",
     "author correction:",
@@ -645,6 +648,12 @@ def _apply_settings(settings):
     CFG.PREFETCH_NON_RESEARCH = pp.get("prefetch_non_research", CFG.PREFETCH_NON_RESEARCH)
     CFG.POSTFETCH_NON_RESEARCH = pp.get("postfetch_non_research", CFG.POSTFETCH_NON_RESEARCH)
     CFG.GENERATE_EXPLAINED_HTML = pp.get("generate_explained_html", CFG.GENERATE_EXPLAINED_HTML)
+    CFG.REPORT_ADJACENT_OBSERVATION_SINCE = str(
+        pp.get(
+            "report_adjacent_observation_since",
+            CFG.REPORT_ADJACENT_OBSERVATION_SINCE,
+        )
+    ).strip()
     CFG.NON_RESEARCH_KEYWORDS = pp.get("non_research_keywords", CFG.NON_RESEARCH_KEYWORDS)
     download = settings.get("fulltext_download", {})
     CFG.FULLTEXT_DOWNLOAD_DAILY_MAX = download.get("daily_max", CFG.FULLTEXT_DOWNLOAD_DAILY_MAX)

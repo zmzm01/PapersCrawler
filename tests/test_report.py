@@ -199,7 +199,7 @@ def test_markdown_header_blocks_and_title_are_separated():
 
     assert "\n\n> **相关性等级说明**" in md
     assert "a>" not in md
-    assert "\n> **邻近观察（B，全部保留）**" in md
+    assert "\n> **扩展推荐（B，全部保留）**" in md
     assert "\n\n# 文献报告\n" in md
 
 
@@ -421,6 +421,49 @@ def test_report_hides_internal_summary_metadata_and_flattens_limitations():
     assert "<ul><li><strong>影响" not in html
 
 
+def test_report_omits_placeholder_fields_and_empty_sections():
+    """Human reports show only summary fields that contain real content."""
+    paper = _sample_paper(
+        one_sentence="未提供",
+        motivation_and_goal={
+            "background": "未提供",
+            "research_gap": "暂无",
+            "objective": "验证诊断方法",
+        },
+        key_setup_and_method={
+            "study_type": "experiment",
+            "method": "未提供",
+            "setup_and_parameters": "无",
+            "analysis_or_model": "未提供",
+            "key_equations": "未提供",
+        },
+        main_results_and_physics=[{
+            "key": "result_1",
+            "title": "测量结果",
+            "finding": "获得稳定信号",
+            "evidence": "未提供",
+            "physical_interpretation": "暂无",
+        }],
+        limitations=[],
+        take_home_message={
+            "contribution": "未提供",
+            "implication": "无",
+        },
+    )
+
+    markdown = generate_report([paper], format="markdown", toc=False)
+    html = generate_report([paper], format="html", full_html=False)
+
+    for report in (markdown, html):
+        assert "未提供" not in report
+        assert "暂无" not in report
+    assert "**本文目标**: 验证诊断方法" in markdown
+    assert "### 关键方法与设置" not in markdown
+    assert "### 局限性" not in markdown
+    assert "### 要点总结" not in markdown
+    assert "<h3>关键方法与设置</h3>" not in html
+
+
 def test_report_later_sections_unchanged():
     """H3 子节（研究动机/方法/结果/要点）顺序与文本保持不变。"""
     md = generate_report([_sample_paper()], format="markdown", toc=False)
@@ -619,15 +662,20 @@ def test_report_sort_note_appears_at_top_markdown():
         f"顺序错乱: 排序={sort_idx} 图例={legend_idx} 说明={disclaimers_idx} 首篇={paper_idx}"
 
 
-def test_report_disclaimers_contain_three_points():
-    """报告头部「其他说明」应包含 3 条用户关心的局限性说明。"""
+def test_report_disclaimers_explain_adjacent_observation_policy():
+    """报告头部说明 C 类收录的数量和 prompt 局限补偿目的。"""
     md = generate_report([_sample_paper()], format="markdown", toc=False)
-    # 3 条必含关键词
+    assert "C 类作为“邻近观察”" in md
+    assert "条目过少" in md
+    assert "prompt 设计边界与表达局限" in md
     assert "筛选 prompt 调整" in md, "缺少 prompt 调整说明"
     assert "RSS 历史回溯" in md, "缺少 RSS 回溯说明"
     assert "仅以摘要" in md, "缺少摘要局限性说明"
     # HTML 端
     html = generate_report([_sample_paper()], format="html", full_html=True)
+    assert "C 类作为“邻近观察”" in html
+    assert "条目过少" in html
+    assert "prompt 设计边界与表达局限" in html
     assert "筛选 prompt 调整" in html
     assert "RSS 历史回溯" in html
     assert "仅以摘要" in html

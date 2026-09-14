@@ -35,28 +35,31 @@
 {% endif %}{% if p.abstract %}
 **原文摘要**: {{ p.abstract }}
 
-{% endif %}{% if p.has_full_summary %}**一句话**: {{ p.one_sentence|default('') }}
+{% endif %}{% if p.has_full_summary %}{% if p.one_sentence %}**一句话**: {{ p.one_sentence|default('') }}
 
-### 研究动机与目标
+{% endif %}{% if p.motivation_and_goal %}### 研究动机与目标
 
 {{ p.motivation_and_goal|default('') }}
 
-### 关键方法与设置
+{% endif %}{% if p.key_setup_and_method %}### 关键方法与设置
 
 {{ p.key_setup_and_method|default('') }}
 
-### 主要结果与物理内涵
+{% endif %}{% if p.main_results_and_physics %}### 主要结果与物理内涵
 
 {{ p.main_results_and_physics|default('') }}
 
-### 局限性
+{% endif %}{% if p.limitations %}### 局限性
 
 {{ p.limitations|default('') }}
 
-### 要点总结
+{% endif %}{% if p.take_home_message %}### 要点总结
 
 {{ p.take_home_message|default('') }}
+{% endif %}
+{% else %}{% if p.relevance_category == 'C' %}**说明**: 本条为 C 类邻近观察，轻量展示终审理由与原文摘要，不生成详细总结。
 {% else %}**说明**: 无正文，无法生成详细总结。
+{% endif %}
 {% endif %}
 
 ---

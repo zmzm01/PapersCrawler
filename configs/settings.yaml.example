@@ -150,6 +150,9 @@ openalex:
 # 流水线运行参数
 # ---------------------------------------------------------------------------
 pipeline:
+  # C 类从该入库日期起作为轻量“邻近观察”进入报告；设为空字符串可关闭。
+  report_adjacent_observation_since: "2026-09-07"
+
   # Phase A CrossRef 发现: 回溯天数（每日增量模式取今天往前 N 天）
   crossref_lookback_days: 1
 

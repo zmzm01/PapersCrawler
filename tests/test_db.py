@@ -564,6 +564,25 @@ def test_get_papers_for_report_requires_fulltext_adjudication(db):
     assert db.get_papers_for_report() == []
 
 
+def test_get_papers_for_report_includes_recent_c_as_lightweight_observation(db):
+    """C enters reports after the configured rollout date without a summary."""
+    for doi, created_date in (
+        ("10.0000/c-old", "2026-09-06"),
+        ("10.0000/c-new", "2026-09-07"),
+    ):
+        db.insert_rss_basicinfo(doi, doi, "http://x", "J", "pub", "2026")
+        db.insert_paper_created_date(doi, created_date)
+        db.update_llm_relevance(
+            doi, "C", "[]", "high", "adjacent",
+            FetchStatus.SUCCESS.value, created_date, basis="fulltext",
+        )
+
+    papers = db.get_papers_for_report(adjacent_since="2026-09-07")
+
+    assert [paper["doi"] for paper in papers] == ["10.0000/c-new"]
+    assert papers[0]["llm_summary_status"] == "pending"
+
+
 def test_mark_papers_reported(db):
     """验证 mark_papers_reported 批量标记论文。"""
     db.insert_rss_basicinfo("10.0000/r1", "R1", "http://r1", "J", "pub", "2025")

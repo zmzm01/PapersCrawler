@@ -1236,7 +1236,7 @@ def test_phase_g_and_h_early_and_delivery_paths(monkeypatch, tmp_path):
     """Report generation and email delivery use isolated fake integrations."""
 
     class EmptyDB:
-        def get_papers_for_report(self):
+        def get_papers_for_report(self, adjacent_since=""):
             return []
 
     monkeypatch.setattr(phase_g.CFG, "SKIP_PHASE_G", True)
@@ -1277,7 +1277,7 @@ def test_phase_g_auto_and_selected_report_paths(monkeypatch, tmp_path):
     class DB:
         conn = SimpleNamespace(execute=lambda self, *args: Cursor())
 
-        def get_papers_for_report(self):
+        def get_papers_for_report(self, adjacent_since=""):
             return [paper]
 
         def mark_papers_reported(self, dois, timestamp):

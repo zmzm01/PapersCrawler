@@ -12,6 +12,31 @@ from processors.report_presentation import build_report_presentation
 from processors.summary_schema import SUMMARY_SCHEMA_VERSION, normalize_summary
 
 PUBLIC_REPORT_SCHEMA_VERSION = 2
+_REPORT_PLACEHOLDERS = {"", "未提供", "暂无", "无"}
+
+
+def _strip_placeholder_fields(value: Any) -> Any:
+    """Remove empty report fields and exact LLM placeholders recursively.
+
+    Meaningful sentences that merely contain words such as ``未提供`` remain
+    untouched; only fields whose complete value is a placeholder are removed.
+    """
+    if isinstance(value, str):
+        return None if value.strip() in _REPORT_PLACEHOLDERS else value
+    if isinstance(value, list):
+        cleaned_items = [_strip_placeholder_fields(item) for item in value]
+        return [item for item in cleaned_items if item not in (None, {}, [])]
+    if isinstance(value, dict):
+        cleaned = {
+            key: _strip_placeholder_fields(item)
+            for key, item in value.items()
+        }
+        return {
+            key: item
+            for key, item in cleaned.items()
+            if item not in (None, {}, [])
+        }
+    return value
 
 
 def report_id(report_date: str) -> str:
@@ -64,7 +89,7 @@ def build_public_report(
     ordered = sorted(
         papers,
         key=lambda paper: (
-            {"A": 0, "B": 1}.get(paper.get("relevance_category"), 99),
+            {"A": 0, "B": 1, "C": 2}.get(paper.get("relevance_category"), 99),
             -(int((paper.get("date") or "").replace("-", "")[:8] or 0)),
         ),
     )
@@ -72,7 +97,7 @@ def build_public_report(
     labels = presentation.get("subfieldLabels", {})
     items = []
     for index, paper in enumerate(ordered, start=1):
-        summary = normalize_summary(paper.get("summary", {
+        normalized_summary = normalize_summary(paper.get("summary", {
             "one_sentence": paper.get("one_sentence"),
             "motivation_and_goal": paper.get("motivation_and_goal"),
             "key_setup_and_method": paper.get("key_setup_and_method"),
@@ -80,6 +105,14 @@ def build_public_report(
             "limitations": paper.get("limitations"),
             "take_home_message": paper.get("take_home_message"),
         }))
+        summary = _strip_placeholder_fields(normalized_summary)
+        sections = {
+            "motivation": summary.get("motivation_and_goal"),
+            "method": summary.get("key_setup_and_method"),
+            "results": summary.get("main_results_and_physics"),
+            "limitations": summary.get("limitations"),
+            "takeaway": summary.get("take_home_message"),
+        }
         items.append({
             "rank": index,
             "title": paper.get("title") or "",
@@ -95,20 +128,19 @@ def build_public_report(
             "relevanceReason": paper.get("relevance_reason") or "",
             "relevanceBasis": paper.get("relevance_basis") or "",
             "abstract": clean_extracted_text(paper.get("abstract")) or "",
-            "oneSentence": summary["one_sentence"],
+            "oneSentence": summary.get("one_sentence", ""),
             # ``summary`` is the canonical machine-readable analysis. Keep
             # the legacy ``sections`` projection for existing site consumers.
             "summary": summary,
             "sections": {
-                "motivation": summary["motivation_and_goal"],
-                "method": summary["key_setup_and_method"],
-                "results": summary["main_results_and_physics"],
-                "limitations": summary["limitations"],
-                "takeaway": summary["take_home_message"],
+                key: value
+                for key, value in sections.items()
+                if value not in (None, {}, [])
             },
         })
     core = sum(item["relevanceCategory"] == "A" for item in items)
     watch = sum(item["relevanceCategory"] == "B" for item in items)
+    adjacent = sum(item["relevanceCategory"] == "C" for item in items)
     return {
         "schemaVersion": PUBLIC_REPORT_SCHEMA_VERSION,
         "summarySchemaVersion": SUMMARY_SCHEMA_VERSION,
@@ -117,7 +149,10 @@ def build_public_report(
         "title": "文献报告",
         "publishedAt": f"{report_date[:4]}-{report_date[4:6]}-{report_date[6:]}T00:00:00+00:00",
         "generatedAt": datetime.now(UTC).isoformat(),
-        "summary": f"核心推荐（A）{core} 篇；邻近观察（B）{watch} 篇。",
+        "summary": (
+            f"核心推荐（A）{core} 篇；扩展推荐（B）{watch} 篇；"
+            f"邻近观察（C）{adjacent} 篇。"
+        ),
         "tags": ["论文", "文献"],
         "scope": scope or {},
         "content": {

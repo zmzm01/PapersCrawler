@@ -438,15 +438,27 @@ def _structured_section_markdown(value, section_name: str) -> str:
     if section_name == "main_results_and_physics":
         lines = []
         for index, item in enumerate(section, start=1):
-            lines.append(
-                f"- **结果 {index}："
-                f"{_process_text_for_markdown(item['title'])}**"
+            displayable_details = [
+                (key, label)
+                for key, label in (
+                    ("finding", "发现"),
+                    ("evidence", "证据"),
+                    ("physical_interpretation", "物理内涵"),
+                )
+                if _has_displayable_summary_text(item.get(key))
+            ]
+            if not displayable_details:
+                continue
+            title = item.get("title", "")
+            title_text = (
+                _process_text_for_markdown(title)
+                if _has_displayable_summary_text(title)
+                else f"结果 {index}"
             )
-            for key, label in (
-                ("finding", "发现"),
-                ("evidence", "证据"),
-                ("physical_interpretation", "物理内涵"),
-            ):
+            lines.append(
+                f"- **结果 {index}：{title_text}**"
+            )
+            for key, label in displayable_details:
                 lines.append(
                     f"  - **{label}**: "
                     f"{_process_text_for_markdown(item[key])}"
@@ -467,11 +479,12 @@ def _structured_section_markdown(value, section_name: str) -> str:
             if _has_displayable_summary_text(impact):
                 line += f"；影响：{_process_text_for_markdown(impact)}"
             lines.append(line)
-        return "\n".join(lines) or "正文未提供可归纳的局限性。"
+        return "\n".join(lines)
 
     return "\n".join(
         f"- **{label}**: {_process_text_for_markdown(section[key])}"
         for key, label in labels.items()
+        if _has_displayable_summary_text(section.get(key))
     )
 
 
@@ -482,21 +495,33 @@ def _structured_section_html(value, section_name: str) -> str:
     if section_name == "main_results_and_physics":
         items = []
         for index, item in enumerate(section, start=1):
-            details = "".join(
-                f"<li><strong>{label}:</strong> "
-                f"{_process_text_for_html(item[key])}</li>"
+            displayable_details = [
+                (key, label)
                 for key, label in (
                     ("finding", "发现"),
                     ("evidence", "证据"),
                     ("physical_interpretation", "物理内涵"),
                 )
+                if _has_displayable_summary_text(item.get(key))
+            ]
+            if not displayable_details:
+                continue
+            details = "".join(
+                f"<li><strong>{label}:</strong> "
+                f"{_process_text_for_html(item[key])}</li>"
+                for key, label in displayable_details
+            )
+            title = item.get("title", "")
+            title_text = (
+                _process_text_for_html(title)
+                if _has_displayable_summary_text(title)
+                else f"结果 {index}"
             )
             items.append(
-                f"<li><strong>结果 {index}："
-                f"{_process_text_for_html(item['title'])}</strong>"
+                f"<li><strong>结果 {index}：{title_text}</strong>"
                 f"<ul>{details}</ul></li>"
             )
-        return "<ul>" + "".join(items) + "</ul>"
+        return "<ul>" + "".join(items) + "</ul>" if items else ""
 
     if section_name == "limitations":
         items = []
@@ -514,16 +539,15 @@ def _structured_section_html(value, section_name: str) -> str:
                     f"；影响：{_process_text_for_html(impact)}"
                 )
             items.append(f"<li>{text}</li>")
-        if not items:
-            return "<p>正文未提供可归纳的局限性。</p>"
-        return "<ul>" + "".join(items) + "</ul>"
+        return "<ul>" + "".join(items) + "</ul>" if items else ""
 
     items = "".join(
         f"<li><strong>{label}:</strong> "
         f"{_process_text_for_html(section[key])}</li>"
         for key, label in labels.items()
+        if _has_displayable_summary_text(section.get(key))
     )
-    return f"<ul>{items}</ul>"
+    return f"<ul>{items}</ul>" if items else ""
 
 
 def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
@@ -567,7 +591,7 @@ def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
     return {
         'title': paper.get('title', '无标题'),
         'authors': _authors_str(paper.get('authors', [])),
-        'date': paper.get('date', '未知') or '未知',
+        'date': paper.get('date', '') or '',
         'doi': paper.get('doi', ''),
         'journal': paper.get('journal', ''),
         'publisher': paper.get('publisher', ''),
@@ -585,7 +609,11 @@ def _make_paper_payload_md(paper: Dict, scope_definition: Optional[Dict] = None,
         'page_url': paper.get('page_url', ''),
         'pdf_url': paper.get('pdf_url', ''),
         'abstract': _process_text_for_markdown(paper.get('abstract', '')),
-        'one_sentence': _process_text_for_markdown(paper.get('one_sentence', '')),
+        'one_sentence': (
+            _process_text_for_markdown(paper.get('one_sentence', ''))
+            if _has_displayable_summary_text(paper.get('one_sentence', ''))
+            else ""
+        ),
         'motivation_and_goal': _structured_section_markdown(
             paper.get('motivation_and_goal', ''), 'motivation_and_goal'),
         'key_setup_and_method': _structured_section_markdown(
@@ -631,7 +659,7 @@ def _make_paper_payload_html(paper: Dict, scope_definition: Optional[Dict] = Non
     return {
         'title': _process_text_for_html(paper.get('title', '无标题')),
         'authors': _html_escape(_authors_str(paper.get('authors', []))),
-        'date': _html_escape(paper.get('date', '未知') or '未知'),
+        'date': _html_escape(paper.get('date', '') or ''),
         'doi': _html_escape(paper.get('doi', '')),
         'journal': _html_escape(paper.get('journal', '')),
         'publisher': _html_escape(paper.get('publisher', '')),
@@ -647,7 +675,11 @@ def _make_paper_payload_html(paper: Dict, scope_definition: Optional[Dict] = Non
         'page_url': _safe_url(paper.get('page_url', '')),
         'pdf_url': _safe_url(paper.get('pdf_url', '')),
         'abstract': _process_text_for_html(paper.get('abstract', '')),
-        'one_sentence': _process_text_for_html(paper.get('one_sentence', '')),
+        'one_sentence': (
+            _process_text_for_html(paper.get('one_sentence', ''))
+            if _has_displayable_summary_text(paper.get('one_sentence', ''))
+            else ""
+        ),
         'motivation_and_goal': _structured_section_html(
             paper.get('motivation_and_goal', ''), 'motivation_and_goal'),
         'key_setup_and_method': _structured_section_html(

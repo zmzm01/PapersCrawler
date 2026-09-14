@@ -8,15 +8,19 @@ from processors.public_report import (
 from processors.summary_schema import SUMMARY_SCHEMA_VERSION
 
 
-def test_public_report_keeps_a_before_b_and_uses_public_fields():
+def test_public_report_keeps_a_before_b_before_c_and_uses_public_fields():
     payload = build_public_report([
+        {"title": "C paper", "date": "2026-08-21", "relevance_category": "C"},
         {"title": "B paper", "date": "2026-08-20", "relevance_category": "B"},
         {"title": "A paper", "date": "2026-08-19", "relevance_category": "A", "doi": "10.1/a"},
     ], "20260820")
 
     assert payload["id"] == "papers-20260820"
-    assert [paper["title"] for paper in payload["content"]["papers"]] == ["A paper", "B paper"]
+    assert [paper["title"] for paper in payload["content"]["papers"]] == [
+        "A paper", "B paper", "C paper",
+    ]
     assert payload["content"]["papers"][0]["doi"] == "10.1/a"
+    assert "邻近观察（C）1 篇" in payload["summary"]
 
 
 def test_public_report_separates_envelope_and_summary_versions():
@@ -38,6 +42,32 @@ def test_public_report_separates_envelope_and_summary_versions():
     assert paper["summary"]["schema_version"] == SUMMARY_SCHEMA_VERSION
     assert paper["summary"]["limitations"][0]["key"] == "sample_scope"
     assert paper["sections"]["limitations"] == paper["summary"]["limitations"]
+
+
+def test_public_report_omits_exact_placeholder_fields():
+    """Public sidecars stay sparse instead of exposing LLM placeholders."""
+    payload = build_public_report([{
+        "title": "Sparse paper",
+        "summary": {
+            "one_sentence": "有用结论",
+            "motivation_and_goal": {
+                "background": "未提供",
+                "objective": "验证方法",
+            },
+            "key_setup_and_method": {
+                "method": "未提供",
+                "setup_and_parameters": "部分参数未提供，但给出了激光功率。",
+            },
+        },
+    }], "20260914")
+
+    paper = payload["content"]["papers"][0]
+    assert "background" not in paper["summary"]["motivation_and_goal"]
+    assert "method" not in paper["summary"]["key_setup_and_method"]
+    assert (
+        paper["summary"]["key_setup_and_method"]["setup_and_parameters"]
+        == "部分参数未提供，但给出了激光功率。"
+    )
 
 
 def test_public_report_supports_scope_and_preview_identifier():

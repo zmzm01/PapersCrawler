@@ -61,7 +61,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import AUTO_REPORT_DIR, DB_PATH, PUBLIC_EXPORT_DIR
+from config import AUTO_REPORT_DIR, CFG, DB_PATH, PUBLIC_EXPORT_DIR
 from db.database import (
     DatabaseClient,
     EFFECTIVE_RELEVANCE_CATEGORY_SQL,
@@ -83,8 +83,10 @@ logger = logging.getLogger(__name__)
 # 过滤——预览工具需要"重看历史"，已报告的论文也包含进来。最新人工审核
 # 决定覆盖 LLM 分类，保持预览与自动报告一致。
 _BASE_WHERE = (
-    "p.llm_summary_status = 'success' "
-    f"AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B') "
+    "((p.llm_summary_status = 'success' "
+    f"AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} IN ('A', 'B')) "
+    f"OR (? <> '' AND {EFFECTIVE_RELEVANCE_CATEGORY_SQL} = 'C' "
+    "AND replace(substr(p.created_date, 1, 10), '-', '') >= ?)) "
     "AND p.llm_relevance_status = 'success' "
     "AND p.llm_relevance_basis = 'fulltext'"
 )
@@ -137,7 +139,10 @@ def _fetch_papers(
     list[sqlite3.Row]
     """
     where_clauses = [_BASE_WHERE]
-    query_params = []
+    adjacent_date_key = CFG.REPORT_ADJACENT_OBSERVATION_SINCE.replace(
+        "-", ""
+    )[:8]
+    query_params = [adjacent_date_key, adjacent_date_key]
 
     if before_date:
         before_date_key = datetime.strptime(
@@ -213,7 +218,7 @@ def main():
     )
     parser.add_argument(
         "--scope", choices=["all", "week", "today"], default="all",
-        help="报告范围：all=全部 A/B 论文；week=本周入库；"
+        help="报告范围：all=全部合格 A/B 及启用日期后的 C；week=本周入库；"
              "today=今天入库（默认 all）",
     )
     parser.add_argument(

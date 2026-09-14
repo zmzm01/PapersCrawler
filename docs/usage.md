@@ -217,7 +217,7 @@ TLS、认证、限速和访问源限制。临时调试才可将 uvicorn 改为 `
 
 审核队列只显示 E3 已完成全文终审的论文：`llm_relevance_status=success` 且 `llm_relevance_basis=fulltext`。默认首先显示触发过 `C → A/B` 独立复核的记录，其后是未审核 B/中置信度、其他初筛/终审分歧和 A/中置信度记录。详情页展示初筛模型、全文主判模型、复核模型和复核前类别；旧记录无法可靠回填时显示 `—`。
 
-审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照；快照包含当时的分类、confidence、初筛模型、全文模型和复核模型，后续重跑不会改写历史审核来源。最新人工审核结果作为有效相关性分类，覆盖 E3 的 LLM 分类：人工 A/B 可进入 Phase F 总结和报告，人工 C/D/uncertain 会阻止后续进入报告；未审核时仍使用 E3 分类。原始 LLM 字段保留用于追溯。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
+审核提交会向 `relevance_reviews` 追加 A/B/C/D/uncertain、备注、审核人和 LLM 快照；快照包含当时的分类、confidence、初筛模型、全文模型和复核模型，后续重跑不会改写历史审核来源。最新人工审核结果作为有效相关性分类，覆盖 E3 的 LLM 分类：人工 A/B 可进入 Phase F 总结和报告；人工 C 不进入总结，但可按启用日期作为轻量邻近观察入报；人工 D/uncertain 会阻止后续进入报告。未审核时仍使用 E3 分类。原始 LLM 字段保留用于追溯。审核 API 只接受 E3 全文终审成功的论文；`uncertain` 会按数据库 schema 保存为小写。
 
 审核页上方可切换“全文终审”和“摘要随机抽查”，并可随机进入一篇待审论文或在保存后直接跳到下一篇。摘要抽查保存到独立的 `relevance_audit_reviews`，不会覆盖有效相关性分类，也不会使抽查中改判的 A/B 直接进入总结或报告。
 
@@ -379,7 +379,7 @@ python3 tools/keyword_audit.py --corpus /path/to/title_abstract.jsonl
 {"id":"plasma-lens-001","predicted_category":"A"}
 ```
 
-评分同时输出四分类准确率、混淆矩阵以及 A/B（报告保留）对 C/D 的 precision、recall
+评分同时输出四分类准确率、混淆矩阵以及 A/B（正式推荐）对 C/D 的 precision、recall
 和 F1：
 
 ```bash
@@ -632,8 +632,9 @@ python tools/run_pipeline.py --daily --dry-run
 
 ### `preview_report.py`
 
-生成不修改数据库的 JSON + Markdown 报告。默认只筛选已完成总结的 A/B 论文，
-也会包含已经出现在旧报告中的论文：
+生成不修改数据库的 JSON + Markdown 报告。默认筛选已完成总结的 A/B 论文，并从
+`pipeline.report_adjacent_observation_since` 指定日期起加入 C 类轻量“邻近观察”；预览也会包含已经
+出现在旧报告中的论文：
 
 ```bash
 python tools/preview_report.py --scope all --output /tmp/report.md
@@ -751,6 +752,8 @@ systemd 和文档中的路径使用 `/path/to/...` 占位符，代码默认路�
 报告 PDF 使用本地静态管线，不启动 Chrome、也不在转换时访问 CDN：先以与 WebUI 一致的
 `marked` 解析 Markdown，再把 `\(...\)` / `\[...\]` 公式替换为 KaTeX 静态 HTML 和
 MathML，最后由 Prince 排版。KaTeX CSS 与字体会复制到临时 HTML 目录，因此 Prince 可离线读取。
+公式渲染脚本受 Astro/TypeScript 检查；修改 `report-site/scripts/render-markdown-katex.mjs`
+后应运行 `cd report-site && npm run check`。
 
 先在 `report-site/` 安装锁定的 Node 依赖，并按 [Prince 官方下载页](https://www.princexml.com/download/16/)
 安装 `prince` 命令；免费版可以使用，但 PDF 右上角带水印。
@@ -816,7 +819,14 @@ PYTHONPATH=src /path/to/paperscrawler-venv/bin/python \
 | `data/raw/` | RSS、页面和错误快照 |
 | `data/session_cached/` | Publisher 浏览器上下文 |
 
-报告资格：E3 `fulltext` + 有效相关性分类 A/B（有最新人工审核时以人工决定为准）+ F summary success + 尚未 `report_date`。自动报告、用户选定报告和 `preview_report.py` 使用相同的有效分类规则。
+报告资格：必须完成 E3 `fulltext` 且采用有效相关性分类（有最新人工审核时以人工决定为准）。A/B 还要求 F summary success；C 从 `pipeline.report_adjacent_observation_since`（默认 `2026-09-07`）起作为轻量邻近观察入报，不进入 Phase F，只展示终审理由、原文摘要和链接；设为空字符串可关闭 C。自动报告和预览遵循该日期，用户显式选择 DOI 时可直接纳入 C。自动报告还要求尚未设置 `report_date`。
+
+报告头部将 B 标为“扩展推荐”、C 标为“邻近观察”，并说明纳入 C 是为了缓解严格 A/B 口径造成的条目过少，以及为 prompt 设计边界和表达局限可能导致的遗漏提供人工复核窗口。C 不代表正式推荐。
+
+报告展示遵循“没有内容就不显示”：字段完整值为 `未提供`、`暂无`、`无` 或空字符串时，Markdown、
+HTML 和 Cloudflare Pages 都会隐藏该字段；某个总结章节没有任何有效字段时，章节标题也会隐藏。公开
+JSON sidecar 会直接省略这些字段和空容器。类似“部分参数未提供，但给出了激光功率”这种仍包含实质
+信息的句子会保留。该规则只影响报告展示，不会改写数据库中的规范化 Summary。
 
 摘要清洗：RSS、CrossRef 和 Publisher 摘要进入数据库前会统一解码 HTML/XML 实体、移除
 控制字符并压缩空白；数据库初始化会幂等修复已有标题/摘要，报告快照生成时还会清洗一次历史数据。因此 IOP 摘要中的

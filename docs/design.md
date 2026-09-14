@@ -61,7 +61,8 @@ report-site/
 | G | 自动报告和解释页 | `data/reports/auto/` |
 | H | SMTP 邮件推送 | 邮件及附件 |
 
-只有 E3 正文终审成功、类别为 A/B、依据为 `fulltext`，并且 F 总结成功的论文才具备进入自动报告的资格。
+只有 E3 正文终审成功且依据为 `fulltext` 的论文才具备入报基础资格：A/B 还必须完成 Phase F
+总结；启用日期后的 C 可作为不带详细总结的轻量邻近观察进入报告。
 
 相关性分类面向“是否值得进入组内报告”，不把原创实验作为唯一正向证据：实质内容由核心方向主导、提供技术综合/比较/路线图价值的综述可判 A。B 类允许具体方法在邻近领域完成验证后迁移，但必须同时满足三项证据：方法或器件是论文主贡献、论文给出定量验证结果、无需改变测量/反演/器件核心原理即可直接映射到配置的 adjacent example。仅背景提及、通用算法或没有技术映射的潜在用途仍为 C/D。
 
@@ -115,7 +116,8 @@ LLM。清洗顺序是 HTML/XML 实体解码（包括双重编码的 `&amp;#xD;`�
 人工审核不覆盖 `papers` 中的 LLM 原始结果；同一 DOI 的最新审核记录按最大 `id` 作为当前审核结果。
 报告与总结阶段使用“有效相关性分类”：没有人工审核时取 E3 的
 `llm_relevance_category`，有最新人工审核时取 `relevance_reviews.decision`。因此人工 A/B
-可使原本 C/D 的论文进入 Phase F/G，人工 C/D/uncertain 会阻止原本 A/B 的论文进入总结或报告；
+可使原本 C/D 的论文进入 Phase F/G；人工 C 会阻止原本 A/B 进入总结、但可按邻近观察规则进入
+报告，人工 D/uncertain 会阻止其进入总结和报告；
 报告快照和 WebUI 论文列表的分类筛选、计数与展示均使用有效分类；原始 LLM 分类继续保留用于追溯。
 报告快照同时使用有效分类和人工备注（备注非空时）作为展示依据。
 
@@ -178,8 +180,10 @@ E 只用标题和摘要做高召回筛选；A/B/C 和低置信 D 进入 E2/E3，
 研究范围按人工审核校准：A 以激光驱动离子/质子、明确列出的基础激光等离子体过程和放电毛细管工程为主；等离子体透镜与明确列出的相邻诊断器件属于 B。电子 LWFA/DLA 与电子/gamma/X-ray 应用不能借“laser-driven particles”扩张进 A；通用 PIC/HPC、FLASH/MHD、波前控制和“理论上可迁移”不构成 B。子域 exclusion 的优先级高于 adjacent example；ICF/聚变束流等仍在广义邻近物理中的论文通常为 C，只有主贡献落入显式黑名单或连广义邻域也不属于时才判 D。
 
 人工审核是 E3 之后的可选覆盖层。审核记录采用追加式审计，按同一 DOI 的最大 `id` 取最新决定；
-Phase F 的待总结查询、Phase G 自动/用户选定报告查询以及预览报告均复用有效分类，避免人工降级后
-仍因历史 Summary 成功而进入报告。
+Phase F 的待总结查询仍只接受有效 A/B。Phase G 自动/用户选定报告查询以及预览报告复用有效分类：
+A/B 必须有成功的完整总结；C 从配置的启用日期起作为轻量“邻近观察”入报，只展示终审理由、摘要和
+来源链接，不调用 Phase F。该层用于缓解严格 A/B 口径造成的周报条目过少，也为 prompt 设计边界与
+表达局限可能造成的遗漏保留人工观察窗口；C 不计作正式推荐。启用日期阻止历史 C 首次上线时集中回灌。
 
 ### 2. CrossRef 摘要优先与延迟页面访问
 
@@ -228,7 +232,11 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
 
 ### 6. 报告分离
 
-报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；内部的日期窗口查询也支持包含式上下界，供历史重建使用。`tools/rebuild_historical_reports.py --before <新机制首份日期>` 会扫描此前的 `report_YYYYMMDD.md`，以相邻报告日期之间的 `created_date`（首份报告从最早记录开始）重建 Markdown 和当前 schema 的 sidecar，不修改 `report_date`，随后一次性导出站点数据。只有显式指定 `--export-public` 才会同步单份预览报告。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
+报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类；A/B 为完整总结，启用日期后的 C 为轻量邻近观察。报告头部按 A、B、C 分别统计并解释引入 C 的原因。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；内部的日期窗口查询也支持包含式上下界，供历史重建使用。`tools/rebuild_historical_reports.py --before <新机制首份日期>` 会扫描此前的 `report_YYYYMMDD.md`，以相邻报告日期之间的 `created_date`（首份报告从最早记录开始）重建 Markdown 和当前 schema 的 sidecar，不修改 `report_date`，随后一次性导出站点数据。只有显式指定 `--export-public` 才会同步单份预览报告。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
+
+规范化 Summary 在数据库内部维持固定 schema 和 `未提供` 占位语义，便于质量门禁与重跑；展示层采用
+稀疏输出：Markdown、HTML 和公开 JSON 递归忽略完整值为 `未提供`、`暂无`、`无` 或空字符串的字段，
+对应章节没有任何有效子项时连章节标题也不显示。含有这些词但仍提供实质信息的完整句子不会被删除。
 
 ### 7. Phase F 总结 schema
 
@@ -256,6 +264,8 @@ Phase F 在写入前执行两级保护：`repair_llm_text_artifacts()` 恢复 JS
 ### 静态 KaTeX/Prince PDF 链路
 
 报告 PDF 的规范渲染链路为 `Markdown → marked HTML → 静态 KaTeX HTML/MathML → Prince PDF`。
+Node 渲染脚本使用 JSDoc 描述公式 token、校验错误及函数输入输出，并显式约束
+`marked.parse()` 为同步返回，使 Astro/TypeScript 检查覆盖 PDF 的静态 HTML 准备流程。
 Node 脚本先以唯一占位符保护 `\(...\)` 与 `\[...\]`，防止 Markdown 解析把公式中的下划线或
 反斜杠当作文本标记；`marked` 解析其余内容后，KaTeX 以 `throwOnError: true` 阻断真实语法错误，
 以 `strict: "warn"` 放行兼容性警告后渲染并替换占位符。静态 HTML 同目录包含复制的 KaTeX CSS/字体，Prince 无需执行 JavaScript 或
@@ -325,7 +335,7 @@ Phase H 从 `data/email.yaml` 读取收件人，失败时回退 `.env` 的 `SMTP
 ### 独立 Astro 报告站点
 
 `report-site/` 是 PapersCrawler 自己拥有的静态报告站点，不依赖 `../MySite`。它只消费
-公开报告 JSON，构建时生成报告归档、论文目录、A/B 等级、标签、链接和结构化解读。
+公开报告 JSON，构建时生成报告归档、论文目录、A/B/C 等级、标签、链接和结构化解读。
 生成数据位于 gitignored 的 `report-site/src/data/reports/`，不会进入 Git 历史。公开站点只读取
 `data/reports/auto/` 和 `data/reports/legacy/`：前者是当前自动周报，后者是迁移后保留的历史周报。
 `data/reports/user/` 是组内特别报告的隔离目录，部署脚本没有将其导出的选项。历史重建若某个日期窗口没有合格论文，不会生成空 Markdown 或 sidecar；若重建已有的空报告，会一并清理其解释页，避免公开站点出现零条目页面。

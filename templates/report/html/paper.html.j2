@@ -31,19 +31,35 @@
   <p><strong>原文摘要:</strong> {{ p.abstract }}</p>
 {% endif %}
 {% if p.has_full_summary %}
+{% if p.one_sentence %}
   <p><strong>一句话:</strong> {{ p.one_sentence|default('') }}</p>
+{% endif %}
+{% if p.motivation_and_goal %}
   <h3>研究动机与目标</h3>
   <div class="summary-section">{{ p.motivation_and_goal|default('') }}</div>
+{% endif %}
+{% if p.key_setup_and_method %}
   <h3>关键方法与设置</h3>
   <div class="summary-section">{{ p.key_setup_and_method|default('') }}</div>
+{% endif %}
+{% if p.main_results_and_physics %}
   <h3>主要结果与物理内涵</h3>
   <div class="summary-section">{{ p.main_results_and_physics|default('') }}</div>
+{% endif %}
+{% if p.limitations %}
   <h3>局限性</h3>
   <div class="summary-section">{{ p.limitations|default('') }}</div>
+{% endif %}
+{% if p.take_home_message %}
   <h3>要点总结</h3>
   <div class="summary-section">{{ p.take_home_message|default('') }}</div>
+{% endif %}
+{% else %}
+{% if p.relevance_category == 'C' %}
+  <p><strong>说明:</strong> 本条为 C 类邻近观察，轻量展示终审理由与原文摘要，不生成详细总结。</p>
 {% else %}
   <p><strong>说明:</strong> 无正文，无法生成详细总结。</p>
+{% endif %}
 {% endif %}
 </section>
 <hr>
