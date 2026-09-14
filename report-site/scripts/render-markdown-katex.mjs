@@ -14,8 +14,29 @@ import { marked } from "marked";
 
 const INLINE_OR_DISPLAY_MATH = /\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g;
 
+/**
+ * @typedef {{
+ *   formula: string,
+ *   display_mode: boolean,
+ *   offset: number,
+ *   message: string,
+ * }} FormulaError
+ */
+
+/**
+ * @typedef {{token: string, formula: string, displayMode: boolean}} FormulaToken
+ */
+
+/**
+ * Find formulas that KaTeX cannot parse.
+ *
+ * @param {string} markdown Markdown containing formulas.
+ * @returns {FormulaError[]} Validation errors with source offsets.
+ */
 function findFormulaErrors(markdown) {
+  /** @type {FormulaError[]} */
   const errors = [];
+  /** @type {RegExpExecArray | null} */
   let match;
   INLINE_OR_DISPLAY_MATH.lastIndex = 0;
   while ((match = INLINE_OR_DISPLAY_MATH.exec(markdown)) !== null) {
@@ -28,18 +49,25 @@ function findFormulaErrors(markdown) {
         formula,
         display_mode: displayMode,
         offset: match.index,
-        message: error.message,
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }
   return errors;
 }
 
+/**
+ * Render Markdown after replacing protected formulas with static KaTeX HTML.
+ *
+ * @param {string} markdown Source Markdown.
+ * @returns {string} Rendered HTML fragment.
+ */
 function renderMarkdown(markdown) {
+  /** @type {FormulaToken[]} */
   const formulas = [];
   const protectedMarkdown = markdown.replace(
     INLINE_OR_DISPLAY_MATH,
-    (whole, inlineFormula, displayFormula) => {
+    (_whole, inlineFormula, displayFormula) => {
       const displayMode = displayFormula !== undefined;
       const formula = displayMode ? displayFormula : inlineFormula;
       const token = `@@PAPERSCRAWLER_FORMULA_${formulas.length}@@`;
@@ -47,7 +75,9 @@ function renderMarkdown(markdown) {
       return token;
     },
   );
-  let html = marked.parse(protectedMarkdown, { breaks: true, gfm: true });
+  let html = /** @type {string} */ (
+    marked.parse(protectedMarkdown, { async: false, breaks: true, gfm: true })
+  );
   for (const { token, formula, displayMode } of formulas) {
     const rendered = katex.renderToString(formula, {
       displayMode,
@@ -59,6 +89,12 @@ function renderMarkdown(markdown) {
   return html;
 }
 
+/**
+ * Wrap a rendered report fragment in a standalone printable document.
+ *
+ * @param {string} content Rendered report HTML.
+ * @returns {string} Complete HTML document.
+ */
 function staticDocument(content) {
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
