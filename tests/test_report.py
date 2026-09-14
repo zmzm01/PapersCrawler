@@ -421,6 +421,26 @@ def test_report_hides_internal_summary_metadata_and_flattens_limitations():
     assert "<ul><li><strong>影响" not in html
 
 
+def test_report_normalizes_punctuation_between_limitation_and_impact():
+    """A sentence-ending limitation does not duplicate the impact separator."""
+    paper = _sample_paper(
+        limitations=[{
+            "key": "scope",
+            "limitation": "样本范围有限。",
+            "impact": "外推性受到限制。",
+            "basis": "explicit",
+        }],
+    )
+
+    markdown = generate_report([paper], format="markdown", toc=False)
+    html = generate_report([paper], format="html", full_html=False)
+
+    assert "样本范围有限；影响：外推性受到限制。" in markdown
+    assert "样本范围有限；影响：外推性受到限制。" in html
+    assert "。；影响" not in markdown
+    assert "。；影响" not in html
+
+
 def test_report_omits_placeholder_fields_and_empty_sections():
     """Human reports show only summary fields that contain real content."""
     paper = _sample_paper(

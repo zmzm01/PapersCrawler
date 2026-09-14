@@ -24,6 +24,10 @@ function textValue(value: unknown): string | undefined {
 	return text && !['未提供', '暂无', '无'].includes(text) ? text : undefined;
 }
 
+function trimClauseBoundaryPunctuation(value: string): string {
+	return value.replace(/[\s。；;：:,，.!！？?]+$/u, '');
+}
+
 function labelledLines(value: Record<string, unknown>, labels: Record<string, string>): string {
 	return Object.entries(labels)
 		.map(([key, label]) => {
@@ -76,7 +80,8 @@ function paperSectionText(paper: Record<string, unknown>, key: string): string |
 			const title = textValue(item.limitation);
 			if (!title) return undefined;
 			const impact = textValue(item.impact);
-			return `- **${title}**${impact ? `：${impact}` : ''}`;
+			const limitationText = impact ? trimClauseBoundaryPunctuation(title) : title;
+			return `- **${limitationText}**${impact ? `；影响：${impact}` : ''}`;
 		}).filter((item): item is string => Boolean(item)).join('\n') || undefined;
 	}
 	if (key === 'takeaway') {

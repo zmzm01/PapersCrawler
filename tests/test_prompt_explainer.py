@@ -70,6 +70,21 @@ def test_summary_prompt_unchanged():
     assert "take_home_message" in prompt
 
 
+def test_summary_input_and_public_template_share_the_runtime_envelope():
+    """Public input documentation stays aligned with the Phase F message."""
+    from processors.prompt_explainer import (
+        render_summary_input,
+        render_summary_input_template,
+    )
+
+    assert render_summary_input("Paper title", "Paper body") == (
+        "标题: Paper title\n\n全文:\nPaper body"
+    )
+    assert render_summary_input_template() == (
+        "标题: {论文标题}\n\n全文:\n{论文全文}"
+    )
+
+
 def test_render_all_prompts_returns_both():
     """render_all_prompts() must return a dict with both keys,
     and values must be non-empty strings."""

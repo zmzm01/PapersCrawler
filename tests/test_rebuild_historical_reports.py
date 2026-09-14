@@ -3,10 +3,22 @@
 from datetime import datetime
 
 from tools.rebuild_historical_reports import (
+    REPORT_SITE_DOWNLOAD_ROOT,
+    REPORT_SITE_EXPORT_ROOT,
     _archive_report,
     _historical_report_paths,
     _remove_report_artifacts,
 )
+
+
+def test_default_exports_target_the_owned_report_site():
+    """Historical rebuilds no longer default to the retired sibling site."""
+    assert REPORT_SITE_EXPORT_ROOT.parts[-4:] == (
+        "report-site", "src", "data", "reports"
+    )
+    assert REPORT_SITE_DOWNLOAD_ROOT.parts[-3:] == (
+        "report-site", "public", "downloads"
+    )
 
 
 def test_historical_report_paths_selects_only_dated_reports_before_cutover(tmp_path):

@@ -28,6 +28,8 @@ from config import load_prompt, build_scope_block, build_default_prompt, load_ke
 
 logger = logging.getLogger(__name__)
 
+SUMMARY_INPUT_TEMPLATE = "标题: {title}\n\n全文:\n{full_text}"
+
 
 def render_relevance_prompt() -> str:
     """渲染 Phase E 相关性判断的完整 prompt（系统提示词部分）。
@@ -110,6 +112,35 @@ def render_summary_prompt() -> str:
     """
     template = load_prompt("summary")
     return template if template is not None else ""
+
+
+def render_summary_input(title: str, full_text: str) -> str:
+    """Render the per-paper user message sent to the summarization LLM.
+
+    Parameters
+    ----------
+    title : str
+        Paper title.
+    full_text : str
+        Extracted paper full text.
+
+    Returns
+    -------
+    str
+        User message containing the title and full text.
+    """
+    return SUMMARY_INPUT_TEMPLATE.format(title=title, full_text=full_text)
+
+
+def render_summary_input_template() -> str:
+    """Return a public-safe template of the per-paper user message.
+
+    Returns
+    -------
+    str
+        Input envelope with descriptive placeholders instead of paper data.
+    """
+    return render_summary_input("{论文标题}", "{论文全文}")
 
 
 def render_all_prompts() -> dict[str, str]:

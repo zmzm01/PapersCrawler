@@ -657,11 +657,11 @@ python tools/preview_report.py --scope all \
 # 先确认将重建的报告和 created_date 窗口，不写入任何文件
 python tools/rebuild_historical_reports.py --dry-run
 
-# 重写 legacy/auto 中的 Markdown 与 .public.json
-python tools/rebuild_historical_reports.py --no-export
+# 重写 legacy/auto 中的 Markdown 与 .public.json，并同步当前 Astro 站点
+python tools/rebuild_historical_reports.py
 ```
 
-工具默认合并扫描 `data/reports/legacy/` 与 `data/reports/auto/` 中的 `report_YYYYMMDD.md`。每份报告的范围是从上一份报告日期的次日（含）到当前报告日期（含）的 `created_date`；第一份报告包括更早的全部记录。累计首期只收录 A/B，后续窗口收录全部 A/B/C，并使用最新人工审核覆盖 LLM 分类。没有符合资格的论文时不会生成空报告。它不会修改数据库的 `report_date`，不会调用 LLM，也不会发送邮件。`--report-dir PATH` 可重复指定以覆写默认目录，`--before DATE` 可限制重建截止日期；使用 `--no-export` 可交由随后 `deploy_report_site.py` 统一导出。
+工具默认合并扫描 `data/reports/legacy/` 与 `data/reports/auto/` 中的 `report_YYYYMMDD.md`。每份报告的范围是从上一份报告日期的次日（含）到当前报告日期（含）的 `created_date`；第一份报告包括更早的全部记录。累计首期只收录 A/B，后续窗口收录全部 A/B/C，并使用最新人工审核覆盖 LLM 分类。没有符合资格的论文时不会生成空报告。它不会修改数据库的 `report_date`，不会调用 LLM，也不会发送邮件。默认同步到 `report-site/src/data/reports` 和 `report-site/public/downloads`；`--report-dir PATH` 可重复指定以覆写报告来源，`--before DATE` 可限制重建截止日期，`--export-root` 与 `--download-root` 可覆盖站点目标，使用 `--no-export` 可交由随后 `deploy_report_site.py` 统一导出。
 
 ### `export_public_reports.py`
 
@@ -699,7 +699,9 @@ npm run build
 
 站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。报告详情页可下载同内容的 Markdown，并按 A/B/C 提供分类导航、当前位置目录和统一展开/收起控制。报告中的内部 `study_type` 不会公开显示。
 
-`/methodology/` 展示部署时当前实际生效的 Phase F 总结 Prompt、结构化字段说明、生成时间和 SHA-256 内容指纹。它只概述筛选与总结流程，不包含研究范围词表、完整相关性 Prompt、模型配置、密钥、论文实例或组内报告。该页面代表当前版本；历史报告可能由旧版 Prompt 生成，不能据此反推逐期 Prompt。
+`/methodology/` 展示部署时当前实际生效的 Phase F 总结系统 Prompt、运行时论文输入封装、结构化字段说明、生成时间和 SHA-256 内容指纹。论文输入只展示安全模板（标题与全文的位置），不展示任何论文实例。它只概述筛选与总结流程，不包含研究范围词表、完整相关性 Prompt、模型配置、密钥或组内报告。该页面代表当前版本；历史报告可能由旧版 Prompt 生成，不能据此反推逐期 Prompt。
+
+报告展示层会忽略空值和“未提供”等占位字段，并在拼接“局限；影响”等结构化字段时统一边界标点；原始 LLM 结构化数据不会因此被改写。
 
 构建前需要将公开 JSON 导出到 Astro 的生成数据目录。公开站点只读取当前自动报告
 `data/reports/auto/` 和公开历史归档 `data/reports/legacy/`；`data/reports/user/` 的组内特别报告不会导出：

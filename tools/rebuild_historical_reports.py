@@ -31,7 +31,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import AUTO_REPORT_DIR, DB_PATH, PUBLIC_EXPORT_DIR, load_keywords
+from config import AUTO_REPORT_DIR, DB_PATH, load_keywords
 from db.database import DatabaseClient
 from processors.paper_report_generator import generate_report
 from processors.public_report import report_id, write_public_report
@@ -41,6 +41,12 @@ from tools.preview_report import _atomic_write, _fetch_papers
 
 logger = logging.getLogger(__name__)
 _REPORT_NAME = re.compile(r"report_(\d{8})\.md$")
+REPORT_SITE_EXPORT_ROOT = (
+    PROJECT_ROOT / "report-site" / "src" / "data" / "reports"
+)
+REPORT_SITE_DOWNLOAD_ROOT = (
+    PROJECT_ROOT / "report-site" / "public" / "downloads"
+)
 
 
 def _parse_date(value: str, argument: str) -> datetime:
@@ -200,8 +206,14 @@ def main() -> None:
     parser.add_argument(
         "--export-root",
         type=Path,
-        default=PUBLIC_EXPORT_DIR,
-        help="公开站点导出根目录",
+        default=REPORT_SITE_EXPORT_ROOT,
+        help="公开站点 JSON 导出根目录（默认 report-site/src/data/reports）",
+    )
+    parser.add_argument(
+        "--download-root",
+        type=Path,
+        default=REPORT_SITE_DOWNLOAD_ROOT,
+        help="公开 Markdown 下载目录（默认 report-site/public/downloads）",
     )
     parser.add_argument(
         "--no-export",
@@ -285,7 +297,12 @@ def main() -> None:
         sources = list(report_dirs)
         if args.archive_dir:
             sources.append(args.archive_dir)
-        count = export_reports(args.export_root, sources, DB_PATH)
+        count = export_reports(
+            args.export_root,
+            sources,
+            DB_PATH,
+            markdown_root=args.download_root,
+        )
         print(f"Public JSON export updated: {count} reports -> {args.export_root}")
 
 

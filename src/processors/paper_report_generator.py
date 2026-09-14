@@ -431,6 +431,11 @@ def _load_style_css() -> str:
 # ======================================================================
 
 
+def _trim_clause_boundary_punctuation(text: str) -> str:
+    """Remove punctuation that would duplicate a following field separator."""
+    return re.sub(r"[\s。；;：:,，.!！？?]+$", "", text)
+
+
 def _structured_section_markdown(value, section_name: str) -> str:
     """Render a canonical summary section without nested Markdown headings."""
     section = normalize_summary({section_name: value})[section_name]
@@ -471,11 +476,16 @@ def _structured_section_markdown(value, section_name: str) -> str:
             limitation = item["limitation"]
             if not _has_displayable_summary_text(limitation):
                 continue
+            limitation_text = _process_text_for_markdown(limitation)
+            impact = item.get("impact", "")
+            if _has_displayable_summary_text(impact):
+                limitation_text = _trim_clause_boundary_punctuation(
+                    limitation_text
+                )
             line = (
                 f"- **局限 {index}**: "
-                f"{_process_text_for_markdown(limitation)}"
+                f"{limitation_text}"
             )
-            impact = item.get("impact", "")
             if _has_displayable_summary_text(impact):
                 line += f"；影响：{_process_text_for_markdown(impact)}"
             lines.append(line)
@@ -529,11 +539,16 @@ def _structured_section_html(value, section_name: str) -> str:
             limitation = item["limitation"]
             if not _has_displayable_summary_text(limitation):
                 continue
+            limitation_text = _process_text_for_html(limitation)
+            impact = item.get("impact", "")
+            if _has_displayable_summary_text(impact):
+                limitation_text = _trim_clause_boundary_punctuation(
+                    limitation_text
+                )
             text = (
                 f"<strong>局限 {index}：</strong>"
-                f"{_process_text_for_html(limitation)}"
+                f"{limitation_text}"
             )
-            impact = item.get("impact", "")
             if _has_displayable_summary_text(impact):
                 text += (
                     f"；影响：{_process_text_for_html(impact)}"

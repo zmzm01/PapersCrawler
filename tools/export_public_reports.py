@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy Phase G public report sidecars to a MySite-compatible export root."""
+"""Copy Phase G public report sidecars to a static-site export root."""
 
 from __future__ import annotations
 
@@ -31,7 +31,10 @@ def export_public_methodology(output_path: Path) -> dict[str, object]:
     dict[str, object]
         Public methodology payload written to ``output_path``.
     """
-    from processors.prompt_explainer import render_summary_prompt
+    from processors.prompt_explainer import (
+        render_summary_input_template,
+        render_summary_prompt,
+    )
 
     summary_prompt = render_summary_prompt().strip()
     fingerprint = (
@@ -46,6 +49,7 @@ def export_public_methodology(output_path: Path) -> dict[str, object]:
         ).replace("+00:00", "Z"),
         "promptFingerprint": fingerprint,
         "summaryPrompt": summary_prompt,
+        "summaryInputTemplate": render_summary_input_template(),
     }
     write_json(output_path, payload)
     return payload

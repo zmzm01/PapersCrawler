@@ -2,12 +2,13 @@
 import methodology from '../generated-methodology';
 import Layout from '../layouts/Layout.astro';
 
-const generatedLabel = methodology.generatedAt
+const generatedDate = new Date(methodology.generatedAt);
+const generatedLabel = methodology.generatedAt && !Number.isNaN(generatedDate.valueOf())
 	? new Intl.DateTimeFormat('zh-CN', {
 		dateStyle: 'long',
 		timeStyle: 'short',
 		timeZone: 'Asia/Shanghai',
-	}).format(new Date(methodology.generatedAt))
+	}).format(generatedDate)
 	: undefined;
 ---
 
@@ -47,17 +48,22 @@ const generatedLabel = methodology.generatedAt
 		<section class="method-section prompt-section" aria-labelledby="prompt-title">
 			<p class="section-kicker">CURRENT PROMPT</p>
 			<h2 id="prompt-title">当前论文总结 Prompt</h2>
-			<p>以下是部署时读取到的当前版本。历史报告可能由旧版 Prompt 生成，本页不是逐期历史快照。</p>
+			<p>总结请求由“系统指令”和“单篇论文输入”两部分组成。以下是部署时读取到的当前版本；历史报告可能由旧版 Prompt 生成，本页不是逐期历史快照。</p>
 			{methodology.summaryPrompt ? (
 				<>
 					<div class="prompt-meta">
 						{generatedLabel && <span>生成于 {generatedLabel}</span>}
-						<span title={methodology.promptFingerprint}>SHA-256 {methodology.promptFingerprint.slice(0, 12)}…</span>
+						{methodology.promptFingerprint && <span title={methodology.promptFingerprint}>系统指令 SHA-256 {methodology.promptFingerprint.slice(0, 12)}…</span>}
 					</div>
 					<details class="prompt-details">
-						<summary>查看完整 Prompt</summary>
+						<summary>查看总结系统指令</summary>
 						<pre><code>{methodology.summaryPrompt}</code></pre>
 					</details>
+					<div class="input-template">
+						<h3>单篇论文输入</h3>
+						<p>运行时会把论文标题和提取后的全文按下面的结构作为用户消息发送；占位符不会原样发送，也不代表公开任何论文内容。</p>
+						<pre><code>{methodology.summaryInputTemplate}</code></pre>
+					</div>
 				</>
 			) : <p class="prompt-unavailable">当前构建没有可公开的 Prompt 数据，请在完整部署流程后再查看。</p>}
 		</section>
@@ -79,9 +85,13 @@ const generatedLabel = methodology.generatedAt
 	.field-grid div { background: color-mix(in srgb, var(--surface) 82%, transparent); border: 1px solid var(--line); border-radius: .5rem; display: grid; gap: .25rem; padding: 1rem; }
 	.prompt-section > p { color: var(--muted); max-width: 48rem; }
 	.prompt-meta { color: var(--muted); display: flex; flex-wrap: wrap; font-family: ui-monospace, monospace; font-size: .76rem; gap: .5rem 1.2rem; }
-	.prompt-details { background: var(--surface); border: 1px solid var(--line); border-radius: .55rem; overflow: hidden; }
+	.prompt-details, .input-template { background: var(--surface); border: 1px solid var(--line); border-radius: .55rem; max-width: 100%; min-width: 0; overflow: hidden; }
 	.prompt-details summary { min-height: 44px; padding: .75rem 1rem; }
-	.prompt-details pre { background: #202728; color: #eef2ed; font-size: .78rem; line-height: 1.65; margin: 0; max-height: 70vh; overflow: auto; padding: 1.2rem; white-space: pre-wrap; word-break: break-word; }
+	.prompt-details pre, .input-template pre { background: #202728; color: #eef2ed; font-size: .78rem; line-height: 1.65; margin: 0; max-height: 70vh; max-width: 100%; overflow: auto; padding: 1.2rem; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.input-template { margin-top: 1rem; padding-top: 1rem; }
+	.input-template h3, .input-template p { margin-inline: 1rem; }
+	.input-template h3 { font-family: var(--display); margin-block: 0 .35rem; }
+	.input-template p { color: var(--muted); margin-block: 0 1rem; max-width: 48rem; }
 	.prompt-unavailable { background: var(--surface); border: 1px dashed var(--line); padding: 1rem; }
 	@media (max-width: 620px) { .field-grid { grid-template-columns: 1fr; } .workflow li { grid-template-columns: 2.2rem minmax(0, 1fr); padding: .9rem; } }
 </style>

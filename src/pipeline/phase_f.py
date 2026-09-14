@@ -18,6 +18,7 @@ from processors.llm_summarize_deepseek import (
     DeepSeekPaperSummarizer, FormulaFixer, LLMContextLengthExceed,
 )
 from processors.paper_relevance import LLMAPICallError, LLMResponseParseError
+from processors.prompt_explainer import render_summary_input
 from processors.summary_schema import (
     normalize_summary,
     summary_quality_issues,
@@ -155,7 +156,7 @@ def phase_f_llm_summary(db):
                 FetchStatus.SKIPPED.value, str(datetime.now()),
             )
             continue
-        article_text = f"标题: {paper['title'] or ''}\n\n全文:\n{mineru_text}"
+        article_text = render_summary_input(paper["title"] or "", mineru_text)
         tasks.append((paper, article_text))
 
     if not tasks:

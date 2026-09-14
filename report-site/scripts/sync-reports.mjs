@@ -40,6 +40,7 @@ let methodology = {
 	generatedAt: '',
 	promptFingerprint: '',
 	summaryPrompt: '',
+	summaryInputTemplate: '',
 };
 try {
 	const candidate = await readJson(methodologyPath);
@@ -47,7 +48,8 @@ try {
 		candidate?.schemaVersion === 1 &&
 		typeof candidate.generatedAt === 'string' &&
 		typeof candidate.promptFingerprint === 'string' &&
-		typeof candidate.summaryPrompt === 'string'
+		typeof candidate.summaryPrompt === 'string' &&
+		typeof candidate.summaryInputTemplate === 'string'
 	) {
 		methodology = candidate;
 	} else {

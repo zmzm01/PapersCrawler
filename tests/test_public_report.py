@@ -210,12 +210,16 @@ def test_export_public_methodology_contains_only_summary_prompt(tmp_path):
     assert exported == payload
     assert payload["schemaVersion"] == 1
     assert payload["summaryPrompt"] == "summarize this paper"
+    assert payload["summaryInputTemplate"] == (
+        "标题: {论文标题}\n\n全文:\n{论文全文}"
+    )
     assert len(payload["promptFingerprint"]) == 64
     assert set(payload) == {
         "schemaVersion",
         "generatedAt",
         "promptFingerprint",
         "summaryPrompt",
+        "summaryInputTemplate",
     }
 
 
@@ -231,3 +235,4 @@ def test_export_public_methodology_handles_missing_prompt(tmp_path):
 
     assert payload["summaryPrompt"] == ""
     assert payload["promptFingerprint"] == ""
+    assert payload["summaryInputTemplate"]
