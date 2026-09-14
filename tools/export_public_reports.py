@@ -4,16 +4,51 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 import sqlite3
 import warnings
-from pathlib import Path
 from collections.abc import Iterable
+from datetime import datetime, timezone
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALID_ID = re.compile(r"^[a-z0-9-]+$")
+
+
+def export_public_methodology(output_path: Path) -> dict[str, object]:
+    """Export the current public-safe paper summarization methodology.
+
+    Parameters
+    ----------
+    output_path : pathlib.Path
+        Destination JSON path consumed by the static report site.
+
+    Returns
+    -------
+    dict[str, object]
+        Public methodology payload written to ``output_path``.
+    """
+    from processors.prompt_explainer import render_summary_prompt
+
+    summary_prompt = render_summary_prompt().strip()
+    fingerprint = (
+        hashlib.sha256(summary_prompt.encode("utf-8")).hexdigest()
+        if summary_prompt
+        else ""
+    )
+    payload: dict[str, object] = {
+        "schemaVersion": 1,
+        "generatedAt": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z"),
+        "promptFingerprint": fingerprint,
+        "summaryPrompt": summary_prompt,
+    }
+    write_json(output_path, payload)
+    return payload
 
 
 def write_json(path: Path, value: object) -> None:

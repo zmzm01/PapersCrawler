@@ -5,6 +5,18 @@ import { renderReportMarkdown } from '../lib/markdown';
 interface Props { report: PublicReport; }
 const { report } = Astro.props;
 const papers = contentItems(report.content, 'papers');
+const categoryLabels: Record<string, string> = {
+	A: '核心推荐',
+	B: '扩展推荐',
+	C: '邻近观察',
+};
+const categoryGroups = ['A', 'B', 'C'].map((category) => ({
+	category,
+	label: categoryLabels[category],
+	items: papers
+		.map((paper, paperIndex) => ({ paper, paperIndex }))
+		.filter(({ paper }) => contentText(paper, 'relevanceCategory') === category),
+})).filter(({ items }) => items.length > 0);
 
 function textValue(value: unknown): string | undefined {
 	if (typeof value !== 'string') return undefined;
@@ -81,14 +93,14 @@ function categoryClass(category: string | undefined): string {
 }
 ---
 
-<section id="section-papers" class="collection papers-collection">
+{categoryGroups.map(({ category: groupCategory, label: groupLabel, items }) => <section id={`category-${groupCategory}`} class="collection papers-collection">
 	<div class="section-title">
-		<p>PAPERSCRAWLER REPORT</p>
-		<h2>本期论文</h2>
-		<span>{papers.length}</span>
+		<p>CATEGORY {groupCategory}</p>
+		<h2>{groupLabel}</h2>
+		<span>{items.length} 篇</span>
 	</div>
 	<div class="paper-list">
-		{papers.map((paper, paperIndex) => {
+		{items.map(({ paper, paperIndex }) => {
 			const title = contentText(paper, 'title') ?? '未命名论文';
 			const pageUrl = contentText(paper, 'pageUrl');
 			const category = contentText(paper, 'relevanceCategory');
@@ -131,4 +143,4 @@ function categoryClass(category: string | undefined): string {
 			</article>;
 		})}
 	</div>
-</section>
+</section>)}

@@ -12,7 +12,8 @@ const papers = contentItems(report.content, 'papers');
 	<nav class="toc-links">
 		{papers.map((paper, index) => {
 			const title = contentText(paper, 'title') || '未命名论文';
-			return <a href={`#paper-${index + 1}`} title={title}><span>{title}</span></a>;
+			const category = contentText(paper, 'relevanceCategory') || '—';
+			return <a href={`#paper-${index + 1}`} title={title} data-paper-link={`paper-${index + 1}`}><b>{index + 1}</b><i>{category}</i><span>{title}</span></a>;
 		})}
 	</nav>
 	<details class="mobile-paper-index">
@@ -25,3 +26,22 @@ const papers = contentItems(report.content, 'papers');
 		</nav>
 	</details>
 </aside>
+
+<script>
+	const links = [...document.querySelectorAll<HTMLAnchorElement>('[data-paper-link]')];
+	const papers = links
+		.map((link) => document.getElementById(link.dataset.paperLink || ''))
+		.filter((paper): paper is HTMLElement => Boolean(paper));
+	if ('IntersectionObserver' in window && papers.length > 0) {
+		const visible = new Map<string, number>();
+		const observer = new IntersectionObserver((entries) => {
+			for (const entry of entries) {
+				if (entry.isIntersecting) visible.set(entry.target.id, entry.boundingClientRect.top);
+				else visible.delete(entry.target.id);
+			}
+			const current = [...visible.entries()].sort((left, right) => Math.abs(left[1]) - Math.abs(right[1]))[0]?.[0];
+			for (const link of links) link.toggleAttribute('aria-current', link.dataset.paperLink === current);
+		}, { rootMargin: '-18% 0px -62% 0px' });
+		for (const paper of papers) observer.observe(paper);
+	}
+</script>

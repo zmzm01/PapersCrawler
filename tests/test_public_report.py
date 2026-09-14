@@ -1,6 +1,7 @@
 import json
+from unittest.mock import patch
 
-from tools.export_public_reports import export_reports
+from tools.export_public_reports import export_public_methodology, export_reports
 from processors.public_report import (
     PUBLIC_REPORT_SCHEMA_VERSION,
     build_public_report,
@@ -193,3 +194,40 @@ def test_export_omits_download_url_without_matching_markdown(tmp_path):
         )
     )
     assert "downloadUrl" not in exported_payload
+
+
+def test_export_public_methodology_contains_only_summary_prompt(tmp_path):
+    """Methodology export contains the active summary prompt and no scope data."""
+    output_path = tmp_path / "methodology.json"
+
+    with patch(
+        "processors.prompt_explainer.render_summary_prompt",
+        return_value="  summarize this paper  ",
+    ):
+        payload = export_public_methodology(output_path)
+
+    exported = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exported == payload
+    assert payload["schemaVersion"] == 1
+    assert payload["summaryPrompt"] == "summarize this paper"
+    assert len(payload["promptFingerprint"]) == 64
+    assert set(payload) == {
+        "schemaVersion",
+        "generatedAt",
+        "promptFingerprint",
+        "summaryPrompt",
+    }
+
+
+def test_export_public_methodology_handles_missing_prompt(tmp_path):
+    """A missing prompt produces a safe, buildable empty payload."""
+    output_path = tmp_path / "methodology.json"
+
+    with patch(
+        "processors.prompt_explainer.render_summary_prompt",
+        return_value="",
+    ):
+        payload = export_public_methodology(output_path)
+
+    assert payload["summaryPrompt"] == ""
+    assert payload["promptFingerprint"] == ""

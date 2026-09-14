@@ -341,6 +341,10 @@ Phase H 从 `data/email.yaml` 读取收件人，失败时回退 `.env` 的 `SMTP
 `data/reports/user/` 是组内特别报告的隔离目录，部署脚本没有将其导出的选项。历史重建若某个日期窗口没有合格论文，不会生成空 Markdown 或 sidecar；若重建已有的空报告，会一并清理其解释页，避免公开站点出现零条目页面。
 全局布局提供站点 favicon，并使用统一的正文阅读字号；报告详情页提供与当前公开内容对应的 Markdown 下载链接。论文卡片的期刊、作者和 DOI 等元信息仍以较小字号呈现。`study_type` 是内部 schema 字段，前端不得在“关键方法与设置”中渲染。
 
+公开站点的方法说明页在每次构建前从当前有效 `summary.yaml` 渲染总结 Prompt，并只导出 Prompt、生成时间和内容指纹。页面对相关性筛选仅作流程级说明，不导出研究范围词表、完整相关性 Prompt、模型配置、论文实例或本地路径。该页面表示当前工作流，不追溯声称历史报告使用了相同 Prompt；旧的逐期 explained HTML 继续作为本地兼容产物，不进入公开站点。
+
+报告详情页按 A/B/C 提供数量概览和分类锚点，桌面目录标记当前论文，移动端使用可展开目录；A 默认展开，B/C 默认折叠并支持统一展开或收起。详细解读限制阅读行宽，窄屏必须自然回流，键盘焦点、触控目标和减少动效偏好属于静态站点的基础可访问性要求。MathJax 仅在报告正文实际含公式时加载。
+
 Astro 使用静态输出，不读取 SQLite、API 密钥或内部 WebUI 数据。`tools/deploy_report_site.py`
 负责将当前自动报告和公开历史归档导出到 Astro 数据目录、加载 nvm 中的 Node.js、构建 `report-site/dist/`，
 并通过项目锁定的 Wrangler 上传 Cloudflare Pages。账户 ID、API Token 和 Pages 项目名保存在

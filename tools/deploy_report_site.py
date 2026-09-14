@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_SITE_DIR = PROJECT_ROOT / "report-site"
 REPORT_DATA_DIR = REPORT_SITE_DIR / "src" / "data" / "reports"
+METHODOLOGY_DATA_PATH = REPORT_SITE_DIR / "src" / "data" / "methodology.json"
 REPORT_DOWNLOAD_DIR = REPORT_SITE_DIR / "public" / "downloads"
 AUTO_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "auto"
 LEGACY_REPORT_DIR = PROJECT_ROOT / "data" / "reports" / "legacy"
@@ -37,8 +38,12 @@ FORBIDDEN_OUTPUT_MARKERS = (
     "/Users/",
 )
 
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
-from tools.export_public_reports import export_reports  # noqa: E402
+from tools.export_public_reports import (  # noqa: E402
+    export_public_methodology,
+    export_reports,
+)
 
 
 def _resolve_node_bin() -> Path:
@@ -215,6 +220,9 @@ def main() -> int:
         markdown_root=REPORT_DOWNLOAD_DIR,
     )
     print(f"Exported {exported} public report(s) to {REPORT_DATA_DIR}")
+    methodology = export_public_methodology(METHODOLOGY_DATA_PATH)
+    prompt_state = "available" if methodology["summaryPrompt"] else "unavailable"
+    print(f"Exported public methodology ({prompt_state}) to {METHODOLOGY_DATA_PATH}")
 
     node_bin = _resolve_node_bin()
     env["PATH"] = f"{node_bin}:{env.get('PATH', '')}"

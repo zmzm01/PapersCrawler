@@ -41,4 +41,6 @@ report-site/dist/
 report-site/.astro/
 report-site/src/data/reports/
 report-site/src/generated-reports.ts
+report-site/src/data/methodology.json
+report-site/src/generated-methodology.ts
 report-site/public/downloads/

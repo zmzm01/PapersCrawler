@@ -1,0 +1,87 @@
+---
+import methodology from '../generated-methodology';
+import Layout from '../layouts/Layout.astro';
+
+const generatedLabel = methodology.generatedAt
+	? new Intl.DateTimeFormat('zh-CN', {
+		dateStyle: 'long',
+		timeStyle: 'short',
+		timeZone: 'Asia/Shanghai',
+	}).format(new Date(methodology.generatedAt))
+	: undefined;
+---
+
+<Layout title="报告方法 · PapersCrawler" description="PapersCrawler 论文筛选与结构化总结方法，以及当前生效的论文总结 Prompt。">
+	<article class="methodology-page">
+		<header class="page-hero">
+			<p class="eyebrow">REPORT METHODOLOGY</p>
+			<h1>报告如何生成</h1>
+			<p class="intro">这里公开报告的处理流程和当前实际生效的论文总结 Prompt，帮助读者理解结构化解读从何而来。</p>
+		</header>
+
+		<section class="method-section" aria-labelledby="workflow-title">
+			<p class="section-kicker">WORKFLOW</p>
+			<h2 id="workflow-title">从论文到报告</h2>
+			<ol class="workflow">
+				<li><strong>收集与补全</strong><span>汇集论文元数据、原文摘要和可用全文。</span></li>
+				<li><strong>相关性筛选</strong><span>先基于标题与摘要筛选，再结合全文确认；A/B 是推荐，C 作为邻近观察。</span></li>
+				<li><strong>全文总结</strong><span>仅对正式推荐论文调用 LLM，按固定字段提取动机、方法、结果、局限与启示。</span></li>
+				<li><strong>校验与发布</strong><span>检查 JSON 结构和公式，隐藏没有实质内容的字段，再生成报告。</span></li>
+			</ol>
+			<p class="boundary-note">相关性说明只公开流程原则。本页不包含研究范围词表、完整筛选 Prompt、模型配置、论文实例或组内数据。</p>
+		</section>
+
+		<section class="method-section" aria-labelledby="fields-title">
+			<p class="section-kicker">OUTPUT</p>
+			<h2 id="fields-title">总结包含什么</h2>
+			<div class="field-grid">
+				<div><strong>一句话结论</strong><span>方法、问题和核心结论的压缩概览。</span></div>
+				<div><strong>研究动机</strong><span>背景、已有缺口和论文目标。</span></div>
+				<div><strong>方法与设置</strong><span>实验、模拟或理论方法及关键参数。</span></div>
+				<div><strong>结果与物理</strong><span>主要发现、证据和物理解释。</span></div>
+				<div><strong>局限与边界</strong><span>正文支持的局限及其影响。</span></div>
+				<div><strong>主要启示</strong><span>贡献和可能的物理或应用意义。</span></div>
+			</div>
+		</section>
+
+		<section class="method-section prompt-section" aria-labelledby="prompt-title">
+			<p class="section-kicker">CURRENT PROMPT</p>
+			<h2 id="prompt-title">当前论文总结 Prompt</h2>
+			<p>以下是部署时读取到的当前版本。历史报告可能由旧版 Prompt 生成，本页不是逐期历史快照。</p>
+			{methodology.summaryPrompt ? (
+				<>
+					<div class="prompt-meta">
+						{generatedLabel && <span>生成于 {generatedLabel}</span>}
+						<span title={methodology.promptFingerprint}>SHA-256 {methodology.promptFingerprint.slice(0, 12)}…</span>
+					</div>
+					<details class="prompt-details">
+						<summary>查看完整 Prompt</summary>
+						<pre><code>{methodology.summaryPrompt}</code></pre>
+					</details>
+				</>
+			) : <p class="prompt-unavailable">当前构建没有可公开的 Prompt 数据，请在完整部署流程后再查看。</p>}
+		</section>
+	</article>
+</Layout>
+
+<style>
+	.methodology-page { margin-inline: auto; max-width: 68rem; }
+	.methodology-page .page-hero { max-width: 58rem; }
+	.method-section { border-top: 2px solid var(--accent); margin-top: 3.5rem; padding-top: 1.3rem; }
+	.section-kicker { color: var(--accent); font-size: .7rem; font-weight: 800; letter-spacing: .14em; margin: 0 0 .3rem; }
+	.method-section h2 { font-family: var(--display); font-size: clamp(1.8rem, 4vw, 2.5rem); letter-spacing: -.04em; margin: 0 0 1.2rem; }
+	.workflow { counter-reset: workflow; display: grid; gap: .75rem; list-style: none; margin: 0; padding: 0; }
+	.workflow li { align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: .55rem; display: grid; gap: .2rem 1rem; grid-template-columns: 2.5rem minmax(0, 1fr); padding: 1rem 1.15rem; }
+	.workflow li::before { align-items: center; background: var(--accent-soft); border-radius: 50%; color: var(--accent); content: counter(workflow); counter-increment: workflow; display: flex; font-weight: 800; grid-row: 1 / 3; height: 2.2rem; justify-content: center; width: 2.2rem; }
+	.workflow span, .field-grid span { color: var(--muted); }
+	.boundary-note { background: #f4ead2; border-left: 3px solid #bc8a35; margin: 1rem 0 0; padding: .75rem .9rem; }
+	.field-grid { display: grid; gap: .8rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.field-grid div { background: color-mix(in srgb, var(--surface) 82%, transparent); border: 1px solid var(--line); border-radius: .5rem; display: grid; gap: .25rem; padding: 1rem; }
+	.prompt-section > p { color: var(--muted); max-width: 48rem; }
+	.prompt-meta { color: var(--muted); display: flex; flex-wrap: wrap; font-family: ui-monospace, monospace; font-size: .76rem; gap: .5rem 1.2rem; }
+	.prompt-details { background: var(--surface); border: 1px solid var(--line); border-radius: .55rem; overflow: hidden; }
+	.prompt-details summary { min-height: 44px; padding: .75rem 1rem; }
+	.prompt-details pre { background: #202728; color: #eef2ed; font-size: .78rem; line-height: 1.65; margin: 0; max-height: 70vh; overflow: auto; padding: 1.2rem; white-space: pre-wrap; word-break: break-word; }
+	.prompt-unavailable { background: var(--surface); border: 1px dashed var(--line); padding: 1rem; }
+	@media (max-width: 620px) { .field-grid { grid-template-columns: 1fr; } .workflow li { grid-template-columns: 2.2rem minmax(0, 1fr); padding: .9rem; } }
+</style>

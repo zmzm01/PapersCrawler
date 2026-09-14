@@ -76,6 +76,11 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
     monkeypatch.setattr(deploy_report_site, "LEGACY_REPORT_DIR", tmp_path / "legacy")
     monkeypatch.setattr(deploy_report_site, "REPORT_SITE_DIR", tmp_path)
     monkeypatch.setattr(deploy_report_site, "REPORT_DATA_DIR", tmp_path / "reports")
+    monkeypatch.setattr(
+        deploy_report_site,
+        "METHODOLOGY_DATA_PATH",
+        tmp_path / "methodology.json",
+    )
     monkeypatch.setattr(deploy_report_site.sys, "argv", ["deploy_report_site.py"])
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "account-id")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "token-value")
@@ -83,6 +88,10 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
 
     with (
         patch("tools.deploy_report_site.export_reports", return_value=1) as export,
+        patch(
+            "tools.deploy_report_site.export_public_methodology",
+            return_value={"summaryPrompt": "prompt"},
+        ) as export_methodology,
         patch("tools.deploy_report_site._resolve_node_bin", return_value=node_bin),
         patch("tools.deploy_report_site._build_site", return_value=output_dir) as build,
         patch("tools.deploy_report_site._validate_output"),
@@ -98,3 +107,4 @@ def test_main_injects_local_config_only_into_deploy_process(tmp_path, monkeypatc
     assert export.call_args.kwargs["markdown_root"] == (
         deploy_report_site.REPORT_DOWNLOAD_DIR
     )
+    export_methodology.assert_called_once_with(tmp_path / "methodology.json")

@@ -697,7 +697,9 @@ npm run check
 npm run build
 ```
 
-站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。报告详情页可下载同内容的 Markdown。报告中的内部 `study_type` 不会公开显示。
+站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。报告详情页可下载同内容的 Markdown，并按 A/B/C 提供分类导航、当前位置目录和统一展开/收起控制。报告中的内部 `study_type` 不会公开显示。
+
+`/methodology/` 展示部署时当前实际生效的 Phase F 总结 Prompt、结构化字段说明、生成时间和 SHA-256 内容指纹。它只概述筛选与总结流程，不包含研究范围词表、完整相关性 Prompt、模型配置、密钥、论文实例或组内报告。该页面代表当前版本；历史报告可能由旧版 Prompt 生成，不能据此反推逐期 Prompt。
 
 构建前需要将公开 JSON 导出到 Astro 的生成数据目录。公开站点只读取当前自动报告
 `data/reports/auto/` 和公开历史归档 `data/reports/legacy/`；`data/reports/user/` 的组内特别报告不会导出：
@@ -727,7 +729,7 @@ Token 仅授予目标账户的 **Cloudflare Pages 编辑**权限。`.env` 已被
 /path/to/paperscrawler-venv/bin/python tools/deploy_report_site.py
 ```
 
-脚本依次导出公开报告、运行 `npm run build`，再以 `npx wrangler pages deploy` 上传
+脚本依次导出公开报告和当前总结 Prompt、运行 `npm run build`，再以 `npx wrangler pages deploy` 上传。生成的方法数据同样被 Git 忽略；普通 `npm run build` 在它不存在时生成“Prompt 暂不可用”的安全降级页面。
 `report-site/dist/`。Wrangler 是 `report-site/package-lock.json` 锁定的开发依赖；首次缺少
 `node_modules` 时脚本才会执行一次 `npm ci`，后续不会额外下载部署工具。
 

@@ -9,23 +9,47 @@ export function getStaticPaths() {
 }
 
 const report = (Astro.props as { report: PublicReport }).report;
-const paperCount = contentItems(report.content, 'papers').length;
+const papers = contentItems(report.content, 'papers');
+const paperCount = papers.length;
+const categoryLabels: Record<string, string> = { A: '核心推荐', B: '扩展推荐', C: '邻近观察' };
+const categoryCounts = ['A', 'B', 'C'].map((category) => ({
+	category,
+	label: categoryLabels[category],
+	count: papers.filter((paper) => paper.relevanceCategory === category).length,
+})).filter(({ count }) => count > 0);
+const hasMath = /\\\(|\\\[|\$\$/.test(JSON.stringify(report.content));
 ---
 
-<Layout title={`${report.title} · PapersCrawler`} description={report.summary}>
+<Layout title={`${report.title} · PapersCrawler`} description={report.summary} hasMath={hasMath}>
 	<div class="report-shell" id="report-start">
 		<ReportToc report={report} />
 		<div class="report-main">
 			<div class="report-actions">
 				<a class="back" href="/">← 返回报告归档</a>
-				{report.downloadUrl && (
-					<a class="download" href={report.downloadUrl} download>下载 Markdown ↓</a>
-				)}
+				<div class="action-links">
+					<a class="method-link" href="/methodology/">报告如何生成？</a>
+					{report.downloadUrl && <a class="download" href={report.downloadUrl} download>下载 Markdown ↓</a>}
+				</div>
 			</div>
 			<p class="eyebrow">PAPERSCRAWLER · {formatDate(report.publishedAt)} · {paperCount} PAPERS</p>
 			<h1>{report.title}</h1>
 			<p class="report-summary">{report.summary}</p>
+			<div class="report-tools" aria-label="报告阅读工具">
+				<nav class="category-overview" aria-label="按相关性分类跳转">
+					{categoryCounts.map(({ category, label, count }) => <a href={`#category-${category}`}><strong>{category}</strong><span>{label}</span><b>{count}</b></a>)}
+				</nav>
+				<div class="detail-controls"><button type="button" data-details-action="open">展开全部解读</button><button type="button" data-details-action="close">收起全部解读</button></div>
+			</div>
 			<ReportContent report={report} />
 		</div>
 	</div>
 </Layout>
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-details-action]')) {
+		button.addEventListener('click', () => {
+			const shouldOpen = button.dataset.detailsAction === 'open';
+			for (const details of document.querySelectorAll<HTMLDetailsElement>('.paper-details')) details.open = shouldOpen;
+		});
+	}
+</script>
