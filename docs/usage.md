@@ -16,8 +16,11 @@
 
 ## 安装与首次运行
 
+需要 Python 3.12。推荐先按 [uv 官方安装说明](https://docs.astral.sh/uv/getting-started/installation/) 安装 `uv`，再执行：
+
 ```bash
-python -m pip install -r requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
 cp .env.example .env
 
 # 编辑 .env，至少填写：
@@ -25,10 +28,19 @@ cp .env.example .env
 vim configs/keywords.yaml
 
 # 桌面环境
-python tools/run_pipeline.py --all
+.venv/bin/python tools/run_pipeline.py --all
 
 # 无头服务器（Phase C 需要显示器）
-xvfb-run -a python tools/run_pipeline.py --all
+xvfb-run -a .venv/bin/python tools/run_pipeline.py --all
+```
+
+如果不使用 `uv`，可通过 Python 标准库创建同一路径的虚拟环境：
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m camoufox fetch
 ```
 
 报告默认写入 `data/reports/auto/`。如果只想查看执行计划，增加 `--dry-run`；dry-run 不重置数据库、不运行阶段、不发送 ntfy。
@@ -37,7 +49,7 @@ xvfb-run -a python tools/run_pipeline.py --all
 
 ### 推荐入口
 
-`python tools/run_pipeline.py` 是统一入口：
+`.venv/bin/python tools/run_pipeline.py` 是统一入口：
 
 | 参数 | 阶段 | 说明 |
 |---|---|---|
@@ -97,7 +109,7 @@ CrossRef 的空字段不会覆盖 RSS 已有值；OpenAlex 同样只填补仍为
 0 20 * * 7 cd /path/to/PapersCrawler && ./run_weekly.sh >> /var/log/paperscrawler-weekly.log 2>&1
 ```
 
-服务器建议使用 `Asia/Shanghai` 时区。包装脚本已经设置项目目录、PYTHONPATH 和 cron 所需的 PATH。
+服务器建议使用 `Asia/Shanghai` 时区。包装脚本已经设置项目目录、PYTHONPATH 和 cron 所需的 PATH，默认调用仓库内 `.venv/bin/python`；可用 `PAPERSCRAWLER_PYTHON=/path/to/python` 覆盖。
 
 ### 日志和 ntfy
 
@@ -697,7 +709,9 @@ npm run check
 npm run build
 ```
 
-站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。只有顶部站点导航吸顶，方法页标题和其他正文标题会正常随页面滚动。报告详情页可下载同内容的 Markdown，并按 A/B/C 提供分类导航、当前位置目录和统一展开/收起控制。报告中的内部 `study_type` 不会公开显示。
+站点标签页图标来自 `report-site/public/favicon.svg`；正文阅读区统一为 16px，期刊、作者和 DOI 等辅助元信息会保留较小字号。只有顶部站点导航吸顶，方法页标题和其他正文标题会正常随页面滚动。报告详情页可下载同内容的 Markdown，并按 A/B/C 提供分类导航、当前位置目录和统一展开/收起控制。搜索框可匹配标题、作者、期刊、DOI 与子领域，并与分类筛选组合使用；页面还提供复制 DOI/原文链接、收起并跳到下一篇、展开偏好记忆和篇序提示。移动端右下角提供目录与返回顶部入口。报告中的内部 `study_type` 不会公开显示。
+
+公式在 Astro 构建期由 KaTeX 渲染，线上阅读不再请求 MathJax CDN。若旧 Publisher 摘要出现 `intensities of .` 一类公式空洞，而对应 MinerU `full.md` 含 Abstract 章节，重建报告时会自动使用全文摘要恢复公式；未来 APS 页面解析也会保留摘要段落中的行内后代文本。修复历史页面需运行历史重建或重新生成对应报告后再部署。
 
 `/methodology/` 展示部署时当前实际生效的 Phase F 总结系统 Prompt、运行时论文输入封装、结构化字段说明、生成时间和 SHA-256 内容指纹。论文输入只展示安全模板（标题与全文的位置），不展示任何论文实例。它只概述筛选与总结流程，不包含研究范围词表、完整相关性 Prompt、模型配置、密钥或组内报告。该页面代表当前版本；历史报告可能由旧版 Prompt 生成，不能据此反推逐期 Prompt。
 

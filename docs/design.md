@@ -234,6 +234,8 @@ E2 使用 `fulltext_download_events` 通过事务占位，按 Asia/Shanghai 自�
 
 报告先由数据库行构造统一的 ReportSnapshot，原子写入版本化 JSON，再从同一份内存结构渲染 Markdown；这样 Markdown 不再是结构化数据的唯一载体。自动报告写入 `data/reports/auto/` 并标记已报告；预览报告由 `tools/preview_report.py` 写入用户指定路径且不改数据库，同时生成同名 JSON sidecar。自动、用户选定和预览报告均按有效相关性分类筛选，人工决定覆盖 E3 分类；A/B 为完整总结，启用日期后的 C 为轻量邻近观察。报告头部按 A、B、C 分别统计并解释引入 C 的原因。预览可按 `created_date` 使用 `--before-date YYYY-MM-DD` 设置严格日期上限，截止日当天不包含在内；内部的日期窗口查询也支持包含式上下界，供历史重建使用。`tools/rebuild_historical_reports.py` 默认合并扫描 `data/reports/legacy/` 与 `data/reports/auto/` 的报告日期，以相邻报告日期之间的 `created_date`（首份报告从最早记录开始）按当前数据库状态重建 Markdown 和当前 schema 的 sidecar，不修改 `report_date`。历史重建中累计首期仅保留 A/B，后续窗口收录全部 A/B/C；这是显式历史迁移策略，不改变日常自动报告的 C 启用日期。只有显式指定 `--export-public` 才会同步单份预览报告。`data/reports/user/` 保留历史用户报告及其 JSON 快照，当前 WebUI 只查看和下载。
 
+公开 Astro 站点保持静态输出，但在浏览器端提供本期标题/作者/期刊/DOI/子领域搜索、A/B/C 过滤、展开偏好、复制与下一篇操作；“下一篇”按当前搜索与分类结果的可见 DOM 顺序导航。移动端使用悬浮目录和返回顶部入口。归档标题由发布日期生成，避免多期同名。公式由 Astro 构建期 KaTeX 转为自包含 HTML，不依赖访问时加载第三方 MathJax。APS 摘要保留段落后代文本；对于历史记录中出现明显公式空洞且已有 MinerU 全文的论文，ReportSnapshot 从全文 Abstract 章节恢复摘要并统一公式分隔符。
+
 规范化 Summary 在数据库内部维持固定 schema 和 `未提供` 占位语义，便于质量门禁与重跑；展示层采用
 稀疏输出：Markdown、HTML 和公开 JSON 递归忽略完整值为 `未提供`、`暂无`、`无` 或空字符串的字段，
 对应章节没有任何有效子项时连章节标题也不显示。含有这些词但仍提供实质信息的完整句子不会被删除。

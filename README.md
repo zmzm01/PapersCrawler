@@ -44,7 +44,7 @@ Playwright 会话，避免同步运行循环冲突。
 - **多协议 LLM 接入**：按角色支持 Chat Completions、OpenAI Responses 和 Anthropic Messages；可接入 Command Code、OpenCode Zen 等 OpenAI-compatible 网关及其模型，并兼容模型偶发的 Markdown/JSON 格式包装；FormulaFixer 使用独立模型和并发池
 - **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
 - **历史周报重建**：`tools/rebuild_historical_reports.py` 可跨 `legacy/auto` 按相邻报告日期重建全部历史周报；累计首期仅保留 A/B，其余各期同时收录 C 类邻近观察
-- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，支持独立吸顶导航、分类导航、长文阅读优化和公开 Markdown 下载；自动报告和公开历史归档可见，组内特别报告保持隔离
+- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，支持报告内搜索/分类过滤、移动端快捷目录、阅读进度、复制链接、静态 KaTeX 公式和公开 Markdown 下载；自动报告和公开历史归档可见，组内特别报告保持隔离
 - **可检查的静态公式渲染**：Markdown/KaTeX/Prince 脚本带 JSDoc 类型约束，可纳入 Astro 类型检查
 - **报告方法说明**：公开站点展示当前实际生效的论文总结 Prompt、处理流程和 Prompt 指纹；本地 `report_YYYYMMDD_explained.html` 继续保留历史兼容
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
@@ -52,10 +52,13 @@ Playwright 会话，避免同步运行循环冲突。
 
 ## 快速开始
 
+需要 Python 3.12。推荐先按 [uv 官方文档](https://docs.astral.sh/uv/getting-started/installation/) 安装 `uv`：
+
 ```bash
-# 1) 安装（使用你的 Python 环境）
-python -m pip install -r requirements.txt
-python -m camoufox fetch
+# 1) 创建项目独立环境并安装
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python -m camoufox fetch
 
 # 2) 配置密钥
 cp .env.example .env
@@ -66,9 +69,12 @@ cp .env.example .env
 vim configs/keywords.yaml
 
 # 4) 全流程跑一次
-python tools/run_pipeline.py --all                  # 桌面环境
-xvfb-run -a python tools/run_pipeline.py --all      # 无头服务器（Phase C 需要 Xvfb）
+.venv/bin/python tools/run_pipeline.py --all                  # 桌面环境
+xvfb-run -a .venv/bin/python tools/run_pipeline.py --all      # 无头服务器（Phase C 需要 Xvfb）
 ```
+
+未安装 `uv` 时，也可以用 `python3.12 -m venv .venv` 创建环境，再执行
+`.venv/bin/python -m pip install -r requirements.txt`。
 
 `--all` 会强制执行 A-RSS/A-CR/B/C/E/E2/E3/F/G/H，即使配置中某阶段被 skip；流水线发生阶段错误时 CLI 返回非零退出码，便于 cron 监控。
 
@@ -126,7 +132,7 @@ cron 调度。WebUI 不启动浏览器抓取；无头服务器的 `xvfb-run` 只
 0 20 * * 7 /path/to/PapersCrawler/run_weekly.sh
 ```
 
-包装脚本默认使用 PATH 中的 `python`；conda 或虚拟环境可通过
+包装脚本默认使用项目下的 `.venv/bin/python`；其他 Python 环境可通过
 `PAPERSCRAWLER_PYTHON=/path/to/env/bin/python` 覆盖。
 
 详见 [`docs/usage.md`](docs/usage.md#典型工作流)。
