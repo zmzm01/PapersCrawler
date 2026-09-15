@@ -43,7 +43,7 @@ const currentYear = new Date().getFullYear();
 		{hasMath && <script is:inline defer src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js"></script>}
 	</head>
 	<body class="theme-papers">
-		<header>
+		<header class="site-header">
 			<nav class="site-nav" aria-label="主导航">
 				<a class="brand" href="/">PapersCrawler</a>
 				<div class="site-links">
@@ -89,7 +89,7 @@ const currentYear = new Date().getFullYear();
 	a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid #c27b22; outline-offset: 3px; }
 	button { font: inherit; }
 	time, .grade, .report-count { font-variant-numeric: tabular-nums; }
-	header {
+	.site-header {
 		backdrop-filter: blur(12px);
 		background: color-mix(in srgb, var(--surface) 88%, transparent);
 		border-bottom: 1px solid var(--line);
@@ -251,7 +251,7 @@ const currentYear = new Date().getFullYear();
 	}
 	@media print {
 		body { background: #fff; }
-		header, footer, .report-toc, .report-actions, .report-tools { display: none !important; }
+		.site-header, footer, .report-toc, .report-actions, .report-tools { display: none !important; }
 		.site-nav, main, footer { width: 100%; }
 		main { padding: 0; }
 		.report-shell { display: block; }

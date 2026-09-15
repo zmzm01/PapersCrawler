@@ -44,7 +44,7 @@ Playwright 会话，避免同步运行循环冲突。
 - **多协议 LLM 接入**：按角色支持 Chat Completions、OpenAI Responses 和 Anthropic Messages；可接入 Command Code、OpenCode Zen 等 OpenAI-compatible 网关及其模型，并兼容模型偶发的 Markdown/JSON 格式包装；FormulaFixer 使用独立模型和并发池
 - **公开报告导出**：`tools/export_public_reports.py` 将报告 sidecar 导出为静态站点可消费的 JSON
 - **历史周报重建**：`tools/rebuild_historical_reports.py` 可跨 `legacy/auto` 按相邻报告日期重建全部历史周报；累计首期仅保留 A/B，其余各期同时收录 C 类邻近观察
-- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，支持分类导航、长文阅读优化和公开 Markdown 下载；自动报告和公开历史归档可见，组内特别报告保持隔离
+- **公开报告站点**：`report-site/` 使用 Astro 静态构建并发布至 Cloudflare Pages，支持独立吸顶导航、分类导航、长文阅读优化和公开 Markdown 下载；自动报告和公开历史归档可见，组内特别报告保持隔离
 - **可检查的静态公式渲染**：Markdown/KaTeX/Prince 脚本带 JSDoc 类型约束，可纳入 Astro 类型检查
 - **报告方法说明**：公开站点展示当前实际生效的论文总结 Prompt、处理流程和 Prompt 指纹；本地 `report_YYYYMMDD_explained.html` 继续保留历史兼容
 - **逐篇错误隔离**：单篇失败不影响同阶段其他论文
