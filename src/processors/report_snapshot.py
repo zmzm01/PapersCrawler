@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from common import clean_extracted_text
+from config import DATA_DIR
 from processors.summary_schema import normalize_summary
 
 
@@ -50,6 +52,8 @@ def build_report_papers(papers) -> list[dict[str, Any]]:
             paper, "effective_relevance_category",
             paper["llm_relevance_category"] or "",
         )
+        abstract = clean_extracted_text(paper["abstract"]) or ""
+        abstract = _recover_incomplete_abstract(paper, abstract)
         report_papers.append({
             "title": paper["title"] or "",
             "authors": authors,
@@ -72,7 +76,7 @@ def build_report_papers(papers) -> list[dict[str, Any]]:
             "relevance_basis": paper["llm_relevance_basis"] or "",
             "page_url": paper["page_url"] or "",
             "pdf_url": paper["pdf_url"] or "",
-            "abstract": clean_extracted_text(paper["abstract"]) or "",
+            "abstract": abstract,
             "summary": summary,
             "one_sentence": summary.get("one_sentence", ""),
             "motivation_and_goal": summary.get("motivation_and_goal", ""),
@@ -83,6 +87,68 @@ def build_report_papers(papers) -> list[dict[str, Any]]:
             "has_full_summary": paper["llm_summary_status"] == "success",
         })
     return report_papers
+
+
+def _recover_incomplete_abstract(paper, abstract: str) -> str:
+    """Recover formula-damaged metadata abstracts from parsed full text.
+
+    Some publisher pages expose formulas only in nested MathJax nodes. Older
+    snapshots therefore contain gaps such as ``intensities of .``. When that
+    signature is present and MinerU full text is available, prefer its Abstract
+    section and normalize dollar-delimited formulas for report rendering.
+
+    Parameters
+    ----------
+    paper : mapping or sqlite3.Row
+        Database paper record, optionally containing ``mineru_output_dir``.
+    abstract : str
+        Cleaned metadata abstract.
+
+    Returns
+    -------
+    str
+        Original abstract, or a recovered full-text abstract.
+    """
+    gap_match = re.search(
+        r"\b(?:of|above|below|from|at|between)(?:\s+[A-Za-z]+){0,2}\s+[.,;:]",
+        abstract,
+        flags=re.IGNORECASE,
+    )
+    if not gap_match:
+        return abstract
+    output_dir = _record_value(paper, "mineru_output_dir", "")
+    if not output_dir:
+        return abstract
+    fulltext_path = Path(DATA_DIR) / str(output_dir) / "full.md"
+    try:
+        fulltext = fulltext_path.read_text(encoding="utf-8")
+    except OSError:
+        return abstract
+    match = re.search(
+        r"^#{1,3}\s+Abstract\s*$\n(?P<abstract>.*?)(?=^#{1,3}\s+\S|\Z)",
+        fulltext,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    recovered_source = match.group("abstract") if match else ""
+    if not recovered_source:
+        # MinerU output for some APS PDFs places the abstract after the author
+        # block without an explicit heading. Match it by its stable opening
+        # phrase instead of assuming a fixed page layout.
+        opening = abstract[:min(80, gap_match.start())].strip()
+        recovered_source = next(
+            (
+                paragraph
+                for paragraph in re.split(r"\n\s*\n", fulltext)
+                if opening and opening in paragraph and len(paragraph) >= len(abstract) // 2
+            ),
+            "",
+        )
+    if not recovered_source:
+        return abstract
+    recovered = clean_extracted_text(recovered_source) or ""
+    recovered = re.sub(r"\$\$([^$]+)\$\$", r"\\[\1\\]", recovered)
+    recovered = re.sub(r"(?<!\$)\$([^$]+)\$(?!\$)", r"\\(\1\\)", recovered)
+    return recovered if len(recovered) >= len(abstract) // 2 else abstract
 
 
 def make_report_identifier(stem: str) -> str:

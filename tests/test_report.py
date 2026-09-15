@@ -579,6 +579,66 @@ def test_report_snapshot_uses_manual_relevance_override():
     assert snapshot["relevance_reason"] == "正文明确属于核心方向"
 
 
+def test_report_snapshot_recovers_formula_gap_from_fulltext(tmp_path, monkeypatch):
+    """Formula-damaged publisher abstracts fall back to MinerU Abstract text."""
+    from processors import report_snapshot
+
+    output_dir = tmp_path / "mineru_output" / "paper"
+    output_dir.mkdir(parents=True)
+    (output_dir / "full.md").write_text(
+        "# Title\n\n# Abstract\nIntensity is above $10^{18}\\,\\mathrm{W/cm^2}$.\n\n"
+        "# Introduction\nBody.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(report_snapshot, "DATA_DIR", tmp_path)
+    paper = {
+        "llm_summary_result": "{}", "authors_json": "[]",
+        "llm_relevance_subfields": "[]", "title": "Formula paper",
+        "paperdate_crossref": "2026-09-10", "paperdate_page": "",
+        "paperdate_rss": "", "doi": "10.1234/formula", "journal": "Journal",
+        "publisher": "Publisher", "llm_relevance_category": "A",
+        "effective_relevance_category": "A", "manual_relevance_decision": "",
+        "manual_relevance_notes": "", "llm_relevance_reason": "Relevant",
+        "llm_relevance_basis": "fulltext", "page_url": "", "pdf_url": "",
+        "abstract": "Intensity is above approximately .",
+        "llm_summary_status": "success", "mineru_output_dir": "mineru_output/paper",
+    }
+
+    snapshot = build_report_papers([paper])[0]
+
+    assert snapshot["abstract"] == r"Intensity is above \(10^{18}\,\mathrm{W/cm^2}\)."
+
+
+def test_report_snapshot_recovers_unheaded_fulltext_abstract(tmp_path, monkeypatch):
+    """APS-like PDFs may put the abstract before the first numbered heading."""
+    from processors import report_snapshot
+
+    output_dir = tmp_path / "mineru_output" / "paper"
+    output_dir.mkdir(parents=True)
+    (output_dir / "full.md").write_text(
+        "# Paper title\n\nAuthors\n\nLaser intensity is above $10^{18}$ and changes the result.\n\n"
+        "## I. INTRODUCTION\nBody.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(report_snapshot, "DATA_DIR", tmp_path)
+    paper = {
+        "llm_summary_result": "{}", "authors_json": "[]",
+        "llm_relevance_subfields": "[]", "title": "Formula paper",
+        "paperdate_crossref": "2026-09-10", "paperdate_page": "",
+        "paperdate_rss": "", "doi": "10.1234/formula", "journal": "Journal",
+        "publisher": "Publisher", "llm_relevance_category": "A",
+        "effective_relevance_category": "A", "manual_relevance_decision": "",
+        "manual_relevance_notes": "", "llm_relevance_reason": "Relevant",
+        "llm_relevance_basis": "fulltext", "page_url": "", "pdf_url": "",
+        "abstract": "Laser intensity is above . and changes the result.",
+        "llm_summary_status": "success", "mineru_output_dir": "mineru_output/paper",
+    }
+
+    assert build_report_papers([paper])[0]["abstract"] == (
+        r"Laser intensity is above \(10^{18}\) and changes the result."
+    )
+
+
 # ---- 相关性元信息 ----
 
 def test_report_shows_relevance_category_and_reason():

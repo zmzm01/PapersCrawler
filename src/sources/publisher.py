@@ -936,8 +936,8 @@ class APSScraper(BasePublisherScraper):
     元数据提取策略：主要依赖 HTML <meta> 标签中的 citation_* 系列元数据，
     摘要通过 CSS 选择器从 #abstract-section-content 区域提取。
 
-    已知限制：APS 页面中的数学公式通过 MathJAX 渲染，HTML 源码中不包含
-    原始 LaTeX 源码，因此无法直接从页面提取全文中的公式内容。
+    摘要提取会保留段落中的后代文本节点；这对 APS 以 MathJax/MathML 子节点
+    表示的公式以及 ``<em>`` 等行内语义节点尤其重要。
     """
 
     # APS 的 citation_pdf_url 是 link.aps.org 跨域重定向链接，下载 PDF 前
@@ -992,11 +992,11 @@ class APSScraper(BasePublisherScraper):
         # CSS 选择器：#abstract-section-content 是 APS 页面的摘要容器，
         # 内部可能包含多个 <p> 标签（理论上物理期刊摘要单段，但做兼容处理）
         abstract = self._join_texts(
-            sel.css("#abstract-section-content p::text").getall()
+            sel.xpath(
+                '//*[@id="abstract-section-content"]//p//text()'
+                '[not(ancestor::mjx-assistive-mml)]'
+            ).getall()
         )
-
-        # 注意：APS 正文中的数学公式由 MathJAX 渲染，HTML 源码中不含原始 TeX，
-        #       因此无法直接从 HTML 页面抓取全文公式内容。
 
         return Paper(
             doi=doi,

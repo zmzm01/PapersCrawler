@@ -92,6 +92,25 @@ def test_aps_scraper_meta_parsing():
         assert "abstract" in paper.abstract.lower()
 
 
+def test_aps_scraper_keeps_nested_abstract_text():
+    """APS inline emphasis and rendered formula descendants are not dropped."""
+    import tempfile
+    html = """
+    <meta name="citation_title" content="Nested formula"/>
+    <div id="abstract-section-content"><p>Intensity <em>reaches</em>
+    <span class="formula">10¹⁸ W/cm²</span>.</p></div>
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "aps-formula.html")
+        with open(html_path, "w") as output:
+            output.write(html)
+        scraper = APSScraper(tmpdir)
+        scraper.fetch_page(html_path=html_path)
+        paper = scraper.parse_page()
+
+    assert paper.abstract == "Intensity reaches 10¹⁸ W/cm² ."
+
+
 def test_cambridge_scraper_abstract_in_meta():
     """验证 Cambridge 解析器从 meta 标签提取摘要。"""
     import tempfile
