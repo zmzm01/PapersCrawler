@@ -4,6 +4,7 @@ __pycache__
 .coverage
 coverage.xml
 htmlcov/
+.venv/
 .env
 *.swp
 graphify-out
