@@ -59,6 +59,16 @@ export function formatDate(value: string): string {
 	}).format(new Date(value));
 }
 
+export function reportDisplayTitle(report: Pick<PublicReport, 'publishedAt'>): string {
+	const date = new Date(report.publishedAt);
+	if (Number.isNaN(date.valueOf())) return '文献报告';
+	const parts = new Intl.DateTimeFormat('zh-CN', {
+		year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC',
+	}).formatToParts(date);
+	const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+	return `${value('year')}-${value('month')}-${value('day')} 文献周报`;
+}
+
 export function contentItems(content: ReportRecord, key: string): ReportRecord[] {
 	const value = content[key];
 	return Array.isArray(value) ? value.filter(isRecord) : [];

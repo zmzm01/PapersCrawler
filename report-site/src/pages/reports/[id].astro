@@ -2,7 +2,7 @@
 import Layout from '../../layouts/Layout.astro';
 import ReportContent from '../../components/ReportContent.astro';
 import ReportToc from '../../components/ReportToc.astro';
-import { contentItems, formatDate, getReports, type PublicReport } from '../../lib/reports';
+import { contentItems, formatDate, getReports, reportDisplayTitle, type PublicReport } from '../../lib/reports';
 
 export function getStaticPaths() {
 	return getReports().map((report) => ({ params: { id: report.id }, props: { report } }));
@@ -17,10 +17,9 @@ const categoryCounts = ['A', 'B', 'C'].map((category) => ({
 	label: categoryLabels[category],
 	count: papers.filter((paper) => paper.relevanceCategory === category).length,
 })).filter(({ count }) => count > 0);
-const hasMath = /\\\(|\\\[|\$\$/.test(JSON.stringify(report.content));
 ---
 
-<Layout title={`${report.title} · PapersCrawler`} description={report.summary} hasMath={hasMath}>
+<Layout title={`${reportDisplayTitle(report)} · PapersCrawler`} description={report.summary}>
 	<div class="report-shell" id="report-start">
 		<ReportToc report={report} />
 		<div class="report-main">
@@ -32,7 +31,7 @@ const hasMath = /\\\(|\\\[|\$\$/.test(JSON.stringify(report.content));
 				</div>
 			</div>
 			<p class="eyebrow">PAPERSCRAWLER · {formatDate(report.publishedAt)} · {paperCount} PAPERS</p>
-			<h1>{report.title}</h1>
+			<h1>{reportDisplayTitle(report)}</h1>
 			<p class="report-summary">{report.summary}</p>
 			<div class="report-tools" aria-label="报告阅读工具">
 				<nav class="category-overview" aria-label="按相关性分类跳转">
@@ -40,16 +39,92 @@ const hasMath = /\\\(|\\\[|\$\$/.test(JSON.stringify(report.content));
 				</nav>
 				<div class="detail-controls"><button type="button" data-details-action="open">展开全部解读</button><button type="button" data-details-action="close">收起全部解读</button></div>
 			</div>
+			<form class="paper-filter" role="search" data-paper-filter>
+				<label for="paper-search">搜索本期论文</label>
+				<div><input id="paper-search" type="search" placeholder="标题、作者、期刊、DOI 或子领域" autocomplete="off" data-paper-search /><select aria-label="相关性分类" data-category-filter><option value="">全部分类</option><option value="A">A · 核心推荐</option><option value="B">B · 扩展推荐</option><option value="C">C · 邻近观察</option></select><button type="reset">清除</button></div>
+				<p aria-live="polite" data-filter-status>显示全部 {paperCount} 篇论文</p>
+			</form>
 			<ReportContent report={report} />
 		</div>
 	</div>
+	<nav class="mobile-reader-nav" aria-label="移动端阅读导航"><button type="button" data-mobile-index>论文目录</button><button type="button" data-back-to-top>返回顶部</button></nav>
 </Layout>
 
 <script>
+	const preferenceKey = 'paperscrawler-details-open';
+	const allDetails = () => [...document.querySelectorAll<HTMLDetailsElement>('.paper-details')];
 	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-details-action]')) {
 		button.addEventListener('click', () => {
 			const shouldOpen = button.dataset.detailsAction === 'open';
-			for (const details of document.querySelectorAll<HTMLDetailsElement>('.paper-details')) details.open = shouldOpen;
+			for (const details of allDetails()) details.open = shouldOpen;
+			localStorage.setItem(preferenceKey, shouldOpen ? 'open' : 'closed');
 		});
 	}
+	const savedPreference = localStorage.getItem(preferenceKey);
+	if (savedPreference) for (const details of allDetails()) details.open = savedPreference === 'open';
+
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-copy-value]')) {
+		button.addEventListener('click', async () => {
+			const label = button.dataset.copyLabel || '复制';
+			try {
+				await navigator.clipboard.writeText(button.dataset.copyValue || '');
+				button.textContent = '已复制';
+				setTimeout(() => { button.textContent = label; }, 1600);
+			} catch { button.textContent = '复制失败'; }
+		});
+	}
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-next-paper]')) {
+		button.addEventListener('click', () => {
+			const current = button.closest<HTMLElement>('[data-paper]');
+			const visiblePapers = [...document.querySelectorAll<HTMLElement>('[data-paper]:not([hidden])')];
+			const currentIndex = current ? visiblePapers.indexOf(current) : -1;
+			const next = currentIndex >= 0 ? visiblePapers[currentIndex + 1] : undefined;
+			button.closest('details')?.removeAttribute('open');
+			if (next) { next.querySelector('details')?.setAttribute('open', ''); next.scrollIntoView({ behavior: 'smooth' }); }
+		});
+	}
+
+	const filter = document.querySelector<HTMLFormElement>('[data-paper-filter]');
+	const search = document.querySelector<HTMLInputElement>('[data-paper-search]');
+	const category = document.querySelector<HTMLSelectElement>('[data-category-filter]');
+	const status = document.querySelector<HTMLElement>('[data-filter-status]');
+	const applyFilter = () => {
+		const query = search?.value.trim().toLocaleLowerCase('zh-CN') || '';
+		const selectedCategory = category?.value || '';
+		let visibleCount = 0;
+		for (const paper of document.querySelectorAll<HTMLElement>('[data-paper]')) {
+			const visible = (!query || (paper.dataset.search || '').includes(query)) && (!selectedCategory || paper.dataset.category === selectedCategory);
+			paper.hidden = !visible;
+			for (const link of document.querySelectorAll<HTMLElement>(`[data-paper-link="${paper.id}"], [data-paper-target="${paper.id}"]`)) link.hidden = !visible;
+			if (visible) visibleCount += 1;
+		}
+		for (const section of document.querySelectorAll<HTMLElement>('[data-category-section]')) section.hidden = !section.querySelector('[data-paper]:not([hidden])');
+		const visiblePapers = [...document.querySelectorAll<HTMLElement>('[data-paper]:not([hidden])')];
+		for (const [paperIndex, paper] of visiblePapers.entries()) {
+			const nextButton = paper.querySelector<HTMLButtonElement>('[data-next-paper]');
+			if (nextButton) nextButton.hidden = paperIndex === visiblePapers.length - 1;
+		}
+		if (status) status.textContent = visibleCount ? `显示 ${visibleCount} 篇论文` : '没有匹配的论文';
+	};
+	search?.addEventListener('input', applyFilter);
+	category?.addEventListener('change', applyFilter);
+	filter?.addEventListener('reset', () => setTimeout(applyFilter));
+	applyFilter();
+
+	document.querySelector<HTMLButtonElement>('[data-mobile-index]')?.addEventListener('click', () => {
+		const index = document.querySelector<HTMLDetailsElement>('.mobile-paper-index');
+		if (index) { index.open = true; index.scrollIntoView({ behavior: 'smooth', block: 'start' }); index.querySelector('summary')?.focus(); }
+	});
+	document.querySelector<HTMLButtonElement>('[data-back-to-top]')?.addEventListener('click', () => document.getElementById('report-start')?.scrollIntoView({ behavior: 'smooth' }));
 </script>
+
+<style>
+	.paper-filter { background: color-mix(in srgb, var(--surface) 82%, transparent); border: 1px solid var(--line); border-radius: .55rem; margin-top: 1rem; padding: .85rem 1rem; }
+	.paper-filter > label { display: block; font-size: .82rem; font-weight: 750; margin-bottom: .35rem; }
+	.paper-filter > div { display: grid; gap: .5rem; grid-template-columns: minmax(12rem, 1fr) auto auto; }
+	.paper-filter input, .paper-filter select, .paper-filter button { background: var(--surface); border: 1px solid var(--line); border-radius: .35rem; color: var(--ink); font: inherit; min-height: 44px; padding: .5rem .7rem; }
+	.paper-filter button { color: var(--accent); cursor: pointer; font-weight: 700; }
+	.paper-filter p { color: var(--muted); font-size: .76rem; margin: .35rem 0 0; }
+	[hidden] { display: none !important; }
+	@media (max-width: 620px) { .paper-filter > div { grid-template-columns: 1fr; } }
+</style>

@@ -21,7 +21,26 @@ function normalizeMarkdownLines(value: string): string {
 
 /** Render the constrained Markdown emitted by the report summarizer. */
 export function renderReportMarkdown(markdown: string): string {
-	const lines = normalizeMarkdownLines(markdown).replace(/\r\n/g, '\n').split('\n');
+	const formulas: string[] = [];
+	const protectedMarkdown = normalizeMarkdownLines(markdown).replace(
+		FORMULA_PATTERN,
+		(_whole, inlineFormula: string | undefined, displayFormula: string | undefined) => {
+			const displayMode = displayFormula !== undefined;
+			const formula = (displayMode ? displayFormula : inlineFormula) ?? '';
+			const token = `@@PAPERSCRAWLER_FORMULA_${formulas.length}@@`;
+			try {
+				formulas.push(katex.renderToString(formula, {
+					displayMode,
+					throwOnError: true,
+					strict: false,
+				}));
+			} catch {
+				formulas.push(escapeHtml(displayMode ? `\\[${formula}\\]` : `\\(${formula}\\)`));
+			}
+			return token;
+		},
+	);
+	const lines = protectedMarkdown.replace(/\r\n/g, '\n').split('\n');
 	const output: string[] = [];
 	let paragraph: string[] = [];
 	let listType: 'ul' | 'ol' | undefined;
@@ -66,5 +85,20 @@ export function renderReportMarkdown(markdown: string): string {
 	}
 	flushParagraph();
 	flushList();
-	return output.join('\n');
+	let html = output.join('\n');
+	for (const [index, formula] of formulas.entries()) {
+		html = html.replaceAll(`@@PAPERSCRAWLER_FORMULA_${index}@@`, formula);
+	}
+	return html;
 }
+
+/** Render a single report text field with static formulas and safe inline HTML. */
+export function renderReportInline(value: string): string {
+	const rendered = renderReportMarkdown(value);
+	return rendered.startsWith('<p>') && rendered.endsWith('</p>')
+		? rendered.slice(3, -4)
+		: rendered;
+}
+import katex from 'katex';
+
+const FORMULA_PATTERN = /\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g;

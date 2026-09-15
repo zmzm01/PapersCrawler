@@ -1,16 +1,16 @@
 ---
+import 'katex/dist/katex.min.css';
+
 interface Props {
 	title?: string;
 	description?: string;
 	noindex?: boolean;
-	hasMath?: boolean;
 }
 
 const {
 	title = 'PapersCrawler 报告',
 	description = '经过相关性筛选、全文分析与结构化总结的研究论文报告。',
 	noindex = true,
-	hasMath = false,
 } = Astro.props;
 const canonicalUrl = Astro.site ? new URL(Astro.url.pathname, Astro.site).toString() : undefined;
 const currentYear = new Date().getFullYear();
@@ -30,17 +30,6 @@ const currentYear = new Date().getFullYear();
 		<meta property="og:type" content="website" />
 		{canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
 		<title>{title}</title>
-		{hasMath && <script is:inline>
-			window.MathJax = {
-				tex: {
-					inlineMath: [['\\(', '\\)']],
-					displayMath: [['\\[', '\\]'], ['$$', '$$']],
-					processEscapes: true,
-				},
-				chtml: { displayAlign: 'left' },
-			};
-		</script>}
-		{hasMath && <script is:inline defer src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js"></script>}
 	</head>
 	<body class="theme-papers">
 		<header class="site-header">
@@ -108,8 +97,9 @@ const currentYear = new Date().getFullYear();
 	main { padding-block: 4rem 5rem; }
 	footer { border-top: 1px solid var(--line); color: var(--muted); display: flex; font-size: .82rem; gap: 1.2rem; justify-content: space-between; letter-spacing: .03em; padding-block: 2rem; }
 	footer a:hover { color: var(--accent); }
-	mjx-container[display="true"] { margin-block: 1rem !important; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
-	mjx-container:not([display="true"]) { display: inline-block; line-height: 0; margin-inline: .06em; vertical-align: -.08em; }
+	.katex-display { margin-block: 1rem; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-block: .15rem; }
+	.katex { font-size: 1em; }
+	.sr-only { height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 	.eyebrow { color: var(--accent); font-size: .73rem; font-weight: 800; letter-spacing: .14em; margin: 0; text-transform: uppercase; }
 	.page-hero { max-width: 75rem; }
@@ -196,6 +186,7 @@ const currentYear = new Date().getFullYear();
 	.chips .topic { background: var(--accent-soft); color: var(--accent); }
 	.links { align-items: center; display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin-top: 1.25rem; }
 	.links a { color: var(--accent); font-size: .88rem; font-weight: 700; }
+	.links button, .paper-next { background: transparent; border: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: .88rem; font-weight: 700; padding: 0; text-decoration: underline; }
 	details { margin-top: 1rem; }
 	summary { color: var(--accent); cursor: pointer; font-size: .87rem; font-weight: 700; }
 	.paper-details { background: var(--surface-muted); border-left: 2px solid var(--accent); border-radius: 0 .35rem .35rem 0; padding: .85rem 1rem; }
@@ -212,6 +203,7 @@ const currentYear = new Date().getFullYear();
 	.markdown-body li { font-size: inherit; line-height: inherit; margin: .3rem 0; }
 	.markdown-body strong { color: var(--ink); }
 	.markdown-body code { background: var(--tag); border-radius: .2rem; font-size: .85em; padding: .1rem .25rem; }
+	.mobile-reader-nav { display: none; }
 
 	@media (max-width: 760px) {
 		.site-nav, main, footer { width: min(100% - 2rem, 1240px); }
@@ -232,6 +224,9 @@ const currentYear = new Date().getFullYear();
 		.detail-controls button { flex: 1; }
 		.grade { grid-row: 1; }
 		.legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.mobile-reader-nav { background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line); border-radius: 999px; bottom: 1rem; box-shadow: 0 8px 24px rgba(39, 48, 49, .16); display: flex; gap: .15rem; padding: .25rem; position: fixed; right: 1rem; z-index: 12; }
+		.mobile-reader-nav button { background: transparent; border: 0; border-radius: 999px; color: var(--accent); cursor: pointer; font-size: .78rem; min-height: 42px; padding: .45rem .75rem; }
+		.mobile-reader-nav button:hover { background: var(--accent-soft); }
 	}
 	@media (max-width: 480px) {
 		.site-nav { min-height: 4rem; }

@@ -21,7 +21,7 @@ const papers = contentItems(report.content, 'papers');
 		<nav aria-label="移动端论文目录">
 			{papers.map((paper, index) => {
 				const title = contentText(paper, 'title') || '未命名论文';
-				return <a href={`#paper-${index + 1}`}><span>{index + 1}. {title}</span></a>;
+				return <a href={`#paper-${index + 1}`} data-mobile-paper-link data-paper-target={`paper-${index + 1}`}><span>{index + 1}. {title}</span></a>;
 			})}
 		</nav>
 	</details>
@@ -43,5 +43,8 @@ const papers = contentItems(report.content, 'papers');
 			for (const link of links) link.toggleAttribute('aria-current', link.dataset.paperLink === current);
 		}, { rootMargin: '-18% 0px -62% 0px' });
 		for (const paper of papers) observer.observe(paper);
+	}
+	for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-mobile-paper-link]')) {
+		link.addEventListener('click', () => link.closest('details')?.removeAttribute('open'));
 	}
 </script>

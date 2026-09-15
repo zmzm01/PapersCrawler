@@ -1,9 +1,11 @@
 ---
-import { formatDate, reportUrl, type PublicReport, contentItems } from '../lib/reports';
+import { formatDate, reportDisplayTitle, reportUrl, type PublicReport, contentItems, contentText } from '../lib/reports';
 
 interface Props { report: PublicReport; }
 const { report } = Astro.props;
 const papers = contentItems(report.content, 'papers');
+const counts = ['A', 'B', 'C'].map((category) => ({ category, count: papers.filter((paper) => contentText(paper, 'relevanceCategory') === category).length }));
+const corePaper = papers.find((paper) => contentText(paper, 'relevanceCategory') === 'A');
 ---
 
 <article class="report-card">
@@ -11,11 +13,12 @@ const papers = contentItems(report.content, 'papers');
 		<p class="eyebrow">PAPERSCRAWLER REPORT</p>
 		<time datetime={report.publishedAt}>{formatDate(report.publishedAt)}</time>
 	</div>
-	<h3><a href={reportUrl(report)}>{report.title}</a></h3>
+	<h3><a href={reportUrl(report)}>{reportDisplayTitle(report)}</a></h3>
 	<p class="card-summary">{report.summary}</p>
+	{corePaper && <p class="core-highlight"><strong>本期核心：</strong>{contentText(corePaper, 'title')}</p>}
 	<div class="card-bottom">
 		<div class="card-tags">
-			<span>{papers.length} 篇论文</span>
+			{counts.map(({ category, count }) => <span>{category} {count}</span>)}
 			{report.tags.map((tag) => <span>{tag}</span>)}
 		</div>
 		<a class="read" href={reportUrl(report)}>阅读报告 <span aria-hidden="true">→</span></a>
@@ -32,6 +35,7 @@ const papers = contentItems(report.content, 'papers');
 	.report-card h3 a { text-decoration: none; }
 	.report-card h3 a:hover { color: var(--accent); }
 	.card-summary { color: var(--muted); line-height: 1.65; margin: 0; overflow-wrap: anywhere; }
+	.core-highlight { border-left: 2px solid var(--accent); font-size: .82rem; line-height: 1.55; margin: .8rem 0 0; padding-left: .65rem; }
 	.card-bottom { align-items: center; display: flex; gap: .8rem; justify-content: space-between; margin-top: auto; padding-top: 1.2rem; }
 	.card-tags { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: .35rem; }
 	.card-tags span { background: var(--tag); border-radius: .35rem; color: var(--muted); font-size: .72rem; line-height: 1.2; padding: .25rem .5rem; }

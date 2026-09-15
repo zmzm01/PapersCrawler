@@ -1,6 +1,6 @@
 ---
 import { contentItems, contentText, contentTextList, recordValue, type PublicReport } from '../lib/reports';
-import { renderReportMarkdown } from '../lib/markdown';
+import { renderReportInline, renderReportMarkdown } from '../lib/markdown';
 
 interface Props { report: PublicReport; }
 const { report } = Astro.props;
@@ -96,9 +96,14 @@ function paperSectionText(paper: Record<string, unknown>, key: string): string |
 function categoryClass(category: string | undefined): string {
 	return category ? `grade-${category}` : 'grade-unknown';
 }
+
+function secureExternalUrl(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	return value.replace(/^http:\/\/(?:link\.)?aps\.org\//, 'https://link.aps.org/');
+}
 ---
 
-{categoryGroups.map(({ category: groupCategory, label: groupLabel, items }) => <section id={`category-${groupCategory}`} class="collection papers-collection">
+{categoryGroups.map(({ category: groupCategory, label: groupLabel, items }) => <section id={`category-${groupCategory}`} class="collection papers-collection" data-category-section={groupCategory}>
 	<div class="section-title">
 		<p>CATEGORY {groupCategory}</p>
 		<h2>{groupLabel}</h2>
@@ -107,7 +112,8 @@ function categoryClass(category: string | undefined): string {
 	<div class="paper-list">
 		{items.map(({ paper, paperIndex }) => {
 			const title = contentText(paper, 'title') ?? '未命名论文';
-			const pageUrl = contentText(paper, 'pageUrl');
+			const pageUrl = secureExternalUrl(contentText(paper, 'pageUrl'));
+			const pdfUrl = secureExternalUrl(contentText(paper, 'pdfUrl'));
 			const category = contentText(paper, 'relevanceCategory');
 			const authors = contentTextList(paper, 'authors');
 			const subfields = contentTextList(paper, 'subfields');
@@ -117,25 +123,30 @@ function categoryClass(category: string | undefined): string {
 			const results = paperSectionText(paper, 'results');
 			const limitations = paperSectionText(paper, 'limitations');
 			const takeaway = paperSectionText(paper, 'takeaway');
-			return <article id={`paper-${paperIndex + 1}`} class="paper-item">
+			const doi = contentText(paper, 'doi');
+			const doiUrl = doi ? `https://doi.org/${doi}` : undefined;
+			const searchText = [title, ...authors, contentText(paper, 'journal'), doi, ...subfields, ...subfieldLabels].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN');
+			return <article id={`paper-${paperIndex + 1}`} class="paper-item" data-paper data-category={category} data-search={searchText}>
 				<div class={`grade ${categoryClass(category)}`}>{category || '—'}</div>
 				<div>
-					<p class="paper-kicker">{contentText(paper, 'journal') || '期刊'} · {contentText(paper, 'publishedAt') || '日期未知'}</p>
+					<p class="paper-kicker">第 {paperIndex + 1}/{papers.length} 篇 · {contentText(paper, 'journal') || '期刊'} · {contentText(paper, 'publishedAt') || '日期未知'}</p>
 					<h3>
 						{pageUrl ? <a href={pageUrl} rel="noreferrer" target="_blank">{title}<span class="external" aria-hidden="true">↗</span></a> : title}
 					</h3>
 					{authors.length > 0 && <p class="authors">{authors.join(' · ')}</p>}
-					{contentText(paper, 'oneSentence') && <p class="paper-summary">{contentText(paper, 'oneSentence')}</p>}
-					{contentText(paper, 'doi') && <div class="paper-meta"><span>DOI {contentText(paper, 'doi')}</span></div>}
+					{contentText(paper, 'oneSentence') && <p class="paper-summary" set:html={renderReportInline(contentText(paper, 'oneSentence')!)} />}
+					{doi && <div class="paper-meta"><a href={doiUrl} rel="noreferrer" target="_blank">DOI {doi}</a></div>}
 					{(subfieldLabels.length > 0 || subfields.length > 0) && <div class="chips">{(subfieldLabels.length > 0 ? subfieldLabels : subfields).map((field) => <span class="topic">{field}</span>)}</div>}
 					<div class="links">
-						{contentText(paper, 'pdfUrl') && <a href={contentText(paper, 'pdfUrl')} rel="noreferrer" target="_blank">PDF ↗</a>}
+						{pdfUrl && <a href={pdfUrl} rel="noreferrer" target="_blank">PDF ↗</a>}
 						{pageUrl && <a href={pageUrl} rel="noreferrer" target="_blank">原文 ↗</a>}
+						{doi && <button type="button" data-copy-value={doi} data-copy-label="复制 DOI">复制 DOI</button>}
+						{pageUrl && <button type="button" data-copy-value={pageUrl} data-copy-label="复制原文链接">复制链接</button>}
 					</div>
 					<details class="paper-details" open={category === 'A'}>
-						<summary>阅读完整解读</summary>
-						{contentText(paper, 'relevanceReason') && <div><h4>相关性判断</h4><p>{contentText(paper, 'relevanceReason')}</p></div>}
-						{contentText(paper, 'abstract') && <div><h4>原文摘要</h4><p>{contentText(paper, 'abstract')}</p></div>}
+						<summary>阅读完整解读<span class="sr-only">：{title}</span></summary>
+						{contentText(paper, 'relevanceReason') && <div><h4>相关性判断</h4><p set:html={renderReportInline(contentText(paper, 'relevanceReason')!)} /></div>}
+						{contentText(paper, 'abstract') && <div><h4>原文摘要</h4><p set:html={renderReportInline(contentText(paper, 'abstract')!)} /></div>}
 						{[
 							['motivation', '研究动机与目标', motivation],
 							['method', '关键方法与设置', method],
@@ -143,6 +154,7 @@ function categoryClass(category: string | undefined): string {
 							['limitations', '局限与适用边界', limitations],
 							['takeaway', '要点总结', takeaway],
 						].map(([, label, sectionText]) => sectionText && <div><h4>{label}</h4><div class="markdown-body" set:html={renderReportMarkdown(sectionText)} /></div>)}
+						{paperIndex < papers.length - 1 && <div><button class="paper-next" type="button" data-next-paper={`paper-${paperIndex + 2}`}>收起并阅读下一篇 ↓</button></div>}
 					</details>
 				</div>
 			</article>;
